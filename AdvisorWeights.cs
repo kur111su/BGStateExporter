@@ -49,6 +49,60 @@ namespace BGStateExporter
 		[JsonProperty("每方案模拟次数")] public int SimIterations { get; set; } = 1000;
 		[JsonProperty("每方案模拟毫秒")] public int SimMaxMs { get; set; } = 200;
 
+		// ---- 自动学习 ----
+		[JsonProperty("自动学习")] public bool AutoLearn { get; set; } = true;
+		[JsonProperty("自动学习最少局数")] public int AutoLearnMinGames { get; set; } = 30;
+		[JsonProperty("自动学习强度")] public double AutoLearnStrength { get; set; } = 1.0;   // 越大越敢偏离默认权重
+
+		// ---------- 特征 ↔ 权重 ----------
+		// 每个候选方案先算出这些原始特征，总分 = Σ 权重 × 特征。自动学习只调这几个权重。
+		public static readonly string[] FeatureKeys = { "sim", "heur", "upgrade", "behind", "triple", "pair", "tribe", "refresh" };
+
+		public static readonly Dictionary<string, string> FeatureNames = new()
+		{
+			["sim"] = "战力", ["heur"] = "估值战力", ["upgrade"] = "升本", ["behind"] = "落后节奏",
+			["triple"] = "三连", ["pair"] = "对子", ["tribe"] = "种族", ["refresh"] = "剩余金币",
+		};
+
+		public double Get(string key) => key switch
+		{
+			"sim" => Sim, "heur" => Heuristic, "upgrade" => Upgrade, "behind" => BehindCurve,
+			"triple" => Triple, "pair" => Pair, "tribe" => Tribe, "refresh" => Refresh, _ => 0,
+		};
+
+		public void Set(string key, double v)
+		{
+			v = Math.Round(Math.Max(0, v), 4);
+			switch(key)
+			{
+				case "sim": Sim = v; break;
+				case "heur": Heuristic = v; break;
+				case "upgrade": Upgrade = v; break;
+				case "behind": BehindCurve = v; break;
+				case "triple": Triple = v; break;
+				case "pair": Pair = v; break;
+				case "tribe": Tribe = v; break;
+				case "refresh": Refresh = v; break;
+			}
+		}
+
+		public double Score(Dictionary<string, double> f)
+		{
+			var s = 0.0;
+			foreach(var kv in f)
+				s += Get(kv.Key) * kv.Value;
+			return s;
+		}
+
+		public void Save()
+		{
+			if(FilePath == null)
+				return;
+			File.WriteAllText(FilePath, JsonConvert.SerializeObject(this, Formatting.Indented));
+			_cached = this;
+			_cachedTime = File.GetLastWriteTimeUtc(FilePath);
+		}
+
 		public int DesiredTier(int turn)
 		{
 			var best = 1;

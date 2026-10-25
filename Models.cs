@@ -9,6 +9,7 @@ namespace BGStateExporter
 	{
 		public int Schema { get; set; } = 1;
 		public PluginInfo? Plugin { get; set; }
+		public LearningStatus? Learning { get; set; }
 		public bool InGame { get; set; }
 		public bool IsBattlegrounds { get; set; }
 		public string Mode { get; set; } = "none";        // solo | duos | none
@@ -22,6 +23,18 @@ namespace BGStateExporter
 		public List<LeaderboardEntry> Leaderboard { get; set; } = new();
 		public int NextOpponentPlayerId { get; set; }              // 下回合对手的 PLAYER_ID（0 = 未知）
 		public SimulationState? Simulation { get; set; }           // Bob's Buddy 模拟结果
+	}
+
+	public class LearningStatus
+	{
+		public bool Enabled { get; set; }
+		public int GamesCollected { get; set; }            // 已记录学习样本的对局数
+		public int SamplesCollected { get; set; }
+		public int MinGames { get; set; }                  // 攒够多少局开始自动拟合
+		public int SamplesThisGame { get; set; }
+		public bool Fitting { get; set; }
+		public string? LastFitTime { get; set; }
+		public string? LastFitMessage { get; set; }
 	}
 
 	public class PluginInfo

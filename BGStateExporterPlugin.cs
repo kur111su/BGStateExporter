@@ -23,6 +23,7 @@ namespace BGStateExporter
 
 		private StateServer? _server;
 		private SimManager? _sim;
+		private Learner? _learner;
 		private MenuItem? _menuItem;
 		private bool _menuNoticeShown;
 		private string _lastContent = "";
@@ -57,6 +58,14 @@ namespace BGStateExporter
 				"HearthstoneDeckTracker", "BGStateExporter");
 			Directory.CreateDirectory(Path.Combine(_outDir, "games"));
 			AdvisorWeights.FilePath = Path.Combine(_outDir, "advisor_weights.json");
+			try
+			{
+				_learner = new Learner(_outDir);
+			}
+			catch(Exception ex)
+			{
+				Log.Error($"[BGStateExporter] 自动学习初始化失败：{ex.Message}");
+			}
 
 			try
 			{
@@ -81,6 +90,7 @@ namespace BGStateExporter
 			_server?.Dispose();
 			_server = null;
 			_sim = null;
+			_learner = null;
 		}
 
 		public void OnButtonPress() => OpenPanel();
@@ -118,6 +128,12 @@ namespace BGStateExporter
 							Log.Warn($"[BGStateExporter] 模拟出错：{ex.Message}");
 						}
 					}
+				}
+				if(_learner != null)
+				{
+					_learner.OnState(state, _sim?.LastRun);
+					if(state.IsBattlegrounds)
+						state.Learning = _learner.Status;
 				}
 				var content = JsonConvert.SerializeObject(state, JsonSettings);
 				if(content == _lastContent)

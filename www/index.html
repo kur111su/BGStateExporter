@@ -350,6 +350,7 @@
       { place: 8, playerId: 18, heroCardId: 'TB_BaconShop_HERO_16', heroName: '挂机的阿凯', health: 0, armor: 0, tavernTier: 2, isPlayer: false, dead: true }
     ],
     nextOpponentPlayerId: 12,
+    learning: { enabled: true, gamesCollected: 7, samplesCollected: 64, minGames: 30, samplesThisGame: 5, fitting: false, lastFitTime: null, lastFitMessage: null },
     simulation: {
       available: true, message: null,
       live: { turn: 8, state: 'Shopping', errorState: 'None', hasResult: true, winRate: 0.712, tieRate: 0.064, lossRate: 0.224,
@@ -501,6 +502,16 @@
   }
 
   const STEP_LABEL = { upgrade: '升本', sell: '卖', buy: '买', play: '打出', refresh: '刷新', freeze: '冻结', pass: '跳过' };
+  function learnText(l) {
+    if (!l) return '';
+    if (!l.enabled) return '<span>自动学习：已关闭</span>';
+    const prog = l.gamesCollected < l.minGames
+      ? `已收集 <b>${l.gamesCollected}/${l.minGames}</b> 局，攒够后每局结束自动调整权重`
+      : `已收集 <b>${l.gamesCollected}</b> 局${l.fitting ? '，<span class="spin"></span> 正在拟合' : ''}`;
+    const last = l.lastFitMessage ? `；上次（${esc(l.lastFitTime || '')}）：${esc(l.lastFitMessage)}` : '';
+    return `<span title="本局已记录 ${l.samplesThisGame} 个样本">自动学习：${prog}${last}</span>`;
+  }
+
   function advisorHtml(s) {
     const a = s.simulation && s.simulation.advisor;
     if (s.phase !== 'recruit' || !a) return '';
@@ -511,7 +522,8 @@
     const head = `<div class="adv-head">${shopText ? `<span>${shopText}</span>` : ''}
         ${a.targetHeroName ? `<span>模拟对象：<b>${esc(a.targetHeroName)}</b>（第 ${a.targetBoardSeenTurn} 回合阵容）</span>` : ''}
         ${a.plansConsidered ? `<span>枚举 ${a.plansConsidered} 种 · 模拟 ${a.plansSimulated} 种 · ${(a.elapsedMs / 1000).toFixed(1)} 秒</span>` : ''}
-        ${status ? `<span>${status}</span>` : ''}</div>`;
+        ${status ? `<span>${status}</span>` : ''}
+        ${learnText(s.learning)}</div>`;
     const plans = (a.plans || []).map(pl => `
       <div class="plan ${pl.rank === 1 ? 'best' : ''}">
         <div class="plan-top"><span class="plan-rank">方案 ${pl.rank}</span><span class="plan-score">得分 ${pl.score.toFixed(2)}</span></div>

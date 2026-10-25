@@ -111,6 +111,7 @@ namespace BGStateExporter
 			_matchups = new MatchupState();
 			_optimizer = new OptimizerState();
 			_advisor = new AdvisorState();
+			_lastRun = null;
 			_advisorSignature = "";
 			_advisorDirty = false;
 			_lastSignature = "";

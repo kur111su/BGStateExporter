@@ -24,6 +24,11 @@ namespace BGStateExporter
 		private const int BoardLimit = 7;
 
 		private volatile AdvisorState _advisor = new();
+		private volatile AdvisorRun? _lastRun;
+		private int _advisorRunSeq;
+
+		/// <summary>最近一次计算的完整记录（所有有效候选方案的特征），给自动学习用。</summary>
+		public AdvisorRun? LastRun { get => _lastRun; private set => _lastRun = value; }
 		private string _advisorSignature = "";
 		private DateTime _advisorChangedAt = DateTime.MinValue;
 		private bool _advisorRunning;
@@ -68,7 +73,9 @@ namespace BGStateExporter
 			public int TribeHits;
 			public int GoldLeft;
 			public double Power;                    // 随从估值之和
-			public Dictionary<string, double> Parts = new();
+			public Dictionary<string, double> F = new();       // 原始特征，总分 = Σ 权重 × 特征
+			public bool Valid = true;                          // 有对手阵容却没模拟到的方案不参与排名
+			public Dictionary<string, double> Parts = new();   // 显示用：权重 × 特征（中文名）
 			public double Score;
 			public SimResult? Sim;
 			public List<PlanStep> Steps = new();
@@ -176,7 +183,7 @@ namespace BGStateExporter
 			{
 				var candidates = Enumerate(input, w);
 				foreach(var c in candidates)
-					ScoreHeuristic(c, input, w);
+					ComputeFeatures(c, input, w);
 
 				// 先用估值排序，只模拟最有希望的若干个；“什么都不买”的方案总是模拟，作为对照
 				var ordered = candidates.OrderByDescending(c => c.Score).ToList();
@@ -216,7 +223,7 @@ namespace BGStateExporter
 					}
 				}
 
-				// 有模拟结果的方案用模拟分；没模拟的按估值（有对手时排在后面）
+				// 有模拟结果的方案用模拟战力；没有对手阵容时用估值战力；有对手阵容却没模拟到的不参与排名
 				var hpFactor = HpFactor(input.Hp, w);
 				foreach(var c in candidates)
 				{
@@ -224,15 +231,30 @@ namespace BGStateExporter
 					{
 						var r = c.Sim;
 						var power = r.WinRate - r.LossRate + w.Damage * (r.AvgDamageDealt * r.WinRate - r.AvgDamageTaken * r.LossRate);
-						c.Parts["战力"] = Math.Round(Math.Max(-1.5, Math.Min(1.5, power)) * w.Sim * hpFactor, 4);
+						c.F["sim"] = Math.Round(Math.Max(-1.5, Math.Min(1.5, power)) * hpFactor, 4);
+						c.F.Remove("heur");
 					}
 					else if(input.Target != null)
-						c.Parts["战力"] = -10;     // 有对手阵容却没模拟到：不进前三
-					c.Score = c.Parts.Values.Sum();
+						c.Valid = false;
+					c.Score = w.Score(c.F);
+					FillParts(c, w);
 				}
 
-				var top = candidates.Where(c => c.Parts.ContainsKey("战力") ? c.Parts["战力"] > -10 : true)
-					.OrderByDescending(c => c.Score).Take(3).ToList();
+				var valid = candidates.Where(c => c.Valid).ToList();
+				var top = valid.OrderByDescending(c => c.Score).Take(3).ToList();
+				LastRun = new AdvisorRun
+				{
+					Seq = ++_advisorRunSeq,
+					Turn = input.Turn,
+					Snapshot = SnapshotOf(input),
+					Candidates = valid.Select(c => new AdvisorRun.Cand
+					{
+						Upgrade = c.Upgrade,
+						Buys = c.Buys.Select(e => e.Id).ToList(),
+						Sells = c.Sells.Select(e => e.Id).ToList(),
+						F = new Dictionary<string, double>(c.F),
+					}).ToList(),
+				};
 				foreach(var c in top)
 					Describe(c, input, w);
 
@@ -371,28 +393,46 @@ namespace BGStateExporter
 			return result;
 		}
 
-		/// <summary>除战力以外的各项启发式得分；没有对手阵容时，战力用随从估值代替。</summary>
-		private static void ScoreHeuristic(Candidate c, AdvisorInput input, AdvisorWeights w)
+		/// <summary>
+		/// 算出方案的原始特征（与权重无关）。战力特征在模拟完成后再填：
+		///   sim     = (胜率 − 负率 + 伤害项) × 血量系数        —— 有模拟结果时
+		///   heur    = (随从估值之和 − 当前场面估值) × 血量系数   —— 没有对手阵容时代替 sim
+		///   upgrade = 升本时：落后节奏的等级数（−1～2）
+		///   behind  = 不升本且落后节奏时：−落后等级数
+		///   triple / pair / tribe = 三连数 / 新对子数 / 主种族随从数
+		///   refresh = 剩余金币够刷新几次（含免费刷新，有上限）
+		/// </summary>
+		private static void ComputeFeatures(Candidate c, AdvisorInput input, AdvisorWeights w)
 		{
 			var desired = w.DesiredTier(input.Turn);
 			var gap = desired - input.Tier;
 			if(c.Upgrade)
-				c.Parts["升本"] = w.Upgrade * Math.Max(-1, Math.Min(2, gap));
+				c.F["upgrade"] = Math.Max(-1, Math.Min(2, gap));
 			else if(gap > 0 && input.Shop.CanUpgrade)
-				c.Parts["升本"] = -w.BehindCurve * gap;
+				c.F["behind"] = -gap;
 
-			if(c.Triples.Count > 0) c.Parts["三连"] = w.Triple * c.Triples.Count;
-			if(c.Pairs > 0) c.Parts["对子"] = w.Pair * c.Pairs;
-			if(c.TribeHits > 0) c.Parts["种族"] = w.Tribe * c.TribeHits;
+			if(c.Triples.Count > 0) c.F["triple"] = c.Triples.Count;
+			if(c.Pairs > 0) c.F["pair"] = c.Pairs;
+			if(c.TribeHits > 0) c.F["tribe"] = c.TribeHits;
 
 			var refreshCost = Math.Max(1, input.Shop.RefreshCost);
 			var refreshes = Math.Min(w.MaxRefreshValue, c.GoldLeft / refreshCost + input.Shop.FreeRefreshes);
-			if(refreshes > 0) c.Parts["剩余金币"] = w.Refresh * refreshes;
+			if(refreshes > 0) c.F["refresh"] = refreshes;
 
-			// 估值版战力：相对当前场面的提升。有对手阵容时，模拟完会覆盖掉
 			var basePower = input.Board.Sum(e => Value(e, StatNorm(input), input.DominantRace, input.Tier));
-			c.Parts["战力"] = w.Heuristic * (c.Power - basePower) * HpFactor(input.Hp, w);
-			c.Score = c.Parts.Values.Sum();
+			c.F["heur"] = Math.Round((c.Power - basePower) * HpFactor(input.Hp, w), 4);
+			c.Score = w.Score(c.F);
+		}
+
+		private static void FillParts(Candidate c, AdvisorWeights w)
+		{
+			c.Parts.Clear();
+			foreach(var kv in c.F)
+			{
+				var part = w.Get(kv.Key) * kv.Value;
+				if(Math.Abs(part) > 1e-6)
+					c.Parts[AdvisorWeights.FeatureNames[kv.Key]] = part;
+			}
 		}
 
 		/// <summary>生成步骤文字和理由。</summary>
@@ -450,6 +490,19 @@ namespace BGStateExporter
 			if(c.Triples.Count > 0) c.Reasons.Add("凑成三连：" + string.Join("、", c.Triples));
 			if(c.Pairs > 0) c.Reasons.Add($"凑成 {c.Pairs} 个对子");
 			if(c.TribeHits > 0) c.Reasons.Add($"买了 {c.TribeHits} 个主种族（{RaceName(input.DominantRace)}）随从");
+		}
+
+		private static TurnSnapshot SnapshotOf(AdvisorInput input)
+		{
+			var snap = new TurnSnapshot { Tier = input.Tier };
+			foreach(var e in input.Board.Concat(input.Hand))
+			{
+				snap.Owned[e.Id] = TurnSnapshot.BaseId(e.CardId);
+				if(e.HasTag(GameTag.PREMIUM)) snap.GoldenBases.Add(TurnSnapshot.BaseId(e.CardId));
+			}
+			foreach(var e in input.Tavern)
+				snap.Tavern[e.Id] = TurnSnapshot.BaseId(e.CardId);
+			return snap;
 		}
 
 		// ---------- 估值工具 ----------
