@@ -1,0 +1,89 @@
+# 推送 v* 标签（例如 v0.3.0）时：下载最新版 HDT 作为编译引用 → 编译 → 发布 Release（附带可直接拖进 HDT 的 zip）
+# 手动运行（Actions 页面 → Run workflow）时只编译，zip 作为构建产物下载，不发布 Release
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: 下载最新版 HDT（只用来提供编译引用，不会打包进插件）
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ok = $false
+          foreach ($repo in "HearthSim/HDT-Releases", "HearthSim/HDT-Velopack-Releases") {
+            gh release download --repo $repo --pattern "*-full.nupkg" --dir hdt-pkg --clobber
+            if ($LASTEXITCODE -eq 0) { Write-Host "从 $repo 下载成功"; $ok = $true; break }
+          }
+          if (-not $ok) { throw "下载 HDT 失败" }
+          $pkg = Get-ChildItem hdt-pkg -Filter *.nupkg | Select-Object -First 1
+          Write-Host "HDT 包：$($pkg.Name)"
+          Copy-Item $pkg.FullName hdt.zip
+          Expand-Archive hdt.zip -DestinationPath hdt-extracted -Force
+          $exe = Get-ChildItem hdt-extracted -Recurse -Filter HearthstoneDeckTracker.exe | Select-Object -First 1
+          if (-not $exe) { throw "包里没找到 HearthstoneDeckTracker.exe" }
+          $dir = $exe.DirectoryName
+          foreach ($f in "HearthDb.dll", "BobsBuddy.dll", "Newtonsoft.Json.dll") {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "HDT 目录里缺少 $f" }
+          }
+          "HDT_PATH=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: 确定版本号
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $v = ([xml](Get-Content BGStateExporter.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          }
+          Write-Host "版本：$v"
+          "PLUGIN_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: 编译
+        shell: pwsh
+        run: dotnet build -c Release "-p:HDTPath=$env:HDT_PATH" "-p:Version=$env:PLUGIN_VERSION"
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          # zip 里只有一个 BGStateExporter 文件夹：拖进 HDT 插件页后会解压成 Plugins\BGStateExporter\BGStateExporter.dll
+          New-Item -ItemType Directory -Force pkg\BGStateExporter | Out-Null
+          Copy-Item bin\Release\BGStateExporter.dll pkg\BGStateExporter\
+          Compress-Archive -Path pkg\BGStateExporter -DestinationPath "BGStateExporter-v$env:PLUGIN_VERSION.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BGStateExporter-v${{ env.PLUGIN_VERSION }}
+          path: BGStateExporter-v${{ env.PLUGIN_VERSION }}.zip
+
+      - name: 发布 Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          ## 安装
+          1. 下载下面的 **BGStateExporter-v$env:PLUGIN_VERSION.zip**（不用解压）
+          2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip 拖进插件列表
+          3. 勾选 **BG State Exporter**，点「打开网页面板」
+
+          已经装过旧版本的话不用手动操作：插件启动时会自动下载新版本，重启 HDT 后生效。
+          "@
+          # HDT 的自动更新取 Release 里的第一个附件，所以这里只上传一个文件
+          gh release create "${{ github.ref_name }}" "BGStateExporter-v$env:PLUGIN_VERSION.zip" --title "${{ github.ref_name }}" --notes $notes

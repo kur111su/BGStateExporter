@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    HDT 插件：酒馆战旗局面导出
+    编译：在 Windows 上运行 build.ps1（会自动找到 HDT 安装目录并复制到插件文件夹）
+    或手动：dotnet build -c Release -p:HDTPath="C:\Users\你\AppData\Local\HearthstoneDeckTracker\app-1.xx.x"
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>10</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>BGStateExporter</AssemblyName>
+    <RootNamespace>BGStateExporter</RootNamespace>
+    <Version>0.3.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- 默认使用与本项目同级的 HDT 目录（例如 D:\claude\HDT），可用 -p:HDTPath=... 覆盖 -->
+    <HDTPath Condition="'$(HDTPath)' == ''">$(MSBuildThisFileDirectory)..\HDT</HDTPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 让没有安装 .NET Framework 4.7.2 Developer Pack 的机器也能编译 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 以下程序集由 HDT 自身提供，不复制到输出目录 -->
+    <Reference Include="HearthstoneDeckTracker">
+      <HintPath>$(HDTPath)\HearthstoneDeckTracker.exe</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HearthDb">
+      <HintPath>$(HDTPath)\HearthDb.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BobsBuddy">
+      <HintPath>$(HDTPath)\BobsBuddy.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(HDTPath)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 网页面板打包进 DLL，由内置 HTTP 服务直接提供 -->
+    <EmbeddedResource Include="www\index.html" LogicalName="BGStateExporter.index.html" />
+  </ItemGroup>
+
+</Project>
