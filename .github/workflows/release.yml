@@ -1,10 +1,15 @@
-# 推送 v* 标签（例如 v0.3.0）时：下载最新版 HDT 作为编译引用 → 编译 → 发布 Release（附带可直接拖进 HDT 的 zip）
-# 手动运行（Actions 页面 → Run workflow）时只编译，zip 作为构建产物下载，不发布 Release
+# 下载最新版 HDT 作为编译引用 → 编译 → 发布 Release（附带可直接拖进 HDT 的 zip）
+# 触发方式：
+#   - 推送到 main：版本号取 BGStateExporter.csproj 的 <Version>；这个版本还没有 Release 时自动创建标签和 Release
+#   - 推送 v* 标签：用标签作为版本号发布
+#   - 手动运行（Actions → Run workflow）：同推送到 main
 name: Build & Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+    paths-ignore: ["**.md", "sample/**", "tools/**"]
   workflow_dispatch:
 
 permissions:
@@ -72,18 +77,23 @@ jobs:
           path: BGStateExporter-v${{ env.PLUGIN_VERSION }}.zip
 
       - name: 发布 Release
-        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $tag = "v$env:PLUGIN_VERSION"
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$tag 已经发布过，跳过（要发新版本请先改 BGStateExporter.csproj 里的 <Version>）"
+            exit 0
+          }
           $notes = @"
           ## 安装
-          1. 下载下面的 **BGStateExporter-v$env:PLUGIN_VERSION.zip**（不用解压）
+          1. 下载下面的 **BGStateExporter-$tag.zip**（不用解压）
           2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip 拖进插件列表
           3. 勾选 **BG State Exporter**，点「打开网页面板」
 
           已经装过旧版本的话不用手动操作：插件启动时会自动下载新版本，重启 HDT 后生效。
           "@
           # HDT 的自动更新取 Release 里的第一个附件，所以这里只上传一个文件
-          gh release create "${{ github.ref_name }}" "BGStateExporter-v$env:PLUGIN_VERSION.zip" --title "${{ github.ref_name }}" --notes $notes
+          gh release create $tag "BGStateExporter-$tag.zip" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title $tag --notes $notes

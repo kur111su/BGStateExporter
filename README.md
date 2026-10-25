@@ -43,11 +43,9 @@
    编译后安装到 `%AppData%\HearthstoneDeckTracker\Plugins\BGStateExporter\`。HDT 目录下的 `Plugins` 只是镜像，HDT 启动时会用 AppData 里的内容覆盖它，不要把插件放那里。
 3. 完全退出 HDT 再打开，勾选插件。
 
-**发布新版本**：改好代码后打标签推送，GitHub Actions 会下载最新版 HDT 编译并发布 Release：
-```
-git tag v0.3.1
-git push origin v0.3.1
-```
+**发布新版本**：把 `BGStateExporter.csproj` 里的 `<Version>` 改成新版本号（例如 `0.3.1`），推送到 main。
+GitHub Actions 会下载最新版 HDT 编译，这个版本还没发布过就自动创建 `v0.3.1` 标签和 Release；版本号没变时只编译不发布。
+（直接推送 `v*` 标签也可以触发发布。）
 
 不想安装也能先看面板效果：直接用浏览器打开 `www/index.html?demo`（招募阶段，可以点“优化站位”看效果）或 `www/index.html?demo=combat`（战斗阶段）。
 
