@@ -32,7 +32,7 @@ namespace BGStateExporter
 		private DateTime _lastErrorLog = DateTime.MinValue;
 
 		public string Name => "BG State Exporter";
-		public string Description => "实时导出酒馆战旗局面和 Bob's Buddy 对战模拟：写入 state.json，并在 http://localhost:8765/ 提供网页面板。";
+		public string Description => "实时导出酒馆战旗局面、Bob's Buddy 对战模拟和每回合操作建议，网页面板：http://localhost:8765/";
 		public string ButtonText => "打开网页面板";
 		public string Author => "炉石酒馆项目";
 		public Version Version => UpdateChecker.CurrentVersion;
@@ -56,6 +56,7 @@ namespace BGStateExporter
 				Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
 				"HearthstoneDeckTracker", "BGStateExporter");
 			Directory.CreateDirectory(Path.Combine(_outDir, "games"));
+			AdvisorWeights.FilePath = Path.Combine(_outDir, "advisor_weights.json");
 
 			try
 			{

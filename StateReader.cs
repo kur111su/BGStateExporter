@@ -45,9 +45,16 @@ namespace BGStateExporter
 			var entities = game.Entities.Values.ToList();
 
 			var playerHero = game.Player.Hero;
-			if(playerHero == null || state.Turn == 0)
+			if(state.Turn == 0)
 			{
 				state.Phase = "hero_select";
+				state.Leaderboard = ReadLeaderboard(entities, game.Player.Id);
+				return state;
+			}
+			if(playerHero == null)
+			{
+				// 对局中英雄实体会短暂为空（变身、换英雄技能时），这一帧只给阶段，不给玩家数据
+				state.Phase = game.IsBattlegroundsCombatPhase ? "combat" : "recruit";
 				state.Leaderboard = ReadLeaderboard(entities, game.Player.Id);
 				return state;
 			}
@@ -115,7 +122,40 @@ namespace BGStateExporter
 				Hand = game.Player.Hand.OrderBy(e => e.ZonePosition).Select(ToCard).ToList(),
 				Trinkets = game.Player.Trinkets.Select(ToCard).ToList(),
 				QuestRewards = game.Player.QuestRewards.Select(ToCard).ToList(),
+				Shop = ReadShop(game, hero.GetTag(GameTag.PLAYER_TECH_LEVEL)),
 			};
+		}
+
+		/// <summary>
+		/// 读取商店各按钮的费用。战旗里随从身上的 COST 一般是 0，真正的价格写在
+		/// “拖动购买 / 刷新 / 升级酒馆 / 冻结”这几个按钮实体上。找不到时用默认值，并标记为未知。
+		/// </summary>
+		internal static ShopInfo ReadShop(GameV2 game, int tier)
+		{
+			var ents = game.Player.PlayerEntities.Where(e => e.CardId != null).ToList();
+			Entity? Find(Func<string, bool> match) =>
+				ents.Where(e => match(e.CardId!)).OrderByDescending(e => e.Id).FirstOrDefault();
+
+			var shop = new ShopInfo();
+			var buy = Find(id => id == "TB_BaconShop_DragBuy");
+			if(buy != null && buy.HasTag(GameTag.COST)) { shop.BuyCost = buy.GetTag(GameTag.COST); shop.BuyCostKnown = true; }
+			var spellBuy = Find(id => id == "TB_BaconShop_DragBuy_Spell");
+			if(spellBuy != null) shop.SpellBuyCost = spellBuy.GetTag(GameTag.COST);
+			var reroll = Find(id => id == "TB_BaconShop_8p_Reroll_Button");
+			if(reroll != null) { shop.RefreshCost = reroll.GetTag(GameTag.COST); shop.RefreshCostKnown = true; }
+			var freeze = Find(id => id == "TB_BaconShopLockAll_Button");
+			if(freeze != null) shop.FreezeCost = freeze.GetTag(GameTag.COST);
+
+			// 升级按钮的卡牌 ID 带着目标等级：TB_BaconShopTechUp0N_Button，N = 当前等级 + 1
+			var nextTier = tier + 1;
+			var techUp = Find(id => id == $"TB_BaconShopTechUp0{nextTier}_Button");
+			if(techUp != null)
+			{
+				shop.UpgradeCost = techUp.GetTag(GameTag.COST);
+				shop.CanUpgrade = true;
+			}
+			shop.FreeRefreshes = game.PlayerEntity?.GetTag(GameTag.BACON_NUMBER_HERO_REFRESH_AVAILABLE) ?? 0;
+			return shop;
 		}
 
 		private static List<LeaderboardEntry> ReadLeaderboard(List<Entity> entities, int playerId)

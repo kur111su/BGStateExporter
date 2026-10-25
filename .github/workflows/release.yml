@@ -2,12 +2,13 @@
 # 触发方式：
 #   - 推送到 main：版本号取 BGStateExporter.csproj 的 <Version>；这个版本还没有 Release 时自动创建标签和 Release
 #   - 推送 v* 标签：用标签作为版本号发布
+#   - 推送到 dev：只编译，不发布（用来检查能不能编译通过）
 #   - 手动运行（Actions → Run workflow）：同推送到 main
 name: Build & Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ["v*"]
     paths-ignore: ["**.md", "sample/**", "tools/**"]
   workflow_dispatch:
@@ -77,6 +78,7 @@ jobs:
           path: BGStateExporter-v${{ env.PLUGIN_VERSION }}.zip
 
       - name: 发布 Release
+        if: github.ref == 'refs/heads/main' || github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

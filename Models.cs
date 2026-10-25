@@ -40,6 +40,42 @@ namespace BGStateExporter
 		public LiveCombatSim? Live { get; set; }           // HDT 自己跑的本场（或上一场）战斗模拟
 		public MatchupState Matchups { get; set; } = new();
 		public OptimizerState Optimizer { get; set; } = new();
+		public AdvisorState Advisor { get; set; } = new();
+	}
+
+	// ---------------- 第一层：搜索建议 ----------------
+
+	public class AdvisorState
+	{
+		public string Status { get; set; } = "idle";       // idle | waiting | running | done | error
+		public int Turn { get; set; }
+		public string? Message { get; set; }               // 说明：用了哪个对手的阵容、没有阵容时怎么估值等
+		public string? TargetHeroName { get; set; }        // 用来模拟的对手
+		public int TargetBoardSeenTurn { get; set; }
+		public int PlansConsidered { get; set; }           // 枚举了多少种方案
+		public int PlansSimulated { get; set; }            // 其中多少种跑了模拟
+		public long ElapsedMs { get; set; }
+		public List<AdvisorPlan> Plans { get; set; } = new();   // 按得分从高到低，最多 3 个
+	}
+
+	public class AdvisorPlan
+	{
+		public int Rank { get; set; }
+		public double Score { get; set; }
+		public List<PlanStep> Steps { get; set; } = new();
+		public List<string> Reasons { get; set; } = new();
+		public SimResult? Sim { get; set; }                 // 打完这套操作后，对目标对手的模拟结果
+		public int GoldLeft { get; set; }
+		public List<int> FinalBoard { get; set; } = new();  // 结束时场面的 entityId，从左到右
+		public Dictionary<string, double> ScoreParts { get; set; } = new();   // 各项得分，方便调权重
+	}
+
+	public class PlanStep
+	{
+		public string Type { get; set; } = "";              // upgrade | sell | buy | play | refresh | freeze
+		public string Text { get; set; } = "";
+		public int EntityId { get; set; }                   // 相关卡牌（没有就是 0）
+		public int Gold { get; set; }                       // 这一步之后剩余金币
 	}
 
 	public class SimResult
@@ -114,6 +150,20 @@ namespace BGStateExporter
 		public List<CardState> Hand { get; set; } = new();
 		public List<CardState> Trinkets { get; set; } = new();
 		public List<CardState> QuestRewards { get; set; } = new();
+		public ShopInfo? Shop { get; set; }
+	}
+
+	public class ShopInfo
+	{
+		public int BuyCost { get; set; } = 3;              // 购买随从的价格
+		public bool BuyCostKnown { get; set; }             // false = 没读到按钮，用的默认值
+		public int SpellBuyCost { get; set; }
+		public int RefreshCost { get; set; } = 1;
+		public bool RefreshCostKnown { get; set; }
+		public int FreeRefreshes { get; set; }
+		public int FreezeCost { get; set; }
+		public bool CanUpgrade { get; set; }               // 还能不能升本（满级或没读到升级按钮时为 false）
+		public int UpgradeCost { get; set; }               // 升本价格（每回合会降 1）
 	}
 
 	public class OpponentState

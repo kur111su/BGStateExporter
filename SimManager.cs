@@ -17,7 +17,7 @@ namespace BGStateExporter
 	///  3. 站位优化：按请求搜索更好的站位
 	/// Tick() 在 HDT UI 线程调用；模拟本身在后台线程跑。
 	/// </summary>
-	internal sealed class SimManager
+	internal sealed partial class SimManager
 	{
 		// 自动对位模拟
 		private const int MatchupIterations = 3000;
@@ -57,6 +57,7 @@ namespace BGStateExporter
 			Live = _live,
 			Matchups = _matchups,
 			Optimizer = _optimizer,
+			Advisor = _advisor,
 		};
 
 		/// <summary>由 HTTP 线程调用。opponentPlayerId=0 表示下个对手。</summary>
@@ -98,6 +99,8 @@ namespace BGStateExporter
 				return;
 			}
 
+			// 建议器优先：它最影响这回合怎么操作
+			TickAdvisor(game, state);
 			TickMatchups(game, state);
 			TickOptimizer(game, state);
 		}
@@ -107,6 +110,9 @@ namespace BGStateExporter
 			_live = null;
 			_matchups = new MatchupState();
 			_optimizer = new OptimizerState();
+			_advisor = new AdvisorState();
+			_advisorSignature = "";
+			_advisorDirty = false;
 			_lastSignature = "";
 			_matchupDirty = false;
 			_gameId = null;

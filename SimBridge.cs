@@ -182,9 +182,21 @@ namespace BGStateExporter
 			return m;
 		}
 
+		// 同一时间只跑一个模拟（每个模拟本身已经是多线程的），建议器、对位模拟、站位优化排队使用 CPU
+		private static readonly System.Threading.SemaphoreSlim Gate = new(1, 1);
+
 		public static async Task<SimResult> RunAsync(Input input, int iterations, int maxTimeMs)
 		{
-			var output = await Task.Run(() => new SimulationRunner().SimulateMultiThreaded(input, iterations, ThreadCount, maxTimeMs));
+			Output output;
+			await Gate.WaitAsync();
+			try
+			{
+				output = await Task.Run(() => new SimulationRunner().SimulateMultiThreaded(input, iterations, ThreadCount, maxTimeMs));
+			}
+			finally
+			{
+				Gate.Release();
+			}
 			var r = new SimResult();
 			Fill(r, output);
 			return r;
