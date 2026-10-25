@@ -89,14 +89,9 @@ jobs:
             Write-Host "$tag 已经发布过，跳过（要发新版本请先改 BGStateExporter.csproj 里的 <Version>）"
             exit 0
           }
-          $notes = @"
-          ## 安装
-          1. 下载下面的 **BGStateExporter-$tag.zip**（不用解压）
-          2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip 拖进插件列表
-             （拖到 HDT 窗口的插件列表上；直接复制进插件文件夹不会被加载。也可以手动解压，把 BGStateExporter 文件夹放进 %AppData%\HearthstoneDeckTracker\Plugins\ 后完全退出再打开 HDT）
-          3. 勾选 **BG State Exporter**，点「打开网页面板」
-
-          已经装过旧版本的话不用手动操作：插件启动时会自动下载新版本，重启 HDT 后生效。
-          "@
+          # 发布说明只能用 ASCII：v0.3.0～v0.6.0 用 HDT 自带的 GitHub 工具检查更新，
+          # 它在中文 Windows 上按 GBK 解码，说明里有中文就会把 JSON 解析坏，导致永远检测不到新版本
+          $notes = "Install: download BGStateExporter-$tag.zip below (do not unzip) and drag it onto the plugin list in HDT (Options > Tracker > Plugins), then enable BG State Exporter. Existing installs update automatically; fully quit and reopen HDT to apply. Docs: https://github.com/${{ github.repository }}#readme"
+          if ($notes -match '[^\x00-\x7F]') { throw "release notes must be ASCII" }
           # HDT 的自动更新取 Release 里的第一个附件，所以这里只上传一个文件
           gh release create $tag "BGStateExporter-$tag.zip" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title $tag --notes $notes

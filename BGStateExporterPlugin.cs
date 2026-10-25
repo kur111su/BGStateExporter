@@ -105,6 +105,7 @@ namespace BGStateExporter
 					Version = UpdateChecker.CurrentVersion.ToString(3),
 					LatestVersion = UpdateChecker.LatestVersion,
 					UpdateReady = UpdateChecker.UpdateReady,
+					UpdateError = UpdateChecker.Error,
 				};
 				if(UpdateChecker.UpdateReady && _menuItem != null && !_menuNoticeShown)
 				{

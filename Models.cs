@@ -42,6 +42,7 @@ namespace BGStateExporter
 		public string? Version { get; set; }
 		public string? LatestVersion { get; set; }        // GitHub 上的最新版本（null = 还没检查完，空 = 已是最新）
 		public bool UpdateReady { get; set; }             // 新版本已下载，重启 HDT 生效
+		public string? UpdateError { get; set; }          // 检查或下载更新失败的原因
 	}
 
 	// ---------------- 对战模拟 ----------------

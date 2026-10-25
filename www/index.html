@@ -689,8 +689,10 @@
     const pi = state.plugin;
     $('ver').textContent = pi && pi.version ? 'v' + pi.version : '';
     const ub = $('updateBanner');
-    ub.hidden = !(pi && pi.updateReady);
-    if (pi && pi.updateReady) ub.textContent = `新版本 ${pi.latestVersion} 已自动下载，重启 HDT（托盘图标右键退出后再打开）后生效。`;
+    ub.hidden = !(pi && (pi.updateReady || pi.updateError));
+    if (pi && pi.updateReady) ub.textContent = `新版本 ${pi.latestVersion} 已自动下载，完全退出 HDT（托盘图标右键“退出”）再打开后生效。`;
+    else if (pi && pi.updateError) ub.textContent = `自动更新没成功：${pi.updateError}。可以到 GitHub 的 Releases 页面手动下载 zip，拖进 HDT 的插件列表。`;
+    $('ver').title = pi && pi.latestVersion === '' ? '已是最新版本' : '';
     const dot = $('dot');
     dot.className = 'dot ' + (mode === 'live' ? 'ok' : mode === 'demo' ? 'demo' : '');
     $('connText').textContent = mode === 'live' ? '已连接 HDT' : mode === 'demo' ? '演示数据' : '未连接';
