@@ -237,6 +237,31 @@
     .sim-live { grid-template-columns: 1fr; }
   }
 
+  /* 第一层建议 */
+  .adv-head { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .adv-head b { color: var(--text); }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 980px) { .plans { grid-template-columns: 1fr; } }
+  .plan { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #261d14; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .plan.best { border-color: var(--brass); background: rgba(201,164,92,.09); }
+  .plan-top { display: flex; align-items: baseline; gap: 8px; }
+  .plan-rank { font-weight: 800; color: var(--brass); font-size: 15px; }
+  .plan-score { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .steps li { display: grid; grid-template-columns: 38px 1fr auto; gap: 6px; align-items: baseline; font-size: 13px; }
+  .steps .t { font-size: 11px; border-radius: 4px; text-align: center; padding: 0 4px; line-height: 18px; background: #3a2c1c; color: var(--muted); }
+  .steps .t.buy { background: #2f4a2f; color: #bfe8c0; }
+  .steps .t.sell { background: #5a2a24; color: #ffc9c0; }
+  .steps .t.upgrade { background: #5a4a1c; color: var(--gold); }
+  .steps .t.freeze { background: #1f3a52; color: var(--frozen); }
+  .steps .g { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .reasons { margin: 0; padding-left: 16px; font-size: 12px; color: var(--muted); }
+  .parts { font-size: 11px; color: #7f705a; }
+  .card.mark-buy .portrait { box-shadow: 0 0 0 3px #4f8a52, 0 0 16px rgba(111,191,115,.6); }
+  .card.mark-sell .portrait { box-shadow: 0 0 0 3px #8f3d33, 0 0 16px rgba(208,87,74,.6); }
+  .card.mark-buy .name::before { content: "买 "; color: #9fdca2; }
+  .card.mark-sell .name::before { content: "卖 "; color: #f0a196; }
+
   .center-msg { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 15px; }
   .center-msg b { display: block; font-size: 20px; color: var(--text); margin-bottom: 6px; }
 </style>
@@ -302,7 +327,8 @@
         m({ entityId: 120, cardId: 'BG28_597', name: '砂岩幼龙', position: 1, attack: 4, health: 5, tier: 3, races: ['DRAGON'] }),
         m({ entityId: 121, cardId: 'BG28_897', name: '香蕉', type: 'spell', position: 2, attack: 0, health: 0, tier: 1, cost: 1 })
       ],
-      trinkets: [], questRewards: []
+      trinkets: [], questRewards: [],
+      shop: { buyCost: 3, buyCostKnown: true, spellBuyCost: 0, refreshCost: 1, refreshCostKnown: true, freeRefreshes: 0, freezeCost: 0, canUpgrade: true, upgradeCost: 7 }
     },
     tavern: [
       m({ entityId: 201, cardId: 'BGS_018', name: '戈德林', position: 1, attack: 4, health: 4, tier: 5, races: ['BEAST'], deathrattle: true }),
@@ -340,7 +366,35 @@
         { opponentPlayerId: 16, heroCardId: 'TB_BaconShop_HERO_28', heroName: '无尽的托奇', isNextOpponent: false, boardSeenTurn: 8, opponentMinionCount: 7,
           winRate: 0.457, tieRate: 0.088, lossRate: 0.455, winLethal: 0.402, lossLethal: 0, avgDamageDealt: 9.8, avgDamageTaken: 9.1, simulationCount: 3000 }
       ] },
-      optimizer: { status: 'idle', requestId: 0, evaluated: 0, currentOrder: [], bestOrder: [], bestOrderNames: [] }
+      optimizer: { status: 'idle', requestId: 0, evaluated: 0, currentOrder: [], bestOrder: [], bestOrderNames: [] },
+      advisor: { status: 'done', turn: 9, targetHeroName: '伊利丹·怒风', targetBoardSeenTurn: 7, plansConsidered: 30, plansSimulated: 13, elapsedMs: 2740,
+        message: '战吼、回合结束等招募阶段效果没有计入',
+        plans: [
+          { rank: 1, score: 0.62, goldLeft: 1, finalBoard: [101,102,103,104,105,203],
+            steps: [
+              { type: 'sell', text: '卖掉 虚空幼龙（7/7）', entityId: 106, gold: 8 },
+              { type: 'buy', text: '买酒馆第 3 个：千折纸龙（2/3）', entityId: 203, gold: 5 },
+              { type: 'buy', text: '买酒馆第 1 个：戈德林（4/4）', entityId: 201, gold: 2 },
+              { type: 'play', text: '打出：砂岩幼龙、千折纸龙、戈德林', gold: 2 },
+              { type: 'refresh', text: '剩 2 金：可以刷新 2 次找更好的', gold: 2 } ],
+            sim: { winRate: 0.66, tieRate: 0.05, lossRate: 0.29, winLethal: 0, lossLethal: 0, avgDamageDealt: 10.4, avgDamageTaken: 7.9, simulationCount: 1000 },
+            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 66% / 负 29%', '买了 1 个主种族（龙）随从'],
+            scoreParts: { '战力': 0.48, '种族': 0.04, '剩余金币': 0.03, '升本': -0.12 } },
+          { rank: 2, score: 0.51, goldLeft: 0,
+            steps: [
+              { type: 'upgrade', text: '升到 5 本（7 金）', gold: 0 },
+              { type: 'play', text: '打出：砂岩幼龙', gold: 0 } ],
+            sim: { winRate: 0.55, tieRate: 0.07, lossRate: 0.38, winLethal: 0, lossLethal: 0, avgDamageDealt: 9.6, avgDamageTaken: 8.4, simulationCount: 1000 },
+            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 55% / 负 38%', '升本节奏：第 9 回合建议 5 本'],
+            scoreParts: { '战力': 0.16, '升本': 0.35 } },
+          { rank: 3, score: 0.33, goldLeft: 4,
+            steps: [
+              { type: 'buy', text: '买酒馆第 4 个：偏折机器人（3/2）', entityId: 204, gold: 4 },
+              { type: 'play', text: '打出：砂岩幼龙、偏折机器人', gold: 4 },
+              { type: 'refresh', text: '剩 4 金：可以刷新 4 次找更好的', gold: 4 } ],
+            sim: { winRate: 0.6, tieRate: 0.06, lossRate: 0.34, winLethal: 0, lossLethal: 0, avgDamageDealt: 9.9, avgDamageTaken: 8.1, simulationCount: 1000 },
+            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 60% / 负 34%', '没升本，落后节奏（第 9 回合建议 5 本）'],
+            scoreParts: { '战力': 0.41, '升本': -0.12, '剩余金币': 0.04 } } ] }
     }
   };
 
@@ -367,7 +421,7 @@
     const races = (c.races || []).map(r => RACE[r] || r).join(' / ');
     const isMinion = c.type === 'minion';
     return `
-      <div class="${cls.join(' ')}" title="${esc(c.name)} · ${esc(c.cardId)} · 实体 #${c.entityId}">
+      <div class="${cls.join(' ')}" data-eid="${c.entityId}" title="${esc(c.name)} · ${esc(c.cardId)} · 实体 #${c.entityId}">
         <div class="portrait" style="background-image:url('${ART(c.cardId)}')">
           ${c.tier ? `<span class="tier">${'★'.repeat(c.tier)}</span>` : ''}
           ${opts.showCost || c.type === 'spell' ? `<span class="badge cost">${c.cost}</span>` : ''}
@@ -446,6 +500,42 @@
     return `<section class="panel"><h2>对战模拟 <span class="sub">Bob's Buddy</span></h2>${live}${matchups}${optimizerHtml(s)}</section>`;
   }
 
+  const STEP_LABEL = { upgrade: '升本', sell: '卖', buy: '买', play: '打出', refresh: '刷新', freeze: '冻结', pass: '跳过' };
+  function advisorHtml(s) {
+    const a = s.simulation && s.simulation.advisor;
+    if (s.phase !== 'recruit' || !a) return '';
+    const shop = (s.player && s.player.shop) || null;
+    const shopText = shop ? `购买 <b>${shop.buyCost}</b>${shop.buyCostKnown ? '' : '?'} · 刷新 <b>${shop.refreshCost}</b>${shop.freeRefreshes ? `（免费 ${shop.freeRefreshes} 次）` : ''} · 升本 <b>${shop.canUpgrade ? shop.upgradeCost : '—'}</b>` : '';
+    const busy = a.status === 'waiting' || a.status === 'running';
+    const status = busy ? '<span class="spin"></span> 计算中…' : a.status === 'error' ? '出错：' + esc(a.message || '') : '';
+    const head = `<div class="adv-head">${shopText ? `<span>${shopText}</span>` : ''}
+        ${a.targetHeroName ? `<span>模拟对象：<b>${esc(a.targetHeroName)}</b>（第 ${a.targetBoardSeenTurn} 回合阵容）</span>` : ''}
+        ${a.plansConsidered ? `<span>枚举 ${a.plansConsidered} 种 · 模拟 ${a.plansSimulated} 种 · ${(a.elapsedMs / 1000).toFixed(1)} 秒</span>` : ''}
+        ${status ? `<span>${status}</span>` : ''}</div>`;
+    const plans = (a.plans || []).map(pl => `
+      <div class="plan ${pl.rank === 1 ? 'best' : ''}">
+        <div class="plan-top"><span class="plan-rank">方案 ${pl.rank}</span><span class="plan-score">得分 ${pl.score.toFixed(2)}</span></div>
+        <ol class="steps">${pl.steps.map(st => `<li><span class="t ${st.type}">${STEP_LABEL[st.type] || st.type}</span><span>${esc(st.text)}</span><span class="g">${st.gold} 金</span></li>`).join('')}</ol>
+        ${pl.sim ? wtlBar(pl.sim) : ''}
+        ${pl.reasons && pl.reasons.length ? `<ul class="reasons">${pl.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+        <div class="parts">${Object.entries(pl.scoreParts || {}).map(([k, v]) => `${esc(k)} ${v >= 0 ? '+' : ''}${v.toFixed(2)}`).join(' · ')}</div>
+      </div>`).join('');
+    return `<section class="panel"><h2>本回合建议 <span class="sub">第一层：搜索 + 模拟</span></h2>${head}
+      ${plans ? `<div class="plans">${plans}</div>` : `<div class="empty">${busy ? '正在计算…' : '暂无方案'}</div>`}
+      ${a.message && a.status !== 'error' ? `<div class="sim-meta" style="margin-top:8px">${esc(a.message)}</div>` : ''}</section>`;
+  }
+
+  // 方案 1 涉及的卡牌：酒馆里要买的标绿，场上要卖的标红
+  function markBestPlan(s) {
+    const a = s.simulation && s.simulation.advisor;
+    const best = a && s.phase === 'recruit' && (a.plans || [])[0];
+    if (!best) return;
+    for (const st of best.steps) {
+      if (!st.entityId || (st.type !== 'buy' && st.type !== 'sell')) continue;
+      document.querySelectorAll(`[data-eid="${st.entityId}"]`).forEach(el => el.classList.add('mark-' + st.type));
+    }
+  }
+
   function optimizerHtml(s) {
     const o = s.simulation.optimizer;
     if (s.phase === 'combat' || !o || o.status === 'idle') return '';
@@ -518,6 +608,7 @@
         </section>
       </aside>
       <div class="stack">
+        ${advisorHtml(s)}
         ${top}
         <section class="panel"><h2>你的场面 <span class="sub">${p.board.length}/7 · 从左到右</span></h2>${rowHtml(p.board, '场上没有随从')}</section>
         ${simHtml(s)}
@@ -527,6 +618,7 @@
         </div>
       </div>
     </div>`;
+    markBestPlan(s);
   }
 
   // ---------- 数据源 ----------

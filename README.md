@@ -27,6 +27,33 @@
 - Bob's Buddy 不支持的卡牌会在结果里显示原因。
 - 用到了 HDT 的内部类（`BobsBuddyInvoker`、`BobsBuddyUtils.GetMinionFromEntity`），通过反射调用；HDT 大版本更新改了这些名字时，插件会退回到只设置随从基础属性的模式，或在 `simulation` 里报错，局面导出不受影响。
 
+## 本回合建议（第一层：搜索 + 模拟）
+
+招募阶段，局面停止变化 0.4 秒后自动计算，结果显示在网页面板最上方（方案 1 要买的随从标绿、要卖的标红），也写在 JSON 的 `simulation.advisor` 里。
+
+**怎么算的**
+1. 酒馆随从按估值挑前 4 个（能和已有随从凑对 / 三连的优先），枚举“升不升本 × 买其中 0～3 个”的所有组合。
+2. 每个组合算出：场上放不下时卖掉最弱的、买到第三个时合成金色、最后的场面和剩余金币。卖的比买的还强的方案直接丢掉。
+3. 先用估值粗排，最好的 12 个（加上“什么都不买”作对照）用 Bob's Buddy 对**下个对手上次的阵容**各模拟 1000 次；下个对手没交过手时，用见过最强的阵容。
+4. 总分 = 战力分（胜率 − 负率，按血量加权：血越少越看重这回合能不能赢）+ 升本节奏 + 三连 / 对子 + 主种族 + 剩余金币能刷新几次，取前 3。
+
+购买、刷新、升本的价格从游戏里的按钮实体读取（面板上显示的“购买 3 · 刷新 1 · 升本 7”）。
+
+**没算进去的**：战吼、回合结束等招募阶段效果，酒馆法术，英雄技能，刷新之后会出什么。所以在依赖这些效果的流派里（比如靠战吼叠属性），建议会偏保守，以模拟胜率为准、自己判断。
+
+**调权重**：`%AppData%\HearthstoneDeckTracker\BGStateExporter\advisor_weights.json`（第一次计算时自动生成，字段都是中文）。改完保存，下一次计算就会用新值，不用重启 HDT。常用的几个：
+
+| 字段 | 默认 | 作用 |
+| --- | --- | --- |
+| 升本节奏 | 第 2 回合 2 本、第 4 回合 3 本、第 6 回合 4 本、第 8 回合 5 本、第 11 回合 6 本 | 落后时升本加分、不升本扣分 |
+| 升本权重 / 不升本落后惩罚 | 0.35 / 0.12 | 越大越倾向升本 |
+| 满血时战力系数 / 残血时战力系数 / 残血线 | 0.8 / 1.8 / 12 | 血越少越看重这回合赢 |
+| 三连权重 / 对子权重 / 主种族权重 | 0.45 / 0.06 / 0.04 | |
+| 候选随从数 / 每方案最多购买 / 最多模拟方案数 | 4 / 3 / 12 | 搜索规模，越大越慢 |
+| 每方案模拟次数 / 每方案模拟毫秒 | 1000 / 200 | |
+
+每个方案下面那行小字（“战力 +0.48 · 升本 −0.12 …”）就是各项得分，调权重时看它。
+
 ## 安装
 
 **直接用（推荐）**
@@ -58,6 +85,8 @@ BGStateExporterPlugin.cs  插件入口：每 ~100ms 读一次局面，有变化�
 StateReader.cs            从 Core.Game 提取战旗局面
 SimManager.cs             对战模拟调度：读 HDT 本场结果、自动对位模拟、站位优化
 SimBridge.cs              调用 BobsBuddy.dll 和 HDT 内部工具（反射）
+Advisor.cs                第一层建议器：枚举方案、模拟、打分
+AdvisorWeights.cs         建议器权重（advisor_weights.json）
 UpdateChecker.cs          启动时检查 GitHub Releases，自动下载新版本
 .github/workflows/        推送 v* 标签时自动编译并发布 Release
 StateServer.cs            本机 HTTP 服务（只监听 localhost）+ SSE 推送
@@ -86,6 +115,7 @@ sample/state.json         样例数据
     "gold", "maxGold",          // 当前可用金币 / 本回合上限
     "extraGoldNextTurn", "leaderboardPlace",
     "heroPowers": [{ "entityId", "cardId", "name", "cost", "used" }],
+    "shop": { "buyCost": 3, "refreshCost": 1, "freeRefreshes": 0, "canUpgrade": true, "upgradeCost": 7, ... },
     "board": [卡牌],            // 按位置从左到右
     "hand": [卡牌],
     "trinkets": [卡牌], "questRewards": [卡牌]
@@ -102,6 +132,10 @@ sample/state.json         样例数据
     "matchups": { "status": "done", "turn": 9, "results": [
       { "opponentPlayerId", "heroCardId", "heroName", "isNextOpponent", "boardSeenTurn", "opponentMinionCount", "error", ...模拟结果 }
     ]},
+    "advisor": { "status": "done", "turn": 9, "targetHeroName", "targetBoardSeenTurn", "plansConsidered", "plansSimulated", "elapsedMs", "message",
+      "plans": [ { "rank": 1, "score": 0.62, "goldLeft": 2, "finalBoard": [entityId...], "sim": 模拟结果,
+                   "steps": [ { "type": "sell|buy|upgrade|play|refresh|freeze|pass", "text": "买酒馆第 3 个：千折纸龙（2/3）", "entityId": 203, "gold": 5 } ],
+                   "reasons": [...], "scoreParts": { "战力": 0.48, "升本": -0.12 } } ] },
     "optimizer": { "status": "done", "opponentPlayerId", "opponentHeroName", "boardSeenTurn",
                    "current": 模拟结果, "best": 模拟结果,
                    "currentOrder": [entityId...], "bestOrder": [entityId...], "bestOrderNames": [...],
