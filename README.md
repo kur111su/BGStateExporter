@@ -32,6 +32,7 @@
 **直接用（推荐）**
 1. 到 [Releases](https://github.com/kur111su/BGStateExporter/releases/latest) 下载 `BGStateExporter-vX.Y.Z.zip`（不用解压）。
 2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip **拖进插件列表**，HDT 会自动安装，不用重启。
+   注意是拖到 HDT 窗口的插件列表上；直接把 zip 复制进插件文件夹是不会被加载的。也可以手动解压，把 `BGStateExporter` 文件夹放进 `%AppData%\HearthstoneDeckTracker\Plugins\`，然后完全退出 HDT（托盘图标右键「退出」）再打开。
 3. 勾选 **BG State Exporter**，点「打开网页面板」（或浏览器打开 http://localhost:8765/）。
 
 以后有新版本时，插件启动会自动下载，重启 HDT（托盘图标右键「退出」后再打开）生效；网页面板顶部会提示。

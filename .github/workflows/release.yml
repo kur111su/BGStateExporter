@@ -91,6 +91,7 @@ jobs:
           ## 安装
           1. 下载下面的 **BGStateExporter-$tag.zip**（不用解压）
           2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip 拖进插件列表
+             （拖到 HDT 窗口的插件列表上；直接复制进插件文件夹不会被加载。也可以手动解压，把 BGStateExporter 文件夹放进 %AppData%\HearthstoneDeckTracker\Plugins\ 后完全退出再打开 HDT）
           3. 勾选 **BG State Exporter**，点「打开网页面板」
 
           已经装过旧版本的话不用手动操作：插件启动时会自动下载新版本，重启 HDT 后生效。
