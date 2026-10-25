@@ -146,7 +146,7 @@ namespace BGStateExporter
 			if(run.Candidates.Count < 2)
 				return;
 			var before = run.Snapshot;
-			var upgraded = after.Tier > before.Tier;
+			var upgraded = before.Tier >= 1 && after.Tier > before.Tier;   // 开局第 1 回合会从 0 变成 1，不算升本
 			var newGolden = new HashSet<string>(after.GoldenBases.Except(before.GoldenBases));
 
 			// 买了谁：酒馆里的随从现在归玩家了；或者它消失了但同名随从刚合成金色（三连）
