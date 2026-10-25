@@ -287,7 +287,18 @@ namespace BGStateExporter
 						GoldLeft = c.GoldLeft,
 						FinalBoard = c.Final.Select(s => s.E.Id).ToList(),
 						ScoreParts = c.Parts.ToDictionary(kv => kv.Key, kv => Math.Round(kv.Value, 3)),
+						Features = c.F.ToDictionary(kv => kv.Key, kv => Math.Round(kv.Value, 4)),
 					}).ToList(),
+					Weights = AdvisorWeights.FeatureKeys.Select(k => new WeightInfo
+					{
+						Key = k,
+						Name = AdvisorWeights.FeatureNames[k],
+						Value = Math.Round(w.Get(k), 4),
+						Default = Math.Round(new AdvisorWeights().Get(k), 4),
+					}).ToList(),
+					DesiredTier = w.DesiredTier(input.Turn),
+					HpFactor = Math.Round(hpFactor, 3),
+					RunnerUps = Math.Max(0, valid.Count - top.Count),
 				};
 			}
 			catch(Exception ex)

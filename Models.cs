@@ -69,6 +69,10 @@ namespace BGStateExporter
 		public int PlansSimulated { get; set; }            // 其中多少种跑了模拟
 		public long ElapsedMs { get; set; }
 		public List<AdvisorPlan> Plans { get; set; } = new();   // 按得分从高到低，最多 3 个
+		public List<WeightInfo> Weights { get; set; } = new();  // 这次计算用的各项权重
+		public int DesiredTier { get; set; }                   // 升本节奏：这回合建议的酒馆等级
+		public double HpFactor { get; set; }                   // 血量系数（战力特征已乘上）
+		public int RunnerUps { get; set; }                     // 前三名之外还有多少个有效方案
 	}
 
 	public class AdvisorPlan
@@ -81,6 +85,15 @@ namespace BGStateExporter
 		public int GoldLeft { get; set; }
 		public List<int> FinalBoard { get; set; } = new();  // 结束时场面的 entityId，从左到右
 		public Dictionary<string, double> ScoreParts { get; set; } = new();   // 各项得分，方便调权重
+		public Dictionary<string, double> Features { get; set; } = new();     // 原始特征（键同 weights[].key），得分 = 权重 × 特征
+	}
+
+	public class WeightInfo
+	{
+		public string Key { get; set; } = "";
+		public string Name { get; set; } = "";
+		public double Value { get; set; }                    // 当前使用的权重
+		public double Default { get; set; }                  // 默认权重（自动学习前）
 	}
 
 	public class PlanStep

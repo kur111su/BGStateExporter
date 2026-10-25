@@ -230,7 +230,18 @@
       }
     ],
     "trinkets": [],
-    "questRewards": []
+    "questRewards": [],
+    "shop": {
+      "buyCost": 3,
+      "buyCostKnown": true,
+      "spellBuyCost": 0,
+      "refreshCost": 1,
+      "refreshCostKnown": true,
+      "freeRefreshes": 0,
+      "freezeCost": 0,
+      "canUpgrade": true,
+      "upgradeCost": 7
+    }
   },
   "tavern": [
     {
@@ -468,6 +479,16 @@
     }
   ],
   "nextOpponentPlayerId": 12,
+  "learning": {
+    "enabled": true,
+    "gamesCollected": 7,
+    "samplesCollected": 64,
+    "minGames": 30,
+    "samplesThisGame": 5,
+    "fitting": false,
+    "lastFitTime": null,
+    "lastFitMessage": null
+  },
   "simulation": {
     "available": true,
     "message": null,
@@ -579,6 +600,257 @@
       "currentOrder": [],
       "bestOrder": [],
       "bestOrderNames": []
+    },
+    "advisor": {
+      "status": "done",
+      "turn": 9,
+      "targetHeroName": "伊利丹·怒风",
+      "targetBoardSeenTurn": 7,
+      "plansConsidered": 30,
+      "plansSimulated": 13,
+      "elapsedMs": 2740,
+      "message": "战吼、回合结束等招募阶段效果没有计入",
+      "desiredTier": 5,
+      "hpFactor": 0.911,
+      "runnerUps": 10,
+      "weights": [
+        {
+          "key": "sim",
+          "name": "战力",
+          "value": 1,
+          "default": 1
+        },
+        {
+          "key": "heur",
+          "name": "估值战力",
+          "value": 0.15,
+          "default": 0.15
+        },
+        {
+          "key": "upgrade",
+          "name": "升本",
+          "value": 0.35,
+          "default": 0.35
+        },
+        {
+          "key": "behind",
+          "name": "落后节奏",
+          "value": 0.12,
+          "default": 0.12
+        },
+        {
+          "key": "triple",
+          "name": "三连",
+          "value": 0.45,
+          "default": 0.45
+        },
+        {
+          "key": "pair",
+          "name": "对子",
+          "value": 0.06,
+          "default": 0.06
+        },
+        {
+          "key": "tribe",
+          "name": "种族",
+          "value": 0.04,
+          "default": 0.04
+        },
+        {
+          "key": "refresh",
+          "name": "剩余金币",
+          "value": 0.015,
+          "default": 0.015
+        }
+      ],
+      "plans": [
+        {
+          "rank": 1,
+          "score": 0.524,
+          "goldLeft": 0,
+          "finalBoard": [
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            120
+          ],
+          "steps": [
+            {
+              "type": "upgrade",
+              "text": "升到 5 本（7 金）",
+              "entityId": 0,
+              "gold": 0
+            },
+            {
+              "type": "play",
+              "text": "打出：砂岩幼龙",
+              "entityId": 0,
+              "gold": 0
+            }
+          ],
+          "sim": {
+            "winRate": 0.55,
+            "tieRate": 0.07,
+            "lossRate": 0.38,
+            "winLethal": 0,
+            "lossLethal": 0,
+            "avgDamageDealt": 9.6,
+            "avgDamageTaken": 8.4,
+            "simulationCount": 1000
+          },
+          "reasons": [
+            "对 伊利丹·怒风（第 7 回合阵容）胜 55% / 负 38%",
+            "升本节奏：第 9 回合建议 5 本"
+          ],
+          "features": {
+            "sim": 0.1739,
+            "upgrade": 1
+          },
+          "scoreParts": {
+            "战力": 0.174,
+            "升本": 0.35
+          }
+        },
+        {
+          "rank": 2,
+          "score": 0.329,
+          "goldLeft": 2,
+          "finalBoard": [
+            101,
+            102,
+            103,
+            104,
+            105,
+            120,
+            203
+          ],
+          "steps": [
+            {
+              "type": "sell",
+              "text": "卖掉 虚空幼龙（7/7）",
+              "entityId": 106,
+              "gold": 8
+            },
+            {
+              "type": "buy",
+              "text": "买酒馆第 3 个：千折纸龙（2/3）",
+              "entityId": 203,
+              "gold": 5
+            },
+            {
+              "type": "buy",
+              "text": "买酒馆第 1 个：戈德林（4/4）",
+              "entityId": 201,
+              "gold": 2
+            },
+            {
+              "type": "play",
+              "text": "打出：砂岩幼龙、千折纸龙、戈德林",
+              "entityId": 0,
+              "gold": 2
+            },
+            {
+              "type": "refresh",
+              "text": "剩 2 金：可以刷新 2 次找更好的",
+              "entityId": 0,
+              "gold": 2
+            }
+          ],
+          "sim": {
+            "winRate": 0.66,
+            "tieRate": 0.05,
+            "lossRate": 0.29,
+            "winLethal": 0,
+            "lossLethal": 0,
+            "avgDamageDealt": 10.4,
+            "avgDamageTaken": 7.9,
+            "simulationCount": 1000
+          },
+          "reasons": [
+            "对 伊利丹·怒风（第 7 回合阵容）胜 66% / 负 29%",
+            "没升本，落后节奏（第 9 回合建议 5 本）",
+            "买了 1 个主种族（龙）随从"
+          ],
+          "features": {
+            "sim": 0.3788,
+            "behind": -1,
+            "tribe": 1,
+            "refresh": 2
+          },
+          "scoreParts": {
+            "战力": 0.379,
+            "落后节奏": -0.12,
+            "种族": 0.04,
+            "剩余金币": 0.03
+          }
+        },
+        {
+          "rank": 3,
+          "score": 0.191,
+          "goldLeft": 4,
+          "finalBoard": [
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            204
+          ],
+          "steps": [
+            {
+              "type": "buy",
+              "text": "买酒馆第 4 个：偏折机器人（3/2）",
+              "entityId": 204,
+              "gold": 4
+            },
+            {
+              "type": "play",
+              "text": "打出：砂岩幼龙、偏折机器人",
+              "entityId": 0,
+              "gold": 4
+            },
+            {
+              "type": "refresh",
+              "text": "剩 4 金：可以刷新 4 次找更好的",
+              "entityId": 0,
+              "gold": 4
+            }
+          ],
+          "sim": {
+            "winRate": 0.6,
+            "tieRate": 0.06,
+            "lossRate": 0.34,
+            "winLethal": 0,
+            "lossLethal": 0,
+            "avgDamageDealt": 9.9,
+            "avgDamageTaken": 8.1,
+            "simulationCount": 1000
+          },
+          "reasons": [
+            "对 伊利丹·怒风（第 7 回合阵容）胜 60% / 负 34%",
+            "没升本，落后节奏（第 9 回合建议 5 本）"
+          ],
+          "features": {
+            "sim": 0.2659,
+            "behind": -1,
+            "refresh": 3
+          },
+          "scoreParts": {
+            "战力": 0.266,
+            "落后节奏": -0.12,
+            "剩余金币": 0.045
+          }
+        }
+      ]
     }
+  },
+  "plugin": {
+    "version": "0.6.0",
+    "latestVersion": "",
+    "updateReady": false
   }
 }
