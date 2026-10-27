@@ -4,3 +4,5 @@ obj/
 *.user
 __pycache__/
 *.pyc
+bgrl/.venv/
+bgrl/reports/
