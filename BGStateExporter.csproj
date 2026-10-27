@@ -51,6 +51,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- bgrl/ 是独立的 Python 训练环境和 BGSimHost 项目，不编译进插件 -->
+    <Compile Remove="bgrl/**" />
+    <None Remove="bgrl/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 网页面板打包进 DLL，由内置 HTTP 服务直接提供 -->
     <EmbeddedResource Include="www\index.html" LogicalName="BGStateExporter.index.html" />
   </ItemGroup>

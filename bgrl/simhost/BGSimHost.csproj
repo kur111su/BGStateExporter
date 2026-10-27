@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    BGSimHost：给 Python 训练环境用的 Bob's Buddy 批量模拟接口。
+    Python（pythonnet）一次传入一批战斗的 JSON，这里在 .NET 里构造输入并行模拟，返回 JSON 结果，
+    避免在 Python 里逐个设置随从属性（那样每秒只能构造约 80 场）。
+    编译：dotnet build -c Release -p:HDTPath=D:\claude\HDT（step1_bb_check.bat 会自动做）
+    BobsBuddy.dll 等从用户本机 HDT 目录引用，不复制、不进仓库。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>10</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>BGSimHost</AssemblyName>
+    <RootNamespace>BGSimHost</RootNamespace>
+    <Version>0.1.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\</OutputPath>
+    <HDTPath Condition="'$(HDTPath)' == ''">$(MSBuildThisFileDirectory)..\..\..\HDT</HDTPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="HearthDb">
+      <HintPath>$(HDTPath)\HearthDb.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BobsBuddy">
+      <HintPath>$(HDTPath)\BobsBuddy.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(HDTPath)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

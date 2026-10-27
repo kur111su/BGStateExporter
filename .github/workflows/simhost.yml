@@ -1,0 +1,39 @@
+# 检查 bgrl/simhost（给 Python 训练环境用的 Bob's Buddy 批量模拟接口）能否编译。
+# 只编译，不发布：BobsBuddy.dll 是 HDT 的组件，BGSimHost 在用户电脑上由 step1_bb_check.bat 自己编译。
+name: BGSimHost build check
+
+on:
+  push:
+    paths: ["bgrl/simhost/**", ".github/workflows/simhost.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download HDT (reference assemblies only)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ok = $false
+          foreach ($repo in "HearthSim/HDT-Releases", "HearthSim/HDT-Velopack-Releases") {
+            gh release download --repo $repo --pattern "*-full.nupkg" --dir hdt-pkg --clobber
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+          }
+          if (-not $ok) { throw "HDT download failed" }
+          $pkg = Get-ChildItem hdt-pkg -Filter *.nupkg | Select-Object -First 1
+          Copy-Item $pkg.FullName hdt.zip
+          Expand-Archive hdt.zip -DestinationPath hdt-extracted -Force
+          $exe = Get-ChildItem hdt-extracted -Recurse -Filter HearthstoneDeckTracker.exe | Select-Object -First 1
+          "HDT_PATH=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build BGSimHost
+        shell: pwsh
+        run: dotnet build bgrl/simhost/BGSimHost.csproj -c Release "-p:HDTPath=$env:HDT_PATH"

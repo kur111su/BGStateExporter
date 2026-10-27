@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 bgrl/.venv/
 bgrl/reports/
+bgrl/simhost/bin/
+bgrl/simhost/obj/
