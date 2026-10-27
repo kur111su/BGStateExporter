@@ -51,6 +51,20 @@ def main() -> int:
     b = r.collect(1.0, 1.0, {})
     assert np.allclose(b["adv"], [1.0, 0.9, 0.8]) and np.allclose(b["ret"], 1.0) and list(b["place"]) == [1, 1, 1]
     print("GAE 检查通过")
+
+    # 混合精度：GPU 上用 float16，CPU 上用 bfloat16 走一遍前向和反向（之前 float16 下屏蔽值溢出）
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    dt = torch.float16 if dev == "cuda" else torch.bfloat16
+    small = small.to(dev).train()
+    o = env.observe()
+    f, c, mk = (torch.as_tensor(o["features"], device=dev), torch.as_tensor(o["cards"], device=dev).long(),
+                torch.as_tensor(o["action_mask"], device=dev))
+    with torch.autocast(dev, dtype=dt):
+        logits, v, pl = small(f, c, mk)
+    loss = torch.nn.functional.log_softmax(logits, -1).logsumexp(-1).mean() + v.mean() + pl.mean()
+    loss.backward()
+    assert torch.isfinite(loss), loss
+    print(f"混合精度（{dev} {dt}）前向反向通过")
     print("TEST OK")
     return 0
 

@@ -210,12 +210,13 @@ class EntityTransformer(nn.Module):
                  self.h_play(hand).reshape(B, -1),              # 46..125
                  mag.reshape(B, -1),                            # 126..195
                  self.h_move(board).reshape(B, -1)]             # 196..244
-        logits = torch.cat(parts, 1)
+        # 混合精度（float16）下 -1e9 会溢出：屏蔽和后面的概率计算都在 float32 里做
+        logits = torch.cat(parts, 1).float()
         assert logits.shape[1] == self.L.actions, logits.shape
         logits = logits.masked_fill(~mask, -1e9)
         pooled = h.sum(1) / present.sum(1, keepdim=True).clamp(min=1)
         z = g + pooled
-        return logits, torch.tanh(self.v_head(z)).squeeze(-1), self.p_head(z)
+        return logits, torch.tanh(self.v_head(z).float()).squeeze(-1), self.p_head(z).float()
 
     @torch.no_grad()
     def act(self, f, c, mask, greedy: bool = False):
