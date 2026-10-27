@@ -112,6 +112,13 @@ def extract_combats(games_dir: str, log=print) -> list[Combat]:
 
 # ---------------------------------------------------------------- .NET / Bob's Buddy
 
+def wait(task):
+    """等 .NET Task 完成。time.sleep 会释放 GIL，模拟线程需要回调 Python 时不会卡死。"""
+    while not task.IsCompleted:
+        time.sleep(0)
+    return task.Result
+
+
 def find_hdt(arg: str | None) -> Path | None:
     cands: list[Path] = []
     if arg:
@@ -143,8 +150,9 @@ class BB:
         self.System = System
         self.Assembly = Assembly
 
-        # 依赖从 HDT 目录找。加载阶段用 Python 回调；跑模拟前会预加载全部依赖再卸掉回调，
-        # 避免模拟线程回调 Python 时和主线程抢 GIL 卡死。
+        # 依赖从 HDT 目录找（python.exe 没有 HDT 的 exe.config 里的版本重定向，靠这个回调兜底）。
+        # 回调可能在模拟线程上触发，所以等待模拟结果时一律用 wait()，不直接取 .Result，
+        # 否则主线程拿着 GIL 阻塞、模拟线程等 GIL 进回调，会互相卡死。
         def resolve(_sender, args):
             name = AssemblyName(args.Name).Name
             for ext in (".dll", ".exe"):
@@ -195,8 +203,7 @@ class BB:
         return getattr(mod, t.Name)
 
     def preload_dependencies(self) -> None:
-        """把 BobsBuddy 引用的程序集全部预先加载，然后卸掉 Python 回调。"""
-        from System import AppDomain
+        """把 BobsBuddy 引用的程序集全部预先加载，尽量不在模拟中途触发加载。"""
         seen = set()
         stack = [self.asm, self.hearthdb]
         while stack:
@@ -216,7 +223,6 @@ class BB:
                             except Exception:
                                 pass
                             break
-        AppDomain.CurrentDomain.AssemblyResolve -= self._handler
 
     # ---------- 反射工具
 
@@ -348,8 +354,7 @@ class BB:
         return inp, unknown
 
     def run(self, inp, iterations: int, threads: int, max_ms: int):
-        task = self.SimulationRunner().SimulateMultiThreaded(inp, iterations, threads, max_ms)
-        return task.Result
+        return wait(self.SimulationRunner().SimulateMultiThreaded(inp, iterations, threads, max_ms))
 
     @staticmethod
     def summarize(o) -> dict:
@@ -513,7 +518,7 @@ def main() -> int:
         t0 = time.perf_counter()
         tasks = [bb.SimulationRunner().SimulateMultiThreaded(x, 1, 1, 5000) for x in inputs]
         for t in tasks:
-            _ = t.Result
+            wait(t)
         dt = time.perf_counter() - t0
         speed["distinctParallelPerSec"] = round(n / dt)
         rep.log(f"不同战斗各模拟 1 次、{n} 场同时提交：每秒 {n / dt:,.0f} 场")
