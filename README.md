@@ -137,6 +137,21 @@ bgrl/                     强化学习：模拟环境、模型、训练（进行
 sample/state.json         样例数据
 ```
 
+## JSON 格式（schema 2，v0.9 起）
+
+v0.9 在 schema 1 的基础上加了完整的玩家视角（新字段都是可选的，旧程序可以忽略）：
+
+| 位置 | 字段 | 内容 |
+| --- | --- | --- |
+| 顶层 | `offered` | 当前待选项 `{kind, cards}`，kind = hero / hero_power / trinket / dark_gift / discover / discover_spell / other |
+| 顶层 | `damageCap`、`damageCapEnabled`、`gameTags` | 本回合战斗伤害上限；游戏实体上非零的 BACON_* 标签 |
+| `player` | `playerTags`、`heroTags` | 玩家实体、英雄实体上所有非零标签（宝石加成、酒馆法术加成等计数都在这里） |
+| `player` | `quests`、`objectives` | 任务、目标（神祇印记等） |
+| `player.heroPowers[]` | `scriptData`、`tags` | 英雄技能计数器 |
+| 每张卡 | `scriptData` | TAG_SCRIPT_DATA_NUM_1..4（成长计数等，全 0 时省略） |
+| 每张卡 | `enchantments` | 附在它身上的附魔，按卡牌分组：`{cardId, name, count, scriptData1, scriptData2}` |
+| 每张卡 | `tags` | 其它有用的非零标签（BACON_*、模块化部件、复制来源等） |
+
 ## JSON 格式（schema 1）
 
 ```jsonc
