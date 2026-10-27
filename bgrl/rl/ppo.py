@@ -69,6 +69,7 @@ class Config:
     # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
     turn_caps: str = "14,18,22,26,30,34,38,42,45"
+    active_snapshots: int = 3      # 同一时间最多用几个快照当对手（多了每步要多算几次网络，变慢）
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -215,6 +216,7 @@ class Trainer:
         self.league = League(load_real_profile())
         self.league.add("bot")
         self.rollout = Rollout(off)
+        self.active_snaps = []
         self.iter = 0
         self.anchor = None
         self.anchor_until = 0
@@ -239,11 +241,22 @@ class Trainer:
         self.role[off + g * k: off + (g + 1) * k] = 0
         if name == "bot":
             return
-        snaps = [m for m in self.league.training_weights() if m[0].name != "bot"]
+        # 每局只从“当前在用”的几个快照里抽：每一步每个不同的对手模型都要单独算一次，种类多了会很慢
+        snaps = self.active_snaps
         for s in range(1, 8):
             if snaps and self.rng.random() < 0.75:
                 m = self.rng.choices([x for x, _ in snaps], weights=[w for _, w in snaps])[0]
                 self.role[off + g * k + s] = self._role_id(m.name)
+
+    def _refresh_active(self):
+        """每隔 10 轮按对手库权重重新挑最多 active_snapshots 个快照作为这段时间的对手。"""
+        pool = [m for m in self.league.training_weights() if m[0].name != "bot" and m[1] > 0]
+        if len(pool) > self.cfg.active_snapshots:
+            pick = set()
+            while len(pick) < self.cfg.active_snapshots:
+                pick.add(self.rng.choices(range(len(pool)), weights=[w for _, w in pool])[0])
+            pool = [pool[i] for i in sorted(pick)]
+        self.active_snaps = pool
 
     def _policy(self, rid):
         if rid == 0:
@@ -264,6 +277,8 @@ class Trainer:
     def collect(self):
         cfg = self.cfg
         self.model.eval()
+        if self.iter % 10 == 0 or not self.active_snaps:
+            self._refresh_active()
         n_dec = 0
         self.finished = 0
         t0 = time.time()

@@ -80,6 +80,13 @@ class Layout:
         return out
 
 
+def soft_log(x: torch.Tensor) -> torch.Tensor:
+    """输入压缩：|x| ≤ 1 不变，更大的按对数压（1 + ln|x|）。后期随从攻防上千（观察里是攻防/10），
+    不压的话半精度下注意力会溢出成 NaN（训练第 200 轮测强度时崩溃就是这个）。"""
+    a = x.abs()
+    return torch.where(a <= 1, x, torch.sign(x) * (1 + torch.log(a.clamp(min=1))))
+
+
 class CardEmbed(nn.Module):
     def __init__(self, static: np.ndarray, dc: int):
         super().__init__()
@@ -184,7 +191,7 @@ class EntityTransformer(nn.Module):
 
     def forward(self, f: torch.Tensor, c: torch.Tensor, mask: torch.Tensor):
         """返回 (动作 logits [B,245]（非法 = -1e9），价值 [B]，名次 logits [B,8])。"""
-        x, present = self._tokens(f, c.long())
+        x, present = self._tokens(soft_log(f.float()), c.long())
         h = self.norm(self.enc(x, src_key_padding_mask=~present))
         h = h * present.unsqueeze(-1)
         idx = {}
@@ -214,9 +221,14 @@ class EntityTransformer(nn.Module):
         logits = torch.cat(parts, 1).float()
         assert logits.shape[1] == self.L.actions, logits.shape
         logits = logits.masked_fill(~mask, -1e9)
+        # 保险：某一行出现 NaN / inf（数值溢出）时，这一行退回到合法动作里均匀选，不让整个训练崩掉
+        bad = ~torch.isfinite(logits).all(-1)
+        if bad.any():
+            logits = torch.where(bad.unsqueeze(-1), torch.zeros_like(logits).masked_fill(~mask, -1e9), logits)
         pooled = h.sum(1) / present.sum(1, keepdim=True).clamp(min=1)
         z = g + pooled
-        return logits, torch.tanh(self.v_head(z).float()).squeeze(-1), self.p_head(z).float()
+        v = torch.nan_to_num(torch.tanh(self.v_head(z).float()).squeeze(-1), nan=0.0)
+        return logits, v, torch.nan_to_num(self.p_head(z).float(), nan=0.0)
 
     @torch.no_grad()
     def act(self, f, c, mask, greedy: bool = False):

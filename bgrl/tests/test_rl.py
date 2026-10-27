@@ -71,6 +71,15 @@ def main() -> int:
     loss.backward()
     assert torch.isfinite(loss), loss
     print(f"混合精度（{dev} {dt}）前向反向通过")
+
+    # 后期局面数值很大（攻防上万）：输入压缩后半精度下也不能出 NaN
+    with torch.no_grad(), torch.autocast(dev, dtype=dt):
+        big = f.clone()
+        big[:, :] = big * 1000.0 + 5000.0 * (big != 0)
+        lg, vv, pp = small(big, c, mk)
+    assert torch.isfinite(lg).all() and torch.isfinite(vv).all() and torch.isfinite(pp).all()
+    a2, _, _ = small.act(big, c, mk)
+    print("大数值输入没有 NaN")
     print("TEST OK")
     return 0
 
