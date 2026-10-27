@@ -84,6 +84,38 @@ def describe(me: dict, a: int) -> str:
     return f"把 {_name(at(board, f))} 从第 {f + 1} 位移到第 {t + 1} 位"
 
 
+def op_type(me: dict, a: int) -> str:
+    """动作类别（插件面板上色用）。"""
+    if a == A_END:
+        return "end"
+    if a == A_REFRESH:
+        return "refresh"
+    if a == A_FREEZE:
+        return "freeze"
+    if a == A_UPGRADE:
+        return "upgrade"
+    if A_HP <= a < A_DARK_GIFT:
+        return "hero"
+    if A_BUY <= a < A_SELL:
+        return "buy"
+    if A_SELL <= a < A_ACTIVATE:
+        return "sell"
+    if A_ACTIVATE <= a < A_CHOOSE:
+        return "activate"
+    if A_CHOOSE <= a < A_PLAY:
+        return "choose"
+    if A_PLAY <= a < A_MAGNETIZE:
+        hand = me.get("hand") or []
+        h = (a - A_PLAY) // 8
+        it = hand[h] if h < len(hand) else {}
+        return "spell" if it.get("type") == "spell" or it.get("kind") in ("spell", "tavern_spell") else "play"
+    if A_MAGNETIZE <= a < A_MOVE:
+        return "play"
+    if a >= A_MOVE:
+        return "move"
+    return "other"
+
+
 def value_to_place(v: float) -> float:
     """名次奖励（第 1 名 1 … 第 8 名 -1，线性）→ 名次。"""
     return 1.0 + (1.0 - float(v)) * 3.5
@@ -148,7 +180,8 @@ class Advisor:
                 _, v2, pd2, _ = self._eval(g2) if g2.needs_action(0) else (None, v, pdist, None)
             except ValueError:
                 continue
-            out["alternatives"].append({"action": int(a), "text": describe(me, int(a)), "prob": round(float(probs[a]), 3),
+            out["alternatives"].append({"action": int(a), "text": describe(me, int(a)), "type": op_type(me, int(a)),
+                                        "prob": round(float(probs[a]), 3),
                                         "placeAfter": round(float((pd2 * np.arange(1, 9)).sum()), 2)})
         # 贪心走完本回合
         g2 = g.copy()
@@ -158,7 +191,7 @@ class Advisor:
             p, _, _, m = self._eval(g2)
             a = int(np.argmax(np.where(m, p, -1)))
             me2 = json.loads(g2.view(0))["me"]
-            out["steps"].append({"action": a, "text": describe(me2, a), "prob": round(float(p[a]), 3)})
+            out["steps"].append({"action": a, "text": describe(me2, a), "type": op_type(me2, a), "prob": round(float(p[a]), 3)})
             if a == A_END:
                 break
             try:

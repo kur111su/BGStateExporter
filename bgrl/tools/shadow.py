@@ -1,7 +1,8 @@
-"""C1 影子模式：读插件的实时局面，在旁边的网页上显示模型给的本回合方案。只显示，不操作游戏。
+"""C1 影子模式：读插件的实时局面，算出模型给的本回合方案，显示在插件面板（v0.9.2 起）和单独的网页上。
+只显示，不操作游戏。
 
 用法：python shadow.py [--run runs/main | --ckpt 某个检查点.pt] [--port 8766] [--device cpu]
-  打开 http://localhost:8766/ 看建议（插件面板仍是 http://localhost:8765/）。
+  插件面板 http://localhost:8765/ 的“模型建议”一栏会自动出现；单独的网页 http://localhost:8766/ 也能看。
   训练还在跑时，latest.pt 每次更新后（换局时）自动换成新模型。
   每回合的方案记在 bgrl/reports/shadow/日期.jsonl，之后可以和你的实际操作对照。
 """
@@ -198,7 +199,7 @@ class Shadow:
 
     def snapshot(self) -> dict:
         with self.lock:
-            return {"status": self.status, "advice": self.advice,
+            return {"status": self.status, "advice": self.advice, "service": "bgrl-shadow", "version": 1,
                     "model": {k: self.minfo.get(k) for k in ("name", "iter", "path")}}
 
 
@@ -229,6 +230,7 @@ def main() -> int:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")          # 插件面板（8765 端口）来取
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -238,7 +240,8 @@ def main() -> int:
 
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
     threading.Thread(target=sh.loop, daemon=True).start()
-    print(f"影子模式：打开 http://localhost:{a.port}/ （插件面板 http://localhost:{a.plugin_port}/）", flush=True)
+    print(f"影子模式已启动：插件面板 http://localhost:{a.plugin_port}/ 会显示“模型建议”；"
+          f"单独的网页 http://localhost:{a.port}/。关掉这个窗口就停止。", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
