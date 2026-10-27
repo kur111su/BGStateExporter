@@ -8,10 +8,9 @@ if not exist .venv\Scripts\python.exe (
   pause
   exit /b 1
 )
-for /f "usebackq delims=" %%T in (`.venv\Scripts\python -c "import sys;print('cp'+str(sys.version_info[0])+str(sys.version_info[1]))"`) do set "PYTAG=%%T"
 for /f "usebackq tokens=2 delims==" %%C in (`findstr /b "commit=" taverngym\PIN.txt`) do set "TGCOMMIT=%%C"
 set "TGTAG=taverngym-%TGCOMMIT:~0,7%"
-set "WHL=taverngym-1.0.0-%PYTAG%-%PYTAG%-win_amd64.whl"
+set "WHL=taverngym-1.0.0-cp310-abi3-win_amd64.whl"
 if not exist wheels mkdir wheels
 if not exist "wheels\%WHL%" (
   echo Downloading %WHL% from release %TGTAG% ...
