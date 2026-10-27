@@ -454,9 +454,13 @@ def compare(g, state: dict) -> list[str]:
             diffs.append(f"附着 {c['cardId']} {got_att} ≠ {want_att}")
     stats = json.loads(g.state_json())["players"][0].get("stats", {})
     tags = {k.upper(): val for k, val in (p0.get("playerTags") or {}).items()}
+    da, dh = spell_extra_dynamic(_by_pos(p0.get("board")), p0.get("trinkets") or [])
     for t, f in STAT_TAGS.items():
-        if t in tags and stats.get(f) != tags[t]:
-            diffs.append(f"计数 {f} {stats.get(f)} ≠ {tags[t]}")
+        want = tags.get(t)
+        if want is not None and f in ("spell_atk", "spell_hp"):
+            want = max(0, want - (da if f == "spell_atk" else dh))
+        if want is not None and stats.get(f) != want:
+            diffs.append(f"计数 {f} {stats.get(f)} ≠ {want}")
     for key, want in (("gold", p0.get("gold")), ("tier", p0.get("tavernTier")), ("health", p0.get("health")),
                       ("armor", p0.get("armor"))):
         got = me.get(key)

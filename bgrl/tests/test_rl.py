@@ -1,6 +1,7 @@
 """B2/B3 冒烟测试（CI 用，CPU 即可）：模型形状、动作屏蔽、动作头顺序、参数量、GAE。"""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,7 @@ def main() -> int:
     assert names[196 + 5 * 7 + 1] == "Move { from: 5, to: 1 }"
 
     m = build_model()
-    print(f"默认模型参数 {n_params(m) / 1e6:.2f}M")
+    print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + f"默认模型参数 {n_params(m) / 1e6:.2f}M")
     assert 1.5e6 < n_params(m) < 6e6
 
     env = taverngym.BatchEnv(n_games=8, seed=1, controlled=range(8), threads=2)

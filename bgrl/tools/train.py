@@ -65,7 +65,8 @@ def main() -> int:
     def show(rec):
         keys = ("iter", "decisions", "dps", "t_collect", "t_update", "kl", "ent", "vf", "place_bot", "place_league",
                 "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop")
-        print(json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False), flush=True)
+        line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
+        print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
     tr.train(cfg.iters, on_log=show)
     if a.smoke:
         print("SMOKE OK")
