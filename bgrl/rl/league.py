@@ -97,6 +97,42 @@ def sim_profile(policy=None, games: int = 32, seed: int = 0, config: dict | None
     return {"source": "sim", "games": games, "turns": _summ(board, tier, hp)}
 
 
+def sim_profile_batched(policy_batch, games: int = 16, seed: int = 0, config: dict | None = None,
+                        max_rounds: int = 20000) -> dict:
+    """同 sim_profile，但所有对局、所有座位一起出动作：policy_batch(features[n,F], cards[n,C], mask[n,A]) -> 动作[n]。
+    （逐个决策调用模型太慢：一局要几千次前向。）"""
+    import numpy as np
+    import taverngym
+    gs = [taverngym.Game(seed=seed + k, config_json=json.dumps(config) if config else None) for k in range(games)]
+    last = [g.turn for g in gs]
+    board, tier, hp = defaultdict(list), defaultdict(list), defaultdict(list)
+    for _ in range(max_rounds):
+        todo = [(gi, p) for gi, g in enumerate(gs) if not g.is_over() for p in range(g.num_players) if g.needs_action(p)]
+        if not todo:
+            break
+        fs, cs, ms = [], [], []
+        for gi, p in todo:
+            f, c = gs[gi].observe(p)
+            fs.append(np.frombuffer(f, "<f4"))
+            cs.append(np.frombuffer(c, "<i4"))
+            ms.append(np.frombuffer(gs[gi].legal_mask(p), dtype=np.uint8).astype(bool))
+        acts = policy_batch(np.stack(fs), np.stack(cs), np.stack(ms))
+        for (gi, p), a in zip(todo, acts):
+            g = gs[gi]
+            if g.needs_action(p):
+                g.step(p, int(a))
+        for gi, g in enumerate(gs):
+            if g.turn != last[gi]:
+                st_ = json.loads(g.state_json())
+                for pl in st_["players"]:
+                    if pl["alive"]:
+                        board[last[gi]].append(sum(m["atk"] + m["hp"] for m in pl["last_board"]))
+                        tier[last[gi]].append(pl["tier"])
+                        hp[last[gi]].append(pl["health"] + pl["armor"])
+                last[gi] = g.turn
+    return {"source": "sim", "games": games, "turns": _summ(board, tier, hp)}
+
+
 def distance(p: dict, real: dict) -> float:
     """两个画像的距离：第 4–13 回合阵容总攻防中位数的对数差的均方根（等级差也算一点）。"""
     acc, n = 0.0, 0

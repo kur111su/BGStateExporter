@@ -379,18 +379,15 @@ class Trainer:
     # ---------------- 对手库快照、评估 ----------------
 
     def snapshot(self):
-        from .league import sim_profile
+        """存快照进对手库，并测它的画像（所有对局、座位一起成批出动作）。"""
+        from .league import sim_profile_batched
         path = self.run / "snapshots" / f"it{self.iter:05d}.pt"
         torch.save(self.model.state_dict(), path)
-        pol = self.learner
-
-        def act(g, p):
-            f, c = g.observe(p)
-            m = np.frombuffer(g.legal_mask(p), dtype=np.uint8).astype(bool)[None]
-            a, _, _ = pol(np.frombuffer(f, "<f4")[None].copy(), np.frombuffer(c, "<i4")[None].copy(), m)
-            return int(a[0])
         self.model.eval()
-        prof = sim_profile(act, games=self.cfg.profile_games, seed=10**7 + self.iter)
+
+        def act(f, c, m):
+            return self.learner(f, c, m)[0]
+        prof = sim_profile_batched(act, games=self.cfg.profile_games, seed=10**7 + self.iter)
         mem = self.league.add(path.stem, str(path), prof)
         (self.run / "league.json").write_text(json.dumps(self.league.to_json(), ensure_ascii=False, indent=1),
                                               encoding="utf-8")
