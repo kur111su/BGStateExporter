@@ -1,4 +1,4 @@
-# Build Windows wheels of TavernGym (MCG-NJU/AutoTavern, MIT) at the commit pinned in bgrl/taverngym/PIN.txt
+# Build Windows (+ Linux, for development/CI) wheels of TavernGym (MCG-NJU/AutoTavern, MIT) at the commit pinned in bgrl/taverngym/PIN.txt
 # and publish them as a *prerelease* (prereleases are ignored by the plugin's auto-update, which follows
 # releases/latest). Release notes must stay ASCII.
 name: TavernGym wheels
@@ -13,10 +13,11 @@ permissions:
 
 jobs:
   wheel:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, ubuntu-24.04]
         python: ["3.12"]   # the wheel is abi3 (cp310-abi3): one build serves Python 3.10+
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +50,8 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip "maturin>=1.15,<2"
-          maturin build --release --interpreter python --out ../dist
+          if ($IsLinux) { maturin build --release --interpreter python --compatibility linux --out ../dist }
+          else { maturin build --release --interpreter python --out ../dist }
           Get-ChildItem ../dist
 
       - name: Smoke test (one bot game)
@@ -60,7 +62,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: taverngym-py${{ matrix.python }}
+          name: taverngym-${{ matrix.os }}-py${{ matrix.python }}
           path: dist/*.whl
 
   release:
@@ -85,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="taverngym-${TG_COMMIT:0:7}"
-          notes="Windows wheels of TavernGym (https://github.com/${TG_REPO}, MIT License) built from commit ${TG_COMMIT}. Not affiliated with Blizzard. See TavernGym-LICENSE.txt and TavernGym-NOTICE.txt. Install: run bgrl/step_a1_taverngym.bat."
+          notes="Windows and Linux wheels of TavernGym (https://github.com/${TG_REPO}, MIT License) built from commit ${TG_COMMIT}. Not affiliated with Blizzard. See TavernGym-LICENSE.txt and TavernGym-NOTICE.txt. Install: run bgrl/step_a1_taverngym.bat."
           if printf '%s' "$notes" | grep -qP '[^\x00-\x7F]'; then echo "notes must be ASCII"; exit 1; fi
           gh release delete "$tag" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$tag" dist/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "$tag" --notes "$notes"
