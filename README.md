@@ -102,6 +102,20 @@ GitHub Actions 会下载最新版 HDT 编译，这个版本还没发布过就自
 
 不想安装也能先看面板效果：直接用浏览器打开 `www/index.html?demo`（招募阶段，可以点“优化站位”看效果）或 `www/index.html?demo=combat`（战斗阶段）。
 
+## 强化学习（bgrl/，进行中）
+
+目标：在模拟环境里用 PPO 自我对弈训练一个 Transformer 策略/价值网络，给第一层搜索补上“看整局”的长期价值。建议始终由玩家自己操作，插件不碰鼠标键盘。完整计划和进度见表格《酒馆战旗完整模拟方案.xlsx》。
+
+**架构（第二轮方案，2026-10-27 确定）**
+- 规则和模型只在 Python 实现一份，训练和实时建议共用。
+- 战斗用 Bob's Buddy：Python 通过 pythonnet 直接加载用户本机 HDT 目录的 BobsBuddy.dll（DLL 不进仓库）。
+- 招募规则和卡牌效果自己实现：效果模板（触发时机 + 条件 + 效果 + 目标）+ 特殊卡写代码；按对局里出现频率补卡；每张卡用对局记录做回放校验。
+- 网络：Transformer 4 层 256 维，约 45 个词（全局、场面、手牌、酒馆、对手、英雄技能、饰品/任务、选项）；动作 = 类型 + 指针 1 + 指针 2；输出 V、名次分布（V_end）、本回合战斗辅助头。
+- 训练：先模仿脚本机器人和用户对局预热，再 PPO（奖励 (4.5 − 名次)/3.5，势函数塑形，对手池 50% 当前 / 30% 快照 / 20% 脚本），在用户电脑（RTX 3070 8G）上跑。
+- 上线：Python 大脑服务订阅插件 /events，集束搜索 + V_end + Bob's Buddy 出方案，POST /advice 回插件显示；先影子模式验证再正式显示；服务没开时退回 C# 第一层。
+
+**第 1 步（当前）**：`bgrl/step1_bb_check.bat` 检查 Bob's Buddy 能否在 HDT 外运行，用对局记录里的真实战斗对比 HDT 结果，并测速；报告写到 `bgrl/reports/`。
+
 ## 文件结构
 
 ```
@@ -119,6 +133,7 @@ StateServer.cs            本机 HTTP 服务（只监听 localhost）+ SSE 推�
 Models.cs                 JSON 数据结构
 www/index.html            网页面板（编译时打包进 DLL）
 tools/watch_state.py      Python 订阅示例，后续接 Claude / PPO 从这里开始
+bgrl/                     强化学习：模拟环境、模型、训练（进行中，第 1 步：bgrl/step1_bb_check.bat）
 sample/state.json         样例数据
 ```
 
