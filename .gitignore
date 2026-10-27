@@ -8,3 +8,4 @@ bgrl/.venv/
 bgrl/reports/
 bgrl/simhost/bin/
 bgrl/simhost/obj/
+bgrl/data/

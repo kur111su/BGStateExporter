@@ -26,7 +26,10 @@
 
 ```
 simhost/      BGSimHost（C#）：Python 一次传一批战斗 JSON，在 .NET 里构造输入并行模拟
-bgsim/        Python 模拟环境（目前只有 bobsbuddy.py：调用 BGSimHost 的封装）
+bgsim/        Python 模拟环境
+  bobsbuddy.py  调用 BGSimHost 的封装（战斗模拟）
+  cards.py      卡牌数据：python -m bgsim.cards 从 HDT 下载的 CardDefs.base.xml 导出 data/bg_cards.json（版本更新后重跑）
+data/         生成的数据（不进仓库）
 tools/        检查和分析脚本
 reports/      运行报告（不进仓库）
 ```

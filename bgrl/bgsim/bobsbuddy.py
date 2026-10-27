@@ -74,8 +74,9 @@ class BobsBuddy:
         self._host = Host
 
     def simulate(self, combats: list[dict], iterations: int = 1, threads: int | None = None,
-                 max_ms: int = 2000, mode: str = "runner") -> list[dict]:
-        """批量模拟。mode：runner = HDT 的用法（SimulationRunner）；direct = 直接 Simulator.SimulateForInput。"""
+                 max_ms: int = 2000, mode: str = "direct") -> list[dict]:
+        """批量模拟。mode：direct = 直接 Simulator.SimulateForInput（实测快约 25%，结果与 runner 相同）；
+        runner = HDT 的用法（SimulationRunner）。"""
         if not combats:
             return []
         payload = json.dumps(combats, ensure_ascii=False, separators=(",", ":"))

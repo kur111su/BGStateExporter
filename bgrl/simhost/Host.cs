@@ -206,7 +206,7 @@ namespace BGSimHost
 				l = Math.Round(o.lossRate, 4),
 				wl = Math.Round(o.theirDeathRate, 4),
 				ll = Math.Round(o.myDeathRate, 4),
-				n = o.simulationCount,
+				n = o.simulationCount > 0 ? o.simulationCount : dmg.Count,   // direct 方式不填 simulationCount
 				dealt = dealt.Count > 0 ? Math.Round(dealt.Average(), 2) : 0,
 				taken = taken.Count > 0 ? Math.Round(-taken.Average(), 2) : 0,
 				dmg = iterations <= 32 ? dmg.ToList() : null,
