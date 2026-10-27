@@ -17,7 +17,11 @@ namespace BGStateExporter
 
 		private static readonly JsonSerializerSettings JsonSettings = new()
 		{
-			ContractResolver = new CamelCasePropertyNamesContractResolver(),
+			// 属性名用 camelCase，但字典的键（标签名、中文特征名）保持原样
+			ContractResolver = new DefaultContractResolver
+			{
+				NamingStrategy = new CamelCaseNamingStrategy { ProcessDictionaryKeys = false },
+			},
 			Formatting = Formatting.None,
 		};
 
