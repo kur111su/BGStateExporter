@@ -1,0 +1,91 @@
+# Build Windows wheels of TavernGym (MCG-NJU/AutoTavern, MIT) at the commit pinned in bgrl/taverngym/PIN.txt
+# and publish them as a *prerelease* (prereleases are ignored by the plugin's auto-update, which follows
+# releases/latest). Release notes must stay ASCII.
+name: TavernGym wheels
+
+on:
+  push:
+    paths: ["bgrl/taverngym/PIN.txt", "bgrl/tools/tg_bench.py", ".github/workflows/taverngym.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wheel:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pin
+        shell: pwsh
+        run: |
+          $pin = Get-Content bgrl/taverngym/PIN.txt | Where-Object { $_ -match '=' -and $_ -notmatch '^#' } | ConvertFrom-StringData
+          "TG_REPO=$($pin.repo)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TG_COMMIT=$($pin.commit)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TG_SHORT=$($pin.commit.Substring(0,7))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TG_REPO }}
+          ref: ${{ env.TG_COMMIT }}
+          path: autotavern
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Rust toolchain (pinned by rust-toolchain.toml)
+        working-directory: autotavern
+        shell: pwsh
+        run: rustup show
+
+      - name: Build wheel
+        working-directory: autotavern
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip "maturin>=1.15,<2"
+          maturin build --release --interpreter python --out ../dist
+          Get-ChildItem ../dist
+
+      - name: Smoke test (one bot game)
+        shell: pwsh
+        run: |
+          python -m pip install (Get-ChildItem dist/*.whl).FullName
+          python -X utf8 bgrl/tools/tg_bench.py --quick
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taverngym-py${{ matrix.python }}
+          path: dist/*.whl
+
+  release:
+    needs: wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pin
+        run: |
+          echo "TG_COMMIT=$(grep '^commit=' bgrl/taverngym/PIN.txt | cut -d= -f2)" >> $GITHUB_ENV
+          echo "TG_REPO=$(grep '^repo=' bgrl/taverngym/PIN.txt | cut -d= -f2)" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Fetch upstream license files
+        run: |
+          curl -sSfL "https://raw.githubusercontent.com/${TG_REPO}/${TG_COMMIT}/LICENSE" -o dist/TavernGym-LICENSE.txt
+          curl -sSfL "https://raw.githubusercontent.com/${TG_REPO}/${TG_COMMIT}/NOTICE" -o dist/TavernGym-NOTICE.txt
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="taverngym-${TG_COMMIT:0:7}"
+          notes="Windows wheels of TavernGym (https://github.com/${TG_REPO}, MIT License) built from commit ${TG_COMMIT}. Not affiliated with Blizzard. See TavernGym-LICENSE.txt and TavernGym-NOTICE.txt. Install: run bgrl/step_a1_taverngym.bat."
+          if printf '%s' "$notes" | grep -qP '[^\x00-\x7F]'; then echo "notes must be ASCII"; exit 1; fi
+          gh release delete "$tag" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" dist/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "$tag" --notes "$notes"

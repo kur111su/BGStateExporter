@@ -1,0 +1,4 @@
+# TavernGym (MCG-NJU/AutoTavern, MIT License) pinned for our builds.
+# Changing the commit here and pushing rebuilds the Windows wheels (.github/workflows/taverngym.yml).
+repo=MCG-NJU/AutoTavern
+commit=fb61201a557ddd36a411cf44aac51ce4d9b606ce

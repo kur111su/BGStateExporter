@@ -677,6 +677,13 @@
   });
 
   // ---------- 整页 ----------
+  const OFFER = { hero: '选英雄', hero_power: '选英雄技能', trinket: '选饰品', dark_gift: '黑暗之赐', discover: '发现', discover_spell: '发现法术', other: '待选择' };
+  function offeredHtml(s) {
+    const o = s.offered;
+    if (!o || !o.cards || !o.cards.length) return '';
+    return `<section class="block"><h2>${OFFER[o.kind] || '待选择'} <span class="sub">${o.cards.length} 个候选项（v0.9 起记录，供以后的模型推荐）</span></h2>${row(o.cards, '')}</section>`;
+  }
+
   function render(s) {
     const p = s.player;
     const ph = $('phase');
@@ -700,7 +707,7 @@
         ${weightsHtml(s)}
       </aside>`;
     if (s.phase === 'hero_select' || !p) {
-      root.innerHTML = `<div class="page"><div class="main"><div class="center"><b>${s.phase === 'hero_select' ? '正在选择英雄' : '读取中'}</b>选好英雄后开始显示酒馆和建议。</div></div>${rail}</div>`;
+      root.innerHTML = `<div class="page"><div class="main">${offeredHtml(s)}<div class="center"><b>${s.phase === 'hero_select' ? '正在选择英雄' : '读取中'}</b>选好英雄后开始显示酒馆和建议。</div></div>${rail}</div>`;
       return;
     }
 
@@ -712,6 +719,7 @@
 
     root.innerHTML = `<div class="page">
       <div class="main">
+        ${offeredHtml(s)}
         ${recruit ? adviceHtml(s) : liveHtml(s)}
         ${recruit ? ledgerHtml(s) : ''}
         ${shopRow}

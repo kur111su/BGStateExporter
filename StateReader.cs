@@ -43,8 +43,18 @@ namespace BGStateExporter
 
 			// 复制一份实体列表，避免日志线程同时修改字典时枚举出错
 			var entities = game.Entities.Values.ToList();
+			_ench = entities.Where(e => e.IsEnchantment && e.IsInPlay && e.GetTag(GameTag.ATTACHED) > 0)
+				.GroupBy(e => e.GetTag(GameTag.ATTACHED))
+				.ToDictionary(g => g.Key, g => g.ToList());
+			if(game.GameEntity != null)
+			{
+				state.DamageCap = game.GameEntity.GetTag(GameTag.BACON_COMBAT_DAMAGE_CAP);
+				state.DamageCapEnabled = game.GameEntity.GetTag(GameTag.BACON_COMBAT_DAMAGE_CAP_ENABLED) > 0;
+				state.GameTags = NonZeroTags(game.GameEntity, n => n.StartsWith("BACON"));
+			}
 
 			var playerHero = game.Player.Hero;
+			state.Offered = ReadOffered(game);
 			if(state.Turn == 0)
 			{
 				state.Phase = "hero_select";
@@ -117,11 +127,17 @@ namespace BGStateExporter
 					Name = hp.LocalizedName,
 					Cost = hp.Cost,
 					Used = hp.HasTag(GameTag.EXHAUSTED),
+					ScriptData = ScriptData(hp, 3),
+					Tags = NonZeroTags(hp, IsUsefulTag),
 				}).ToList(),
 				Board = SortedBoard(board.Where(e => e.IsMinion)).Select(ToCard).ToList(),
 				Hand = game.Player.Hand.OrderBy(e => e.ZonePosition).Select(ToCard).ToList(),
 				Trinkets = game.Player.Trinkets.Select(ToCard).ToList(),
 				QuestRewards = game.Player.QuestRewards.Select(ToCard).ToList(),
+				Quests = game.Player.Quests.Select(ToCard).ToList(),
+				Objectives = game.Player.Objectives.Select(ToCard).ToList(),
+				PlayerTags = pe != null ? NonZeroTags(pe, _ => true) : null,
+				HeroTags = NonZeroTags(hero, _ => true),
 				Shop = ReadShop(game, hero.GetTag(GameTag.PLAYER_TECH_LEVEL)),
 			};
 		}
@@ -183,6 +199,81 @@ namespace BGStateExporter
 
 		private static IEnumerable<Entity> SortedBoard(IEnumerable<Entity> board) => board.OrderBy(e => e.ZonePosition);
 
+		// 本次 Read 里“随从 id -> 附在它身上的附魔”。只在 UI 线程（OnUpdate）里用
+		private static Dictionary<int, List<Entity>> _ench = new();
+
+		private static readonly GameTag[] ScriptTags =
+		{
+			GameTag.TAG_SCRIPT_DATA_NUM_1, GameTag.TAG_SCRIPT_DATA_NUM_2, GameTag.TAG_SCRIPT_DATA_NUM_3,
+			GameTag.TAG_SCRIPT_DATA_NUM_4,
+		};
+
+		private static int[]? ScriptData(Entity e, int n)
+		{
+			var v = ScriptTags.Take(n).Select(e.GetTag).ToArray();
+			return v.Any(x => x != 0) ? v : null;
+		}
+
+		private static Dictionary<string, int>? NonZeroTags(Entity e, Func<string, bool> keep)
+		{
+			Dictionary<string, int>? d = null;
+			foreach(var kv in e.Tags.ToList())
+			{
+				if(kv.Value == 0)
+					continue;
+				var name = kv.Key.ToString();
+				if(!keep(name))
+					continue;
+				d ??= new Dictionary<string, int>();
+				d[name] = kv.Value;
+			}
+			return d;
+		}
+
+		// 随从身上值得导出的标签：战旗专用的 BACON_*、模块化部件、复制来源等（基本属性和关键词已单独导出）
+		private static bool IsUsefulTag(string name) =>
+			name.StartsWith("BACON") || name.StartsWith("MODULAR_ENTITY_PART") || name.StartsWith("TAG_SCRIPT_DATA_ENT")
+			|| name == "COPIED_FROM_ENTITY_ID" || name == "DARK_GIFT_ENTITY" || name == "CREATOR_DBID"
+			|| name == "AVENGE" || name == "SPELLCRAFT" || name == "DORMANT" || name == "IMMUNE"
+			|| name == "MEGA_WINDFURY" || name == "TAG_LAST_KNOWN_COST_IN_HAND";
+
+		private static List<EnchantmentState>? Enchantments(Entity e)
+		{
+			if(!_ench.TryGetValue(e.Id, out var list) || list.Count == 0)
+				return null;
+			return list.GroupBy(x => x.CardId ?? "")
+				.Select(g =>
+				{
+					var last = g.OrderByDescending(x => x.Id).First();
+					return new EnchantmentState
+					{
+						CardId = g.Key,
+						Name = last.LocalizedName ?? last.Name,
+						Count = g.Count(),
+						ScriptData1 = last.GetTag(GameTag.TAG_SCRIPT_DATA_NUM_1),
+						ScriptData2 = last.GetTag(GameTag.TAG_SCRIPT_DATA_NUM_2),
+					};
+				})
+				.ToList();
+		}
+
+		/// <summary>当前待选择的候选项。HDT 在出现选择时记下候选实体，选完后清空。</summary>
+		private static OfferedChoice? ReadOffered(GameV2 game)
+		{
+			var offered = game.Player.OfferedEntities.ToList();
+			if(offered.Count == 0)
+				return null;
+			string kind;
+			if(offered.Any(x => x.GetTag(GameTag.DARK_GIFT_ENTITY) > 0)) kind = "dark_gift";
+			else if(offered.All(x => x.IsBattlegroundsTrinket)) kind = "trinket";
+			else if(offered.All(x => x.IsHeroPower)) kind = "hero_power";
+			else if(offered.All(x => x.IsHero)) kind = "hero";
+			else if(offered.All(x => x.IsMinion)) kind = "discover";
+			else if(offered.All(x => x.IsSpell || x.IsBattlegroundsSpell)) kind = "discover_spell";
+			else kind = "other";
+			return new OfferedChoice { Kind = kind, Cards = offered.Select(ToCard).ToList() };
+		}
+
 		private static CardState ToCard(Entity e)
 		{
 			var card = e.Card;
@@ -217,6 +308,9 @@ namespace BGStateExporter
 				Stealth = e.HasTag(GameTag.STEALTH),
 				Deathrattle = e.HasTag(GameTag.DEATHRATTLE),
 				Frozen = e.HasTag(GameTag.FROZEN),
+				ScriptData = ScriptData(e, 4),
+				Enchantments = Enchantments(e),
+				Tags = NonZeroTags(e, IsUsefulTag),
 			};
 		}
 

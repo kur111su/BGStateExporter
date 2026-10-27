@@ -7,7 +7,7 @@ namespace BGStateExporter
 
 	public class BgState
 	{
-		public int Schema { get; set; } = 1;
+		public int Schema { get; set; } = 2;                // 2：v0.9 起加了计数器、附魔、玩家标签、待选项等完整玩家视角
 		public PluginInfo? Plugin { get; set; }
 		public LearningStatus? Learning { get; set; }
 		public List<TurnRecord>? TurnLog { get; set; }          // 本局每回合：推荐了什么 / 实际做了什么
@@ -23,6 +23,10 @@ namespace BGStateExporter
 		public OpponentState? Opponent { get; set; }              // 仅战斗阶段：本回合对手
 		public List<LeaderboardEntry> Leaderboard { get; set; } = new();
 		public int NextOpponentPlayerId { get; set; }              // 下回合对手的 PLAYER_ID（0 = 未知）
+		public OfferedChoice? Offered { get; set; }                // 当前待选择的候选项（选英雄、发现、选饰品、黑暗之赐……）
+		public int DamageCap { get; set; }                         // 本回合战斗伤害上限（BACON_COMBAT_DAMAGE_CAP，0 = 未读到）
+		public bool DamageCapEnabled { get; set; }
+		public Dictionary<string, int>? GameTags { get; set; }     // 游戏实体上非零的 BACON_* 标签
 		public SimulationState? Simulation { get; set; }           // Bob's Buddy 模拟结果
 	}
 
@@ -189,6 +193,10 @@ namespace BGStateExporter
 		public List<CardState> Hand { get; set; } = new();
 		public List<CardState> Trinkets { get; set; } = new();
 		public List<CardState> QuestRewards { get; set; } = new();
+		public List<CardState> Quests { get; set; } = new();
+		public List<CardState> Objectives { get; set; } = new();       // 神祇印记等“目标”
+		public Dictionary<string, int>? PlayerTags { get; set; }       // 玩家实体上所有非零标签（宝石加成、酒馆法术加成等计数）
+		public Dictionary<string, int>? HeroTags { get; set; }         // 英雄实体上所有非零标签
 		public ShopInfo? Shop { get; set; }
 	}
 
@@ -222,6 +230,23 @@ namespace BGStateExporter
 		public string? Name { get; set; }
 		public int Cost { get; set; }
 		public bool Used { get; set; }
+		public int[]? ScriptData { get; set; }             // TAG_SCRIPT_DATA_NUM_1..3（全 0 时省略）
+		public Dictionary<string, int>? Tags { get; set; }
+	}
+
+	public class OfferedChoice
+	{
+		public string Kind { get; set; } = "discover";     // hero | hero_power | trinket | dark_gift | discover | discover_spell | other
+		public List<CardState> Cards { get; set; } = new();
+	}
+
+	public class EnchantmentState
+	{
+		public string? CardId { get; set; }
+		public string? Name { get; set; }
+		public int Count { get; set; }                     // 同一种附魔的个数
+		public int ScriptData1 { get; set; }               // 最新一个的 TAG_SCRIPT_DATA_NUM_1 / 2
+		public int ScriptData2 { get; set; }
 	}
 
 	public class CardState
@@ -247,6 +272,9 @@ namespace BGStateExporter
 		public bool Stealth { get; set; }
 		public bool Deathrattle { get; set; }
 		public bool Frozen { get; set; }
+		public int[]? ScriptData { get; set; }             // TAG_SCRIPT_DATA_NUM_1..4（成长计数等；全 0 时省略）
+		public List<EnchantmentState>? Enchantments { get; set; }   // 附在它身上的附魔（按卡牌分组）
+		public Dictionary<string, int>? Tags { get; set; }          // 其它有用的非零标签（BACON_*、模块化部件等）
 	}
 
 	public class LeaderboardEntry
