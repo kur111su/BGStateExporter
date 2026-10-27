@@ -65,6 +65,14 @@ class Config:
     eval_every: int = 25
     eval_games: int = 64
     amp: bool = True
+    # 每回合最多几个操作（第 1、2、3… 回合，最后一个数用于之后所有回合）。TavernGym 默认不限：
+    # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
+    # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
+    turn_caps: str = "14,18,22,26,30,34,38,42,45"
+
+    def rules(self) -> dict:
+        caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
+        return {"turn_action_caps": caps} if caps else {}
 
     def model_kwargs(self) -> dict:
         kw = dict(SIZES[self.size])
@@ -189,11 +197,12 @@ class Trainer:
         self.envs = []                                 # (名字, 环境, 槽位起点)
         off = 0
         if cfg.games_bot:
-            e = BatchEnv(cfg.games_bot, seed=cfg.seed, controlled=(0,), threads=cfg.threads)
+            e = BatchEnv(cfg.games_bot, seed=cfg.seed, controlled=(0,), threads=cfg.threads, config=cfg.rules())
             self.envs.append(("bot", e, off))
             off += e.n_slots
         if cfg.games_league:
-            e = BatchEnv(cfg.games_league, seed=cfg.seed + 10**6, controlled=range(8), threads=cfg.threads)
+            e = BatchEnv(cfg.games_league, seed=cfg.seed + 10**6, controlled=range(8), threads=cfg.threads,
+                         config=cfg.rules())
             self.envs.append(("league", e, off))
             off += e.n_slots
         self.n_slots = off
@@ -256,6 +265,7 @@ class Trainer:
         cfg = self.cfg
         self.model.eval()
         n_dec = 0
+        self.finished = 0
         t0 = time.time()
         t_env = t_net = 0.0
         for _ in range(cfg.steps_per_iter):
@@ -281,6 +291,7 @@ class Trainer:
                         self.rollout.reward(off + int(i), rewards[i], bool(dones[i]), info["placement"][i])
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             self.stats.append((name, int(info["placement"][i])))
+                            self.finished += 1
                 self.obs[name] = env.observe()
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
@@ -387,7 +398,7 @@ class Trainer:
 
         def act(f, c, m):
             return self.learner(f, c, m)[0]
-        prof = sim_profile_batched(act, games=self.cfg.profile_games, seed=10**7 + self.iter)
+        prof = sim_profile_batched(act, games=self.cfg.profile_games, seed=10**7 + self.iter, config=self.cfg.rules())
         mem = self.league.add(path.stem, str(path), prof)
         (self.run / "league.json").write_text(json.dumps(self.league.to_json(), ensure_ascii=False, indent=1),
                                               encoding="utf-8")
@@ -397,11 +408,13 @@ class Trainer:
         """考试：学习者（0 号座位）对 7 个脚本机器人，平均名次和第一名率。"""
         from taverngym import BatchEnv
         games = games or self.cfg.eval_games
-        env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads)
+        env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads, config=self.cfg.rules())
         obs = env.observe()
         places = {}
         self.model.eval()
-        while len(places) < games:
+        for _ in range(30000):                       # 保险：不管怎样都会结束
+            if len(places) >= games:
+                break
             ready = np.flatnonzero(obs["ready"])
             actions = np.zeros(env.n_slots, dtype=np.int64)
             if len(ready):
@@ -447,7 +460,7 @@ class Trainer:
             upd = self.update(batch) if batch is not None else {}
             t_upd = time.time() - t1
             self.iter += 1
-            rec = {"iter": self.iter, "decisions": n_dec, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
+            rec = {"iter": self.iter, "decisions": n_dec, "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
                    "t_update": round(t_upd, 1), **upd}
             for name in ("bot", "league"):

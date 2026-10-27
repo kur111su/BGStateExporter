@@ -63,7 +63,7 @@ def main() -> int:
         tr.start_stage()
 
     def show(rec):
-        keys = ("iter", "decisions", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
+        keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
                 "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
