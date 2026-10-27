@@ -68,7 +68,7 @@ def _pick_heroes(g, heroes: dict[int, str], warnings: list[str]) -> None:
         for p in range(g.num_players):
             if not g.needs_action(p):
                 continue
-            pend = (_view(g, p).get("pending") or {})
+            pend = ((_view(g, p).get("me") or {}).get("pending") or {})
             if pend.get("kind") == "hero" and heroes.get(p):
                 ids = [o.get("id") for o in pend.get("options", [])]
                 idx = ids.index(heroes[p]) if heroes[p] in ids else 0
@@ -123,6 +123,14 @@ def build_game(state: dict, seed: int = 0, config: dict | None = None) -> tuple[
     for i, e in enumerate(others[:7], start=1):
         heroes[i] = e.get("_heroBase") or e.get("heroCardId")
     _pick_heroes(g, heroes, warnings)
+    for p, h in heroes.items():                        # 兜底：没选上就直接设置
+        cur = ((_view(g, p).get("me") or {}).get("hero") or {}).get("id")
+        if h and cur != h:
+            r = _dbg(g, cmd="set_hero", p=p, hero=h)
+            if isinstance(r, dict) and r.get("error"):
+                warnings.append(f"座位 {p} 设置英雄 {h}：{r['error']}")
+    if _view(g, 0).get("phase") != "recruit":
+        warnings.append(f"重建后阶段是 {_view(g, 0).get('phase')}，不是招募阶段")
 
     turn = int(state.get("turn") or 1)
     _dbg(g, cmd="set_turn", turn=turn)
