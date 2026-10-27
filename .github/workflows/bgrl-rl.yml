@@ -4,7 +4,7 @@ name: bgrl RL checks
 
 on:
   push:
-    paths: ["bgrl/rl/**", "bgrl/tools/train.py", "bgrl/tools/opp_profile.py", "bgrl/tests/test_rl.py", ".github/workflows/bgrl-rl.yml"]
+    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/tools/train.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/test_rl.py", "bgrl/tests/test_shadow.py", ".github/workflows/bgrl-rl.yml"]
   workflow_dispatch:
 
 jobs:
@@ -25,6 +25,8 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Model / action-head / GAE tests
         run: python -X utf8 bgrl/tests/test_rl.py
+      - name: Shadow-mode advisor test (C1)
+        run: python -X utf8 bgrl/tests/test_shadow.py
       - name: Opponent profile (real vs bots)
         run: python -X utf8 bgrl/tools/opp_profile.py --games 24 --annotate
       - name: Tiny PPO run
