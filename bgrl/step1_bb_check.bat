@@ -1,8 +1,22 @@
 @echo off
 rem Step 1: check that Bob's Buddy runs outside HDT and measure its speed.
 rem Report goes to bgrl\reports\bb_check_*.txt
+rem If HDT is not in ..\..\HDT, run:  set HDT_PATH=D:\path\to\HDT  before this script.
 setlocal
 cd /d "%~dp0"
+
+where dotnet >nul 2>nul
+if errorlevel 1 (
+  echo .NET SDK not found. Install it from https://dotnet.microsoft.com/download - the same one used to build the plugin.
+  pause
+  exit /b 1
+)
+set "HDTARG="
+if defined HDT_PATH set "HDTARG=-p:HDTPath=%HDT_PATH%"
+echo Building BGSimHost...
+dotnet build simhost\BGSimHost.csproj -c Release -nologo -v q %HDTARG%
+if errorlevel 1 ( echo BGSimHost build failed - please send the errors above. & pause & exit /b 1 )
+
 set "PY="
 for %%V in (3.12 3.13 3.11 3.10) do (
   if not defined PY ( py -%%V -c "import sys" >nul 2>nul && set "PY=py -%%V" )
