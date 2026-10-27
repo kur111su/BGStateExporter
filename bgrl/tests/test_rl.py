@@ -23,7 +23,10 @@ def main() -> int:
     assert names[126 + 4 * 7 + 2] == "Magnetize { hand: 4, board: 2 }"
     assert names[196 + 5 * 7 + 1] == "Move { from: 5, to: 1 }"
 
-    m = build_model()
+    from rl.model import SIZES
+    for name, kw in SIZES.items():
+        print(f"{name}: {n_params(build_model(**kw)) / 1e6:.2f}M")
+    m = build_model(**SIZES["small"])
     print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + f"默认模型参数 {n_params(m) / 1e6:.2f}M")
     assert 1.5e6 < n_params(m) < 6e6
 
@@ -43,13 +46,16 @@ def main() -> int:
         steps += int(ready.sum())
     print(f"随机初始化模型走了 {steps} 个决策，没有不合法动作")
 
-    # GAE：γ=1、λ=1 时优势 = 最终奖励 - 价值
-    r = Rollout()
+    # GAE：γ=1、λ=1 时优势 = 最终奖励 - 价值；另一个槽位没打完，用自举价值
+    r = Rollout(2)
     for i in range(3):
-        r.add(("x", 0), f=np.zeros(3, np.float16), c=np.zeros(2, np.int32), m=np.zeros(1, np.uint8), a=0, logp=0.0, v=0.1 * i)
-    r.reward(("x", 0), 1.0, True, 1)
-    b = r.collect(1.0, 1.0, {})
-    assert np.allclose(b["adv"], [1.0, 0.9, 0.8]) and np.allclose(b["ret"], 1.0) and list(b["place"]) == [1, 1, 1]
+        r.add([0, 1], np.zeros((2, 3), np.float32), np.zeros((2, 2), np.int32), np.zeros((2, 8), bool),
+              np.zeros(2, np.int64), np.zeros(2, np.float32), np.full(2, 0.1 * i, np.float32))
+    r.reward(0, 1.0, True, 1)
+    b = r.collect(1.0, 1.0, np.asarray([0.0, 0.5], np.float32))
+    s0, s1 = b["slot"] == 0, b["slot"] == 1
+    assert np.allclose(b["adv"][s0], [1.0, 0.9, 0.8]) and np.allclose(b["ret"][s0], 1.0), b
+    assert np.allclose(b["ret"][s1], 0.5) and list(b["place"][s0]) == [1, 1, 1] and list(b["place"][s1]) == [0, 0, 0]
     print("GAE 检查通过")
 
     # 混合精度：GPU 上用 float16，CPU 上用 bfloat16 走一遍前向和反向（之前 float16 下屏蔽值溢出）

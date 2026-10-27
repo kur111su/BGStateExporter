@@ -13,7 +13,7 @@ taverngym._core.layout() 读，避免两套编码器漂移（论文教训）。
   选择 i ← 待选项词 i；英雄技能 i ← 技能词 i；结束 / 刷新 / 冻结 / 升本 / 黑暗之赐 / 取消 ← 全局词），
   再按合法动作屏蔽。
 头：价值（名次奖励 1…-1 的期望）、名次分布（8 类，辅助损失）。
-默认 d=192、4 层、4 头，约 3.5M 参数（3070 8GB 合适）；论文是 d=384、8 层、18M。
+大小见 SIZES：small 约 2.3M、medium 约 8M（默认）、large 约 15M；论文最终版是 d=384、8 层、18M。
 """
 from __future__ import annotations
 
@@ -229,11 +229,19 @@ class EntityTransformer(nn.Module):
         return a, logp, v
 
 
-def build_model(d: int = 192, layers: int = 4, heads: int = 4) -> EntityTransformer:
+# 模型大小预设（论文同训练量下：3.5M / 8M / 18M → 平均名次 3.84 / 3.77 / 3.67）
+SIZES = {
+    "small": dict(d=192, layers=4, heads=4, dc=64),     # 约 2.3M
+    "medium": dict(d=320, layers=6, heads=8, dc=96),    # 约 8M（默认）
+    "large": dict(d=384, layers=8, heads=8, dc=128),    # 约 15M（接近论文最终版）
+}
+
+
+def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64) -> EntityTransformer:
     import taverngym._core as c
     n, raw = c.card_static()
     static = np.frombuffer(raw, dtype="<f4").reshape(-1, n).copy()
-    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads)
+    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads, dc=dc)
 
 
 def n_params(m: nn.Module) -> int:

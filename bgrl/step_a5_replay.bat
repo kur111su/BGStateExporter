@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem Step A5: replay every step of your recorded games in TavernGym and report where it disagrees.
 rem Report: bgrl\reports\a5_replay.json (+ summary printed below)
 setlocal

@@ -2,7 +2,7 @@
 
 用法：
   python train.py --smoke                    几轮极小规模训练，检查能跑通（CI / 装好后先跑这个）
-  python train.py --bench                    测速：采样每秒多少决策、每轮更新多久（不存检查点）
+  python train.py --bench [--size small|medium|large]   测速：每秒多少决策、采样/更新各多久、显存（不存检查点）
   python train.py --run runs/v1 [--iters 2000] [--resume]   正式训练
 其它参数见 --help（和 bgrl/rl/ppo.py 的 Config 一一对应）。
 """
@@ -42,7 +42,7 @@ def main() -> int:
     root = HERE.parent
     if a.smoke:
         cfg.games_bot, cfg.games_league, cfg.steps_per_iter = 4, 2, 64
-        cfg.d, cfg.layers, cfg.heads = 64, 2, 2
+        cfg.d, cfg.layers, cfg.heads, cfg.dc = 64, 2, 2, 32
         cfg.snapshot_every, cfg.eval_every, cfg.save_every = 2, 3, 2
         cfg.profile_games, cfg.eval_games, cfg.minibatch = 1, 2, 256
         cfg.iters = a.iters or 4
@@ -63,7 +63,7 @@ def main() -> int:
         tr.start_stage()
 
     def show(rec):
-        keys = ("iter", "decisions", "dps", "t_collect", "t_update", "kl", "ent", "vf", "place_bot", "place_league",
+        keys = ("iter", "decisions", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
                 "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)

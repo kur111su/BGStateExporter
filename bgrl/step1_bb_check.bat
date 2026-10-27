@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem Step 1: check that Bob's Buddy runs outside HDT and measure its speed.
 rem Report goes to bgrl\reports\bb_check_*.txt
 rem If HDT is not in ..\..\HDT, run:  set HDT_PATH=D:\path\to\HDT  before this script.

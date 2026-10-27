@@ -2,7 +2,7 @@
 
 超参按论文：γ=1、λ=0.995、clip 0.2、目标 KL 0.05（超过就提前结束本轮更新）、熵 0.002、价值 0.5、
 名次辅助 0.1、梯度裁剪 1.0、每轮 1 遍；新阶段开始时对上一阶段策略加 KL 锚定（系数 0.1，前 100 轮）。
-规模按一张 3070（8GB）缩小：默认每轮约 32k 个决策、小批 4096。
+规模按一张 3070（8GB）缩小：每轮约 4–5 万个决策；小批 4096，按显存分成若干份累积梯度（micro_batch）。
 
 对局安排（每局重新抽）：
   - 一部分对局：0 号座位是学习者，其余 7 个是 TavernGym 脚本机器人（controlled=(0,) 的环境）；
@@ -13,11 +13,10 @@
 from __future__ import annotations
 
 import json
-import math
 import random
 import time
 from collections import defaultdict, deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +24,7 @@ import torch
 import torch.nn.functional as F
 
 from .league import League, load_real_profile
-from .model import build_model, n_params
+from .model import SIZES, build_model, n_params
 
 
 @dataclass
@@ -34,14 +33,16 @@ class Config:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 0
     threads: int = 8
-    games_bot: int = 64            # 和机器人打的并行对局数
-    games_league: int = 32         # 8 座位都由我们控制的并行对局数
-    steps_per_iter: int = 256      # 每轮每个环境走多少步
+    games_bot: int = 192           # 和机器人打的并行对局数
+    games_league: int = 48         # 8 座位都由我们控制的并行对局数（共 384 个座位）
+    steps_per_iter: int = 128      # 每轮每个环境走多少步
     iters: int = 1000
-    # 模型
-    d: int = 192
-    layers: int = 4
-    heads: int = 4
+    # 模型：size 选预设（small / medium / large），d 等单独给出时覆盖预设
+    size: str = "medium"
+    d: int = 0
+    layers: int = 0
+    heads: int = 0
+    dc: int = 0
     # PPO
     gamma: float = 1.0
     lam: float = 0.995
@@ -53,6 +54,7 @@ class Config:
     max_grad_norm: float = 1.0
     lr: float = 3e-4
     minibatch: int = 4096
+    micro_batch: int = 512         # 一次放进显卡的样本数（显存不够就调小；不影响结果，只影响速度）
     epochs: int = 1
     anchor_coef: float = 0.1
     anchor_iters: int = 100
@@ -64,70 +66,107 @@ class Config:
     eval_games: int = 64
     amp: bool = True
 
+    def model_kwargs(self) -> dict:
+        kw = dict(SIZES[self.size])
+        for k in ("d", "layers", "heads", "dc"):
+            if getattr(self, k):
+                kw[k] = getattr(self, k)
+        return kw
+
 
 class Policy:
     """一个可以出动作的策略：学习者或对手库里的快照。"""
 
-    def __init__(self, model, device):
+    def __init__(self, model, device, amp=False):
         self.model, self.device = model, device
+        self.amp = amp and device.type == "cuda"
 
     @torch.no_grad()
     def __call__(self, f, c, m, greedy=False):
-        t = lambda x, dt: torch.as_tensor(x, device=self.device, dtype=dt)     # noqa: E731
-        a, logp, v = self.model.act(t(f, torch.float32), t(c, torch.long), t(m, torch.bool), greedy)
-        return a.cpu().numpy(), logp.cpu().numpy(), v.float().cpu().numpy()
+        f = torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.device, non_blocking=True)
+        c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.device, non_blocking=True)
+        m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.device, non_blocking=True)
+        with torch.autocast(self.device.type, enabled=self.amp):
+            a, logp, v = self.model.act(f, c, m, greedy)
+        return a.cpu().numpy(), logp.float().cpu().numpy(), v.float().cpu().numpy()
 
 
 class Rollout:
-    """按座位（槽位）记录学习者的决策；名次奖励在对局结束时补到该槽位最后一个决策上。"""
+    """学习者的决策按步成批存（numpy），名次奖励在对局结束时补到该座位最后一个决策上。
+    槽位 = 全局座位编号（各环境的槽位依次排开）；ep = 这个槽位的第几局。"""
 
-    def __init__(self):
-        self.seq = defaultdict(list)       # 槽位键 -> [dict]
-        self.done_seqs = []
+    def __init__(self, n_slots: int):
+        self.n_slots = n_slots
+        self.ep = np.zeros(n_slots, dtype=np.int64)
+        self.place: dict[tuple, int] = {}
+        self.reset()
 
-    def add(self, key, **tr):
-        self.seq[key].append(tr)
+    def reset(self):
+        self.parts = defaultdict(list)
+        self.r: list[float] = []
+        self.done: list[bool] = []
+        self.n = 0
+        self.last = np.full(self.n_slots, -1, dtype=np.int64)
 
-    def reward(self, key, r, done, placement):
-        s = self.seq.get(key)
-        if s:
-            s[-1]["r"] = s[-1].get("r", 0.0) + float(r)
+    def add(self, slots, f, c, m, a, logp, v):
+        k = len(slots)
+        if not k:
+            return
+        slots = np.asarray(slots, dtype=np.int64)
+        for name, x in (("slot", slots), ("ep", self.ep[slots]), ("f", np.asarray(f, dtype=np.float16)), ("c", c),
+                        ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v)):
+            self.parts[name].append(np.asarray(x))
+        self.last[slots] = np.arange(self.n, self.n + k)
+        self.r.extend([0.0] * k)
+        self.done.extend([False] * k)
+        self.n += k
+
+    def reward(self, slot, r, done, placement):
+        i = self.last[slot]
+        if i >= 0:
+            self.r[i] += float(r)
             if done:
-                s[-1]["done"] = True
-                for tr in s:
-                    if "place" not in tr:
-                        tr["place"] = int(placement)
-                self.done_seqs.append(s)
-                self.seq[key] = []
+                self.done[i] = True
+        if done:
+            self.place[(int(slot), int(self.ep[slot]))] = int(placement)
+            self.ep[slot] += 1
+            self.last[slot] = -1
 
-    def collect(self, gamma, lam, last_values: dict):
-        """GAE。没打完的序列用当前局面的价值做自举。返回扁平化的数组。"""
-        seqs = [(s, 0.0) for s in self.done_seqs] + [(s, last_values.get(k, 0.0)) for k, s in self.seq.items() if s]
-        out = defaultdict(list)
-        for s, boot in seqs:
-            n = len(s)
-            adv = np.zeros(n, dtype=np.float32)
-            last = 0.0
-            for i in reversed(range(n)):
-                nxt_v = boot if i == n - 1 and not s[i].get("done") else (0.0 if s[i].get("done") else s[i + 1]["v"])
-                delta = s[i].get("r", 0.0) + gamma * nxt_v - s[i]["v"]
-                last = delta + gamma * lam * (0.0 if s[i].get("done") else last)
-                adv[i] = last
-            for i, tr in enumerate(s):
-                out["f"].append(tr["f"])
-                out["c"].append(tr["c"])
-                out["m"].append(tr["m"])
-                out["a"].append(tr["a"])
-                out["logp"].append(tr["logp"])
-                out["v"].append(tr["v"])
-                out["adv"].append(adv[i])
-                out["ret"].append(adv[i] + tr["v"])
-                out["place"].append(tr.get("place", 0))
-        self.done_seqs = []
-        self.seq = defaultdict(list, {k: [] for k in self.seq})
-        if not out:
+    def collect(self, gamma, lam, last_values: np.ndarray | None):
+        """GAE（按槽位、按局分段）。没打完的用当前局面的价值自举。返回扁平化的数组。"""
+        if self.n == 0:
             return None
-        return {k: np.stack(v) if k in ("f", "c", "m") else np.asarray(v) for k, v in out.items()}
+        b = {k: np.concatenate(v) for k, v in self.parts.items()}
+        r = np.asarray(self.r, dtype=np.float32)
+        done = np.asarray(self.done, dtype=bool)
+        v = b["v"].astype(np.float32)
+        slot, ep = b["slot"], b["ep"]
+        order = np.lexsort((np.arange(self.n), slot))           # 按槽位，槽位内按时间
+        adv = np.zeros(self.n, dtype=np.float32)
+        nxt_i = -1
+        last = 0.0
+        for pos in range(self.n - 1, -1, -1):
+            i = order[pos]
+            same = nxt_i >= 0 and slot[nxt_i] == slot[i] and ep[nxt_i] == ep[i]
+            if done[i]:
+                nv, last = 0.0, 0.0
+            elif same:
+                nv = v[nxt_i]
+            else:                                              # 本轮这一段的最后一个决策
+                last = 0.0
+                live = last_values is not None and self.last[slot[i]] == i
+                nv = float(last_values[slot[i]]) if live else 0.0
+            delta = r[i] + gamma * nv - v[i]
+            last = delta + gamma * lam * last
+            adv[i] = last
+            nxt_i = i
+        b["adv"] = adv
+        b["ret"] = adv + v
+        b["place"] = np.asarray([self.place.get((int(s), int(e)), 0) for s, e in zip(slot, ep)], dtype=np.int64)
+        keep_last = self.last.copy()
+        self.reset()
+        self.last_prev = keep_last
+        return b
 
 
 class Trainer:
@@ -137,63 +176,79 @@ class Trainer:
         self.cfg = cfg
         self.dev = torch.device(cfg.device)
         torch.manual_seed(cfg.seed)
+        np.random.seed(cfg.seed)
         self.rng = random.Random(cfg.seed)
         self.run = Path(cfg.run_dir)
         (self.run / "snapshots").mkdir(parents=True, exist_ok=True)
-        self.model = build_model(cfg.d, cfg.layers, cfg.heads).to(self.dev)
+        self.mkw = cfg.model_kwargs()
+        self.model = build_model(**self.mkw).to(self.dev)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=cfg.lr, eps=1e-5)
-        self.scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and self.dev.type == "cuda")
-        self.learner = Policy(self.model, self.dev)
-        self.envs = []
+        self.amp = cfg.amp and self.dev.type == "cuda"
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.amp)
+        self.learner = Policy(self.model, self.dev, self.amp)
+        self.envs = []                                 # (名字, 环境, 槽位起点)
+        off = 0
         if cfg.games_bot:
-            self.envs.append(("bot", BatchEnv(cfg.games_bot, seed=cfg.seed, controlled=(0,), threads=cfg.threads)))
+            e = BatchEnv(cfg.games_bot, seed=cfg.seed, controlled=(0,), threads=cfg.threads)
+            self.envs.append(("bot", e, off))
+            off += e.n_slots
         if cfg.games_league:
-            self.envs.append(("league", BatchEnv(cfg.games_league, seed=cfg.seed + 10**6, controlled=range(8),
-                                                 threads=cfg.threads)))
-        self.obs = {name: env.observe() for name, env in self.envs}
-        self.episode = {name: [env.episode_index(i) for i in range(env.n_games)] for name, env in self.envs}
-        self.roles: dict[tuple, str] = {}             # (环境, 对局, 座位) -> "learner" 或快照名
+            e = BatchEnv(cfg.games_league, seed=cfg.seed + 10**6, controlled=range(8), threads=cfg.threads)
+            self.envs.append(("league", e, off))
+            off += e.n_slots
+        self.n_slots = off
+        self.obs = {name: env.observe() for name, env, _ in self.envs}
+        self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
+                        for name, env, _ in self.envs}
+        self.role = np.zeros(off, dtype=np.int64)      # 0 = 学习者，k = self.role_names[k]
+        self.role_names = ["learner"]
         self.snap_cache: dict[str, Policy] = {}
         self.league = League(load_real_profile())
         self.league.add("bot")
-        self.rollout = Rollout()
+        self.rollout = Rollout(off)
         self.iter = 0
         self.anchor = None
         self.anchor_until = 0
-        self.stats = deque(maxlen=2000)               # 学习者名次（对机器人 / 对手库）
+        self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
         self.log_f = open(self.run / "log.jsonl", "a", encoding="utf-8")
         (self.run / "config.json").write_text(json.dumps(asdict(cfg), indent=1), encoding="utf-8")
-        print(f"模型参数 {n_params(self.model) / 1e6:.2f}M，设备 {self.dev}，taverngym {taverngym.version()}")
+        for name, env, o in self.envs:
+            for g in range(env.n_games):
+                self._assign(name, env, o, g)
+        print(f"模型 {cfg.size} {self.mkw}：参数 {n_params(self.model) / 1e6:.2f}M，设备 {self.dev}，"
+              f"taverngym {taverngym.version()}，{self.n_slots} 个座位", flush=True)
 
     # ---------------- 对手 ----------------
 
-    def _assign(self, name, env, g):
-        for s in range(8):
-            self.roles.pop((name, g, s), None)
+    def _role_id(self, name: str) -> int:
+        if name not in self.role_names:
+            self.role_names.append(name)
+        return self.role_names.index(name)
+
+    def _assign(self, name, env, off, g):
+        k = len(env.controlled)
+        self.role[off + g * k: off + (g + 1) * k] = 0
         if name == "bot":
-            self.roles[(name, g, 0)] = "learner"
             return
-        self.roles[(name, g, 0)] = "learner"
         snaps = [m for m in self.league.training_weights() if m[0].name != "bot"]
         for s in range(1, 8):
             if snaps and self.rng.random() < 0.75:
                 m = self.rng.choices([x for x, _ in snaps], weights=[w for _, w in snaps])[0]
-                self.roles[(name, g, s)] = m.name
-            else:
-                self.roles[(name, g, s)] = "learner"
+                self.role[off + g * k + s] = self._role_id(m.name)
 
-    def _policy(self, role):
-        if role == "learner":
+    def _policy(self, rid):
+        if rid == 0:
             return self.learner
-        if role not in self.snap_cache:
-            m = next(x for x in self.league.members if x.name == role)
-            model = build_model(self.cfg.d, self.cfg.layers, self.cfg.heads).to(self.dev)
+        name = self.role_names[rid]
+        if name not in self.snap_cache:
+            m = next(x for x in self.league.members if x.name == name)
+            model = build_model(**self.mkw).to(self.dev)
             model.load_state_dict(torch.load(m.path, map_location=self.dev))
             model.eval()
-            self.snap_cache[role] = Policy(model, self.dev)
+            self.snap_cache[name] = Policy(model, self.dev, self.amp)
             if len(self.snap_cache) > 12:
                 self.snap_cache.pop(next(iter(self.snap_cache)))
-        return self.snap_cache[role]
+        return self.snap_cache[name]
 
     # ---------------- 采样 ----------------
 
@@ -202,58 +257,52 @@ class Trainer:
         self.model.eval()
         n_dec = 0
         t0 = time.time()
-        for name, env in self.envs:
-            for g in range(env.n_games):
-                if (name, g, 0) not in self.roles:
-                    self._assign(name, env, g)
+        t_env = t_net = 0.0
         for _ in range(cfg.steps_per_iter):
-            for name, env in self.envs:
+            for name, env, off in self.envs:
                 obs = self.obs[name]
-                k = len(env.controlled)
                 ready = np.flatnonzero(obs["ready"])
                 actions = np.zeros(env.n_slots, dtype=np.int64)
-                groups = defaultdict(list)
-                for i in ready:
-                    g, seat = divmod(int(i), k)
-                    seat = env.controlled[seat]
-                    groups[self.roles.get((name, g, seat), "learner")].append(i)
-                for role, idx in groups.items():
-                    idx = np.asarray(idx)
-                    a, logp, v = self._policy(role)(obs["features"][idx], obs["cards"][idx], obs["action_mask"][idx])
-                    actions[idx] = a
-                    if role == "learner":
-                        for j, i in enumerate(idx):
-                            self.rollout.add((name, int(i)), f=obs["features"][i].astype(np.float16),
-                                             c=obs["cards"][i], m=np.packbits(obs["action_mask"][i]),
-                                             a=int(a[j]), logp=float(logp[j]), v=float(v[j]))
-                        n_dec += len(idx)
+                ta = time.time()
+                if len(ready):
+                    roles = self.role[off + ready]
+                    for rid in np.unique(roles):
+                        idx = ready[roles == rid]
+                        f, c, m = obs["features"][idx], obs["cards"][idx], obs["action_mask"][idx]
+                        a, logp, v = self._policy(int(rid))(f, c, m)
+                        actions[idx] = a
+                        if rid == 0:
+                            self.rollout.add(off + idx, f, c, m, a, logp, v)
+                            n_dec += len(idx)
+                tb = time.time()
                 rewards, dones, info = env.step(actions)
                 for i in np.flatnonzero((rewards != 0) | dones):
-                    g, seat = divmod(int(i), k)
-                    seat = env.controlled[seat]
-                    role = self.roles.get((name, g, seat), "learner")
-                    if role == "learner":
-                        self.rollout.reward((name, int(i)), rewards[i], bool(dones[i]), info["placement"][i])
-                        if dones[i] and seat == 0:
+                    if self.role[off + i] == 0:
+                        self.rollout.reward(off + int(i), rewards[i], bool(dones[i]), info["placement"][i])
+                        if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             self.stats.append((name, int(info["placement"][i])))
                 self.obs[name] = env.observe()
-                for g in range(env.n_games):                 # 新开的对局：重新抽对手
-                    e = env.episode_index(g)
-                    if e != self.episode[name][g]:
-                        self.episode[name][g] = e
-                        self._assign(name, env, g)
-        # 没打完的序列：用当前局面的价值自举
-        last_values = {}
-        for name, env in self.envs:
+                if dones.any():                                # 新开的对局：重新抽对手
+                    k = len(env.controlled)
+                    for g in np.unique(np.flatnonzero(dones) // k):
+                        e = env.episode_index(int(g))
+                        if e != self.episode[name][g]:
+                            self.episode[name][g] = e
+                            self._assign(name, env, off, int(g))
+                t_net += tb - ta
+                t_env += time.time() - tb
+        # 没打完的：用当前局面的价值自举
+        last_values = np.zeros(self.n_slots, dtype=np.float32)
+        for name, env, off in self.envs:
             obs = self.obs[name]
-            keys = [(name, i) for i in range(env.n_slots) if self.rollout.seq.get((name, i))]
-            if keys:
-                idx = np.asarray([i for _, i in keys])
-                _, _, v = self.learner(obs["features"][idx], obs["cards"][idx], obs["action_mask"][idx] |
-                                       (~obs["action_mask"][idx].any(1, keepdims=True)))
-                last_values.update({k: float(x) for k, x in zip(keys, v)})
+            live = np.flatnonzero(self.rollout.last[off:off + env.n_slots] >= 0)
+            if len(live):
+                m = obs["action_mask"][live].copy()
+                m[~m.any(1)] = True
+                _, _, v = self.learner(obs["features"][live], obs["cards"][live], m)
+                last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
-        return batch, n_dec, time.time() - t0
+        return batch, n_dec, time.time() - t0, t_env, t_net
 
     # ---------------- 更新 ----------------
 
@@ -266,56 +315,65 @@ class Trainer:
         stats = defaultdict(list)
         use_anchor = self.anchor is not None and self.iter < self.anchor_until
         stop = False
+        A_N = self.model.L.actions
+        if self.dev.type == "cuda":
+            torch.cuda.reset_peak_memory_stats()
         for _ in range(cfg.epochs):
             for s in range(0, n, cfg.minibatch):
-                j = idx[s:s + cfg.minibatch]
-                f = torch.as_tensor(b["f"][j], device=self.dev, dtype=torch.float32)
-                c = torch.as_tensor(b["c"][j], device=self.dev, dtype=torch.long)
-                m = torch.as_tensor(np.unpackbits(b["m"][j], axis=1)[:, :self.model.L.actions].astype(bool),
-                                    device=self.dev)
-                a = torch.as_tensor(b["a"][j], device=self.dev)
-                old = torch.as_tensor(b["logp"][j], device=self.dev, dtype=torch.float32)
-                A = torch.as_tensor(adv[j], device=self.dev, dtype=torch.float32)
-                R = torch.as_tensor(b["ret"][j], device=self.dev, dtype=torch.float32)
-                P = torch.as_tensor(b["place"][j], device=self.dev, dtype=torch.long)
-                with torch.autocast(self.dev.type, enabled=self.scaler.is_enabled()):
-                    logits, v, pl = self.model(f, c, m)
-                logits, v, pl = logits.float(), v.float(), pl.float()
-                logp_all = F.log_softmax(logits, -1)
-                logp = logp_all.gather(1, a.unsqueeze(1)).squeeze(1)
-                ratio = torch.exp(logp - old)
-                pg = -torch.min(ratio * A, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * A).mean()
-                probs = logp_all.exp()
-                ent = -(probs * logp_all.masked_fill(~m, 0)).sum(-1).mean()
-                vf = F.mse_loss(v, R)
-                has_p = P > 0
-                aux = F.cross_entropy(pl[has_p], P[has_p] - 1) if has_p.any() else torch.zeros((), device=self.dev)
-                loss = pg + cfg.vf_coef * vf - cfg.ent_coef * ent + cfg.aux_coef * aux
-                if use_anchor:
-                    with torch.no_grad():
-                        ref = F.log_softmax(self.anchor(f, c, m)[0].float(), -1)
-                    kl_anchor = (ref.exp() * (ref - logp_all)).masked_fill(~m, 0).sum(-1).mean()
-                    loss = loss + cfg.anchor_coef * kl_anchor
-                    stats["kl_anchor"].append(kl_anchor.item())
+                mb = idx[s:s + cfg.minibatch]
                 self.opt.zero_grad(set_to_none=True)
-                self.scaler.scale(loss).backward()
+                kls = []
+                for u in range(0, len(mb), cfg.micro_batch):     # 分份算梯度再累加（省显存）
+                    j = mb[u:u + cfg.micro_batch]
+                    w = len(j) / len(mb)
+                    t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
+                    f = t(b["f"][j], torch.float16 if self.amp else torch.float32)
+                    c = t(b["c"][j], torch.long)
+                    m = t(np.unpackbits(b["m"][j], axis=1)[:, :A_N].astype(bool), torch.bool)
+                    a = t(b["a"][j], torch.long)
+                    old = t(b["logp"][j], torch.float32)
+                    A = t(adv[j], torch.float32)
+                    R = t(b["ret"][j], torch.float32)
+                    P = t(b["place"][j], torch.long)
+                    with torch.autocast(self.dev.type, enabled=self.amp):
+                        logits, v, pl = self.model(f.float(), c, m)
+                    logp_all = F.log_softmax(logits.float(), -1)
+                    logp = logp_all.gather(1, a.unsqueeze(1)).squeeze(1)
+                    ratio = torch.exp(logp - old)
+                    pg = -torch.min(ratio * A, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * A).mean()
+                    ent = -(logp_all.exp() * logp_all.masked_fill(~m, 0)).sum(-1).mean()
+                    vf = F.mse_loss(v.float(), R)
+                    has_p = P > 0
+                    aux = F.cross_entropy(pl.float()[has_p], P[has_p] - 1) if has_p.any() else \
+                        torch.zeros((), device=self.dev)
+                    loss = pg + cfg.vf_coef * vf - cfg.ent_coef * ent + cfg.aux_coef * aux
+                    if use_anchor:
+                        with torch.no_grad(), torch.autocast(self.dev.type, enabled=self.amp):
+                            ref = F.log_softmax(self.anchor(f.float(), c, m)[0].float(), -1)
+                        kl_anchor = (ref.exp() * (ref - logp_all)).masked_fill(~m, 0).sum(-1).mean()
+                        loss = loss + cfg.anchor_coef * kl_anchor
+                        stats["kl_anchor"].append(kl_anchor.item())
+                    self.scaler.scale(loss * w).backward()
+                    with torch.no_grad():
+                        kl = ((ratio - 1) - torch.log(ratio)).mean().item()
+                    kls.append(kl * w)
+                    for k_, v_ in (("loss", loss.item()), ("pg", pg.item()), ("vf", vf.item()), ("ent", ent.item()),
+                                   ("aux", aux.item()), ("kl", kl),
+                                   ("clipfrac", ((ratio - 1).abs() > cfg.clip).float().mean().item())):
+                        stats[k_].append(v_)
                 self.scaler.unscale_(self.opt)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 self.scaler.step(self.opt)
                 self.scaler.update()
-                with torch.no_grad():
-                    approx_kl = ((ratio - 1) - torch.log(ratio)).mean().item()
-                for k_, v_ in (("loss", loss.item()), ("pg", pg.item()), ("vf", vf.item()), ("ent", ent.item()),
-                               ("aux", aux.item()), ("kl", approx_kl),
-                               ("clipfrac", ((ratio - 1).abs() > cfg.clip).float().mean().item())):
-                    stats[k_].append(v_)
-                if approx_kl > cfg.target_kl:
+                if sum(kls) > cfg.target_kl:
                     stop = True
                     break
             if stop:
                 break
         out = {k: float(np.mean(v)) for k, v in stats.items()}
         out["early_stop"] = stop
+        if self.dev.type == "cuda":
+            out["gpu_mem_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
         return out
 
     # ---------------- 对手库快照、评估 ----------------
@@ -329,7 +387,7 @@ class Trainer:
         def act(g, p):
             f, c = g.observe(p)
             m = np.frombuffer(g.legal_mask(p), dtype=np.uint8).astype(bool)[None]
-            a, _, _ = pol(np.frombuffer(f, "<f4")[None], np.frombuffer(c, "<i4")[None], m)
+            a, _, _ = pol(np.frombuffer(f, "<f4")[None].copy(), np.frombuffer(c, "<i4")[None].copy(), m)
             return int(a[0])
         self.model.eval()
         prof = sim_profile(act, games=self.cfg.profile_games, seed=10**7 + self.iter)
@@ -339,13 +397,12 @@ class Trainer:
         return mem
 
     def evaluate(self, games=None, seed=999):
-        """考试：学习者（0 号座位）对 7 个脚本机器人，平均名次。"""
+        """考试：学习者（0 号座位）对 7 个脚本机器人，平均名次和第一名率。"""
         from taverngym import BatchEnv
         games = games or self.cfg.eval_games
         env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads)
         obs = env.observe()
-        places = []
-        seen = set()
+        places = {}
         self.model.eval()
         while len(places) < games:
             ready = np.flatnonzero(obs["ready"])
@@ -355,22 +412,22 @@ class Trainer:
                 actions[ready] = a
             _, dones, info = env.step(actions)
             for i in np.flatnonzero(dones):
-                key = (i, env.episode_index(i))
-                if key not in seen:
-                    seen.add(key)
-                    places.append(int(info["placement"][i]))
+                if i not in places:                  # 每个对局只算第一局
+                    places[int(i)] = int(info["placement"][i])
             obs = env.observe()
-        places = [p for p in places if p > 0][:games]
-        return float(np.mean(places)) if places else float("nan"), float(np.mean([p == 1 for p in places]))
+        ps = [p for p in places.values() if p > 0]
+        return (round(float(np.mean(ps)), 3), round(float(np.mean([p == 1 for p in ps])), 3)) if ps else (None, None)
 
     # ---------------- 主循环 ----------------
 
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
-                    "league": self.league.to_json()}, self.run / "latest.pt")
+                    "league": self.league.to_json(), "model_kwargs": self.mkw}, self.run / "latest.pt")
 
     def load(self, path):
-        ck = torch.load(path, map_location=self.dev)
+        ck = torch.load(path, map_location=self.dev, weights_only=False)
+        if ck.get("model_kwargs") and ck["model_kwargs"] != self.mkw:
+            raise ValueError(f"检查点的模型大小 {ck['model_kwargs']} 和这次的 {self.mkw} 不一样")
         self.model.load_state_dict(ck["model"])
         self.opt.load_state_dict(ck["opt"])
         self.iter = ck["iter"]
@@ -388,12 +445,14 @@ class Trainer:
         cfg = self.cfg
         end = self.iter + (iters or cfg.iters)
         while self.iter < end:
-            batch, n_dec, t_col = self.collect()
+            batch, n_dec, t_col, t_env, t_net = self.collect()
             t1 = time.time()
             upd = self.update(batch) if batch is not None else {}
+            t_upd = time.time() - t1
             self.iter += 1
-            rec = {"iter": self.iter, "decisions": n_dec, "dps": round(n_dec / max(t_col, 1e-6)),
-                   "t_collect": round(t_col, 1), "t_update": round(time.time() - t1, 1), **upd}
+            rec = {"iter": self.iter, "decisions": n_dec, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
+                   "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
+                   "t_update": round(t_upd, 1), **upd}
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
                 if ps:

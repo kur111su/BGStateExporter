@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem Step A1: install the TavernGym wheel (built by our GitHub Actions from MCG-NJU/AutoTavern, MIT) and benchmark it.
 rem Report goes to bgrl\reports\tg_bench_*.txt
 setlocal

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem Step B3 setup: install PyTorch (CUDA) into bgrl\.venv, run the RL tests, a tiny training run and a speed test.
 rem Needs step_a1_taverngym.bat to have been run once (TavernGym wheel installed).
 setlocal
@@ -34,9 +35,14 @@ set "RC=%ERRORLEVEL%"
 type reports\b3_step.txt & type reports\b3_step.txt >> %LOG%
 if not "%RC%"=="0" ( echo Smoke run failed - see bgrl\reports\b3_setup.txt & pause & exit /b 1 )
 echo.
-echo === 3/3 speed test (3 iterations, default size) ===
-.venv\Scripts\python -X utf8 tools\train.py --bench --threads %NUMBER_OF_PROCESSORS% > reports\b3_bench.txt 2>&1
-type reports\b3_bench.txt
+echo === 3/3 speed test: small / medium / large model, 3 iterations each (about 10 minutes) ===
+if exist reports\b3_bench.txt del reports\b3_bench.txt
+for %%S in (small medium large) do (
+  echo --- %%S ---
+  .venv\Scripts\python -X utf8 tools\train.py --bench --size %%S --threads %NUMBER_OF_PROCESSORS% > reports\b3_step.txt 2>&1
+  type reports\b3_step.txt
+  type reports\b3_step.txt >> reports\b3_bench.txt
+)
 type reports\b3_bench.txt >> %LOG%
 echo.
 echo Saved to bgrl\reports\b3_bench.txt
