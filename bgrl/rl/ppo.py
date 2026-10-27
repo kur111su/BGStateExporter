@@ -59,17 +59,17 @@ class Config:
     anchor_coef: float = 0.1
     anchor_iters: int = 100
     # 对手库 / 检查点
-    snapshot_every: int = 25       # 每多少轮存一个快照进对手库
+    snapshot_every: int = 50       # 每多少轮存一个快照进对手库
     profile_games: int = 16        # 测快照画像用多少局
     save_every: int = 10
-    eval_every: int = 25
-    eval_games: int = 64
+    eval_every: int = 50
+    eval_games: int = 128          # 64 局时平均名次的误差约 ±0.3，128 局约 ±0.2
     amp: bool = True
     # 每回合最多几个操作（第 1、2、3… 回合，最后一个数用于之后所有回合）。TavernGym 默认不限：
     # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
     turn_caps: str = "14,18,22,26,30,34,38,42,45"
-    active_snapshots: int = 3      # 同一时间最多用几个快照当对手（多了每步要多算几次网络，变慢）
+    active_snapshots: int = 1      # 同一时间最多用几个快照当对手（每多一个，每步要多算一次网络；3 个时采样慢一倍）
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -475,7 +475,8 @@ class Trainer:
             upd = self.update(batch) if batch is not None else {}
             t_upd = time.time() - t1
             self.iter += 1
-            rec = {"iter": self.iter, "decisions": n_dec, "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
+            rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
+                   "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
                    "t_update": round(t_upd, 1), **upd}
             for name in ("bot", "league"):
