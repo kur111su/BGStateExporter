@@ -219,6 +219,37 @@ def compare(g, state: dict) -> list[str]:
     got_shop = sorted(base_id((s.get("minion") or s).get("id") or s.get("card", {}).get("id", "")) for s in me.get("shop") or [])
     if got_shop != want_shop:
         diffs.append(f"酒馆 {got_shop} ≠ {want_shop}")
+    races = sorted(state.get("availableRaces") or [])
+    if races and sorted(v.get("lobby_races") or []) != races:
+        diffs.append(f"种族 {sorted(v.get('lobby_races') or [])} ≠ {races}")
+    hero = (me.get("hero") or {}).get("id")
+    want_hero = p0.get("_heroBase") or p0.get("heroCardId")
+    if hero != want_hero:
+        diffs.append(f"英雄 {hero} ≠ {want_hero}")
+    got_hp = sorted((h or {}).get("id") for h in me.get("hero_powers") or [])
+    want_hp = sorted(h.get("cardId") for h in p0.get("heroPowers") or [] if h.get("cardId"))
+    if got_hp != want_hp:
+        diffs.append(f"英雄技能 {got_hp} ≠ {want_hp}")
+    got_tr = sorted(t.get("id") for t in me.get("trinkets") or [])
+    want_tr = sorted(t.get("cardId") for t in p0.get("trinkets") or [])
+    if want_tr and got_tr != want_tr:
+        diffs.append(f"饰品 {got_tr} ≠ {want_tr}")
+    opp = {o.get("id"): o for o in v.get("opponents") or []}
+    others = [e for e in state.get("leaderboard") or [] if not e.get("isPlayer")]
+    for i, e in enumerate(others[:7], start=1):
+        o = opp.get(i)
+        if o is None:
+            continue
+        oh = (o.get("hero") or {}).get("id")
+        if oh != (e.get("_heroBase") or e.get("heroCardId")):
+            diffs.append(f"对手{i}英雄 {oh} ≠ {e.get('_heroBase')}")
+        if not e.get("dead") and (o.get("health"), o.get("tier")) != (e.get("health"), e.get("tavernTier")):
+            diffs.append(f"对手{i} 血/等级 {(o.get('health'), o.get('tier'))} ≠ {(e.get('health'), e.get('tavernTier'))}")
+    stats = json.loads(g.state_json())["players"][0].get("stats", {})
+    tags = {k.upper(): val for k, val in (p0.get("playerTags") or {}).items()}
+    for t, f in STAT_TAGS.items():
+        if t in tags and stats.get(f) != tags[t]:
+            diffs.append(f"计数 {f} {stats.get(f)} ≠ {tags[t]}")
     for key, want in (("gold", p0.get("gold")), ("tier", p0.get("tavernTier")), ("health", p0.get("health")),
                       ("armor", p0.get("armor"))):
         got = me.get(key)
