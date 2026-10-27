@@ -1,0 +1,31 @@
+# B1-B3 checks on CPU: opponent profile vs bots, model/action-head tests, a tiny PPO run.
+# Uses the Linux TavernGym wheel from the prerelease taverngym-<commit>.
+name: bgrl RL checks
+
+on:
+  push:
+    paths: ["bgrl/rl/**", "bgrl/tools/train.py", "bgrl/tools/opp_profile.py", "bgrl/tests/test_rl.py", ".github/workflows/bgrl-rl.yml"]
+  workflow_dispatch:
+
+jobs:
+  rl:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install TavernGym wheel + torch (CPU)
+        run: |
+          commit=$(grep '^commit=' bgrl/taverngym/PIN.txt | cut -d= -f2)
+          tag="taverngym-${commit:0:7}"
+          whl="taverngym-1.0.0-cp310-abi3-linux_x86_64.whl"
+          curl -sSfL -o "$whl" "https://github.com/${{ github.repository }}/releases/download/$tag/$whl"
+          python -m pip install numpy "$whl"
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Model / action-head / GAE tests
+        run: python -X utf8 bgrl/tests/test_rl.py
+      - name: Opponent profile (real vs bots)
+        run: python -X utf8 bgrl/tools/opp_profile.py --games 24 --annotate
+      - name: Tiny PPO run
+        run: python -X utf8 bgrl/tools/train.py --smoke --threads 2

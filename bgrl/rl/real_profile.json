@@ -1,0 +1,127 @@
+{
+ "source": "real",
+ "games": 22,
+ "avgPlace": 2.77,
+ "turns": {
+  "1": {
+   "n": 21,
+   "boardMedian": 5,
+   "boardQ1": 4,
+   "boardQ3": 6,
+   "tier": 1.01,
+   "hp": 43.8
+  },
+  "2": {
+   "n": 22,
+   "boardMedian": 5.0,
+   "boardQ1": 4,
+   "boardQ3": 6,
+   "tier": 1.84,
+   "hp": 43.2
+  },
+  "3": {
+   "n": 22,
+   "boardMedian": 11.0,
+   "boardQ1": 5,
+   "boardQ3": 14,
+   "tier": 2.04,
+   "hp": 42.2
+  },
+  "4": {
+   "n": 22,
+   "boardMedian": 23.0,
+   "boardQ1": 16,
+   "boardQ3": 29,
+   "tier": 2.47,
+   "hp": 39.9
+  },
+  "5": {
+   "n": 22,
+   "boardMedian": 35.0,
+   "boardQ1": 30,
+   "boardQ3": 57,
+   "tier": 3.14,
+   "hp": 36.7
+  },
+  "6": {
+   "n": 22,
+   "boardMedian": 61.0,
+   "boardQ1": 42,
+   "boardQ3": 81,
+   "tier": 3.57,
+   "hp": 33.1
+  },
+  "7": {
+   "n": 22,
+   "boardMedian": 80.0,
+   "boardQ1": 57,
+   "boardQ3": 121,
+   "tier": 4.19,
+   "hp": 30.0
+  },
+  "8": {
+   "n": 22,
+   "boardMedian": 141.5,
+   "boardQ1": 113,
+   "boardQ3": 177,
+   "tier": 4.82,
+   "hp": 26
+  },
+  "9": {
+   "n": 22,
+   "boardMedian": 307.5,
+   "boardQ1": 210,
+   "boardQ3": 636,
+   "tier": 5.05,
+   "hp": 21.9
+  },
+  "10": {
+   "n": 20,
+   "boardMedian": 555.0,
+   "boardQ1": 392,
+   "boardQ3": 1457,
+   "tier": 5.42,
+   "hp": 18.5
+  },
+  "11": {
+   "n": 19,
+   "boardMedian": 1576,
+   "boardQ1": 782,
+   "boardQ3": 2859,
+   "tier": 5.62,
+   "hp": 16.1
+  },
+  "12": {
+   "n": 16,
+   "boardMedian": 1274.5,
+   "boardQ1": 909,
+   "boardQ3": 3221,
+   "tier": 5.7,
+   "hp": 15.9
+  },
+  "13": {
+   "n": 13,
+   "boardMedian": 4687,
+   "boardQ1": 1951,
+   "boardQ3": 10914,
+   "tier": 5.82,
+   "hp": 14.1
+  },
+  "14": {
+   "n": 10,
+   "boardMedian": 10584.5,
+   "boardQ1": 6663,
+   "boardQ3": 18179,
+   "tier": 5.95,
+   "hp": 12.6
+  },
+  "15": {
+   "n": 3,
+   "boardMedian": 1850,
+   "boardQ1": 1377,
+   "boardQ3": 6339,
+   "tier": 6,
+   "hp": 15.4
+  }
+ }
+}
