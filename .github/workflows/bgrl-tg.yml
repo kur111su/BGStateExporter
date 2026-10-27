@@ -1,0 +1,32 @@
+# Checks of our TavernGym bridge (bgrl/tg) against recorded plugin states, on the wheel we publish
+# (prerelease taverngym-<commit>). Results are printed as annotations.
+name: bgrl TavernGym checks
+
+on:
+  push:
+    paths: ["bgrl/tg/**", "bgrl/tests/**", "bgrl/tools/tg_bridge_check.py", ".github/workflows/bgrl-tg.yml"]
+  workflow_dispatch:
+
+jobs:
+  bridge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install TavernGym wheel
+        shell: pwsh
+        run: |
+          $commit = (Get-Content bgrl/taverngym/PIN.txt | Select-String '^commit=').ToString().Split('=')[1]
+          $tag = "taverngym-" + $commit.Substring(0,7)
+          $whl = "taverngym-1.0.0-cp310-abi3-win_amd64.whl"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/${{ github.repository }}/releases/download/$tag/$whl" -OutFile $whl
+          python -m pip install numpy $whl
+      - name: Bridge check
+        run: python -X utf8 bgrl/tools/tg_bridge_check.py --annotate --out bridge_report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bridge-report
+          path: bridge_report.json
