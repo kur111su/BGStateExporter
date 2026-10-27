@@ -171,8 +171,14 @@ def build_db(build: str, raw: dict[str, dict]) -> dict:
         elif CARDTYPE.get(t.get("CARDTYPE", 0)) in ("spell", "battleground_spell") and \
                 e["id"].startswith(("BG", "TB_Bacon", "EBG", "BGS")):
             db[e["id"]] = entry(e, "token_spell")       # 三连奖励、鲜血宝石、香蕉、法术迸发等衍生法术
+    # 英雄皮肤 -> 原英雄（对局记录里的 heroCardId 可能是皮肤）
+    skins = {}
+    for e in raw.values():
+        parent = e["tags"].get("BACON_SKIN_PARENT_ID")
+        if parent and parent in by_dbf and by_dbf[parent]["id"] in db:
+            skins[e["id"]] = by_dbf[parent]["id"]
     counts = Counter(d["category"] for d in db.values())
-    return {"build": build, "counts": dict(counts), "cards": db}
+    return {"build": build, "counts": dict(counts), "cards": db, "skins": skins}
 
 
 def default_carddefs() -> str:

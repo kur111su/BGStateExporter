@@ -29,6 +29,13 @@ simhost/      BGSimHost（C#）：Python 一次传一批战斗 JSON，在 .NET �
 bgsim/        Python 模拟环境
   bobsbuddy.py  调用 BGSimHost 的封装（战斗模拟）
   cards.py      卡牌数据：python -m bgsim.cards 从 HDT 下载的 CardDefs.base.xml 导出 data/bg_cards.json（版本更新后重跑）
+  rules.py      规则参数（金币、升本费用、酒馆格数、卡池份数……，注明哪些来自对局记录、哪些是假设）
+  model.py      随从、法术、玩家
+  game.py       招募阶段规则引擎（动作、三连、发现、抉择、法术迸发、回合流程、匹配、淘汰）
+  combat.py     战斗后端：BobsBuddyCombat（正式）/ SimpleCombat（只有关键词，开发测试用）
+  effects/      卡牌实现：core.py 是触发时机和积木，minions.py / spells.py / heroes.py 是具体卡
+  replay.py     回放校验：python -m bgsim.replay [对局记录目录]，按卡统计通过率
+  coverage.py   覆盖率：python -m bgsim.coverage [--replay 回放报告.json]
 data/         生成的数据（不进仓库）
 tools/        检查和分析脚本
 reports/      运行报告（不进仓库）
