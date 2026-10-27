@@ -134,7 +134,10 @@ namespace BGStateExporter
 				{
 					_learner.OnState(state, _sim?.LastRun);
 					if(state.IsBattlegrounds)
+					{
 						state.Learning = _learner.Status;
+						state.TurnLog = _learner.TurnLog;
+					}
 				}
 				var content = JsonConvert.SerializeObject(state, JsonSettings);
 				if(content == _lastContent)

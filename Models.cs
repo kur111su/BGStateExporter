@@ -10,6 +10,7 @@ namespace BGStateExporter
 		public int Schema { get; set; } = 1;
 		public PluginInfo? Plugin { get; set; }
 		public LearningStatus? Learning { get; set; }
+		public List<TurnRecord>? TurnLog { get; set; }          // 本局每回合：推荐了什么 / 实际做了什么
 		public bool InGame { get; set; }
 		public bool IsBattlegrounds { get; set; }
 		public string Mode { get; set; } = "none";        // solo | duos | none
@@ -23,6 +24,17 @@ namespace BGStateExporter
 		public List<LeaderboardEntry> Leaderboard { get; set; } = new();
 		public int NextOpponentPlayerId { get; set; }              // 下回合对手的 PLAYER_ID（0 = 未知）
 		public SimulationState? Simulation { get; set; }           // Bob's Buddy 模拟结果
+	}
+
+	public class TurnRecord
+	{
+		public int Turn { get; set; }
+		public int Tier { get; set; }                      // 回合结束时的酒馆等级
+		public string? Advice { get; set; }                // 回合开始时推荐方案的概括
+		public bool AdviceUpgrade { get; set; }
+		public string Actual { get; set; } = "";           // 实际操作的概括
+		public bool ActualUpgrade { get; set; }
+		public string Match { get; set; } = "none";        // same 一致 | partial 部分一致 | diff 不同 | none 没有建议
 	}
 
 	public class LearningStatus

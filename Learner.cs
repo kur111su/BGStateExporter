@@ -16,11 +16,15 @@ namespace BGStateExporter
 		public int Turn;
 		public TurnSnapshot Snapshot = new();
 		public List<Cand> Candidates = new();
+		public string TopSummary = "";          // 推荐方案一句话（回合记录用）
+		public bool TopUpgrade;
+		public List<int> TopBuys = new();
 
 		public sealed class Cand
 		{
 			public bool Upgrade;
 			public List<int> Buys = new();
+			public int Spell;                     // 买的法术 entityId，0 = 不买
 			public List<int> Sells = new();
 			public Dictionary<string, double> F = new();
 		}
@@ -33,6 +37,8 @@ namespace BGStateExporter
 		public Dictionary<int, string> Owned = new();     // 场上 + 手牌随从：entityId → 普通版卡牌 ID
 		public HashSet<string> GoldenBases = new();       // 拥有的金色随从（普通版卡牌 ID）
 		public Dictionary<int, string> Tavern = new();    // 酒馆随从：entityId → 普通版卡牌 ID
+		public HashSet<int> TavernSpells = new();         // 酒馆法术 entityId
+		public Dictionary<int, string> Names = new();     // entityId → 名字（回合记录用）
 
 		public static string BaseId(string? cardId)
 		{
@@ -47,10 +53,15 @@ namespace BGStateExporter
 				foreach(var m in s.Player.Board.Concat(s.Player.Hand).Where(m => m.Type == "minion"))
 				{
 					snap.Owned[m.EntityId] = BaseId(m.CardId);
+					snap.Names[m.EntityId] = m.Name ?? m.CardId ?? "?";
 					if(m.Golden) snap.GoldenBases.Add(BaseId(m.CardId));
 				}
-			foreach(var m in s.Tavern.Where(m => m.Type == "minion"))
-				snap.Tavern[m.EntityId] = BaseId(m.CardId);
+			foreach(var m in s.Tavern)
+			{
+				snap.Names[m.EntityId] = m.Name ?? m.CardId ?? "?";
+				if(m.Type == "minion") snap.Tavern[m.EntityId] = BaseId(m.CardId);
+				else if(m.Type == "spell") snap.TavernSpells.Add(m.EntityId);
+			}
 			return snap;
 		}
 	}
@@ -58,8 +69,11 @@ namespace BGStateExporter
 	/// <summary>
 	/// 自动学习建议器权重。
 	///  1. 记录：建议器每算一次（AdvisorRun），等到下一次计算或进入战斗时，比较前后局面，
-	///     看玩家实际升没升本、买了谁，对上候选方案里的哪一个。
-	///  2. 每局结束：按最终名次给这局的记录加权（第 1 名 1.0，第 4 名 0.14，第 5～8 名 0），追加到 training/samples.jsonl。
+	///     看玩家实际升没升本、买了谁、买没买法术，对上候选方案里的哪一个。
+	///     这段时间里玩家什么都没做（只刷新、只看）不记录——那不是在候选方案之间做选择。
+	///  2. 每局结束：按最终名次给这局的记录加权（第 1 名 1.0，第 4 名 0.14，第 5～8 名 0），追加到 training/samples_v2.jsonl
+	///     （v0.8 起特征变了，v0.7 及以前的 samples.jsonl 保留但不再使用）。
+	///  另外每个回合记一条“回合开始时推荐了什么 / 实际做了什么”，给网页面板显示。
 	///  3. 拟合：攒够局数后，每局结束重新拟合一次。模型是条件 logit：P(选方案 j) ∝ exp(β·Σ 权重×特征)，
 	///     “战力”权重固定作为尺度，β 单独拟合（代表选择有多稳定），其余权重向默认值收缩（局数越多收缩越弱）。
 	///     按对局划出 1/4 做验证集，新权重在验证集上解释得更好才写入，旧权重自动备份。
@@ -81,11 +95,22 @@ namespace BGStateExporter
 		private volatile LearningStatus _status = new();
 		public LearningStatus Status => _status;
 
+		// 回合记录
+		private volatile List<TurnRecord> _turnLog = new();
+		public List<TurnRecord> TurnLog => _turnLog;
+		private int _curTurn;
+		private TurnSnapshot? _turnStart;
+		private TurnSnapshot? _prevSnap;
+		private readonly Dictionary<int, string> _turnNames = new();
+		private readonly List<string> _turnSpells = new();
+		private readonly HashSet<int> _turnTavernSeen = new();   // 这回合在酒馆里出现过的随从
+		private AdvisorRun? _turnAdvice;
+
 		public Learner(string outDir)
 		{
 			_dir = Path.Combine(outDir, "training");
 			Directory.CreateDirectory(_dir);
-			_samplesPath = Path.Combine(_dir, "samples.jsonl");
+			_samplesPath = Path.Combine(_dir, "samples_v2.jsonl");
 			_logPath = Path.Combine(_dir, "fit_log.txt");
 			RefreshStatus(null);
 		}
@@ -105,6 +130,8 @@ namespace BGStateExporter
 						_openRun = null;
 						_lastRecruitSnap = null;
 						_lastPlace = 0;
+						_turnLog = new List<TurnRecord>();
+						_curTurn = 0;
 						RefreshStatus(null);
 					}
 					if(s.Player != null && s.Player.LeaderboardPlace > 0)
@@ -121,9 +148,11 @@ namespace BGStateExporter
 						}
 						_lastRecruitSnap = TurnSnapshot.From(s);
 						_lastRecruitTurn = s.Turn;
+						TrackTurn(s, _lastRecruitSnap, run);
 					}
 					else if(s.Phase == "combat" || s.Phase == "game_over")
 					{
+						CloseTurn();
 						// 招募结束：最后一次计算之后玩家做的事 = 它的输入局面 vs 招募阶段最后的局面
 						if(_openRun != null && _lastRecruitSnap != null && _openRun.Turn == _lastRecruitTurn)
 							Label(_openRun, _lastRecruitSnap);
@@ -157,6 +186,13 @@ namespace BGStateExporter
 			var sold = new HashSet<int>(before.Owned
 				.Where(kv => !after.Owned.ContainsKey(kv.Key) && !newGolden.Contains(kv.Value))
 				.Select(kv => kv.Key));
+			// 买了哪个法术：酒馆里的法术不见了，而酒馆没有整体刷新（还有原来的卡）
+			var tavernKept = before.Tavern.Keys.Any(after.Tavern.ContainsKey) || before.TavernSpells.Any(after.TavernSpells.Contains);
+			var spellsBought = tavernKept ? before.TavernSpells.Where(id => !after.TavernSpells.Contains(id)).ToList() : new List<int>();
+
+			// 这段时间什么都没做（只刷新 / 只看）：不是在候选方案之间做选择，不记录
+			if(!upgraded && bought.Count == 0 && sold.Count == 0 && spellsBought.Count == 0)
+				return;
 
 			var best = -1;
 			var bestOverlap = -1;
@@ -164,6 +200,8 @@ namespace BGStateExporter
 			{
 				var c = run.Candidates[i];
 				if(c.Upgrade != upgraded || !new HashSet<int>(c.Buys).SetEquals(bought))
+					continue;
+				if((c.Spell != 0) != (spellsBought.Count > 0) || (c.Spell != 0 && !spellsBought.Contains(c.Spell)))
 					continue;
 				var overlap = c.Sells.Count(sold.Contains);
 				if(overlap > bestOverlap)
@@ -177,6 +215,7 @@ namespace BGStateExporter
 
 			var sample = new
 			{
+				v = 2,
 				turn = run.Turn,
 				chosen = best,
 				cands = run.Candidates.Select(c => c.F).ToList(),
@@ -185,8 +224,90 @@ namespace BGStateExporter
 			RefreshStatus(null);
 		}
 
+		private void TrackTurn(BgState s, TurnSnapshot snap, AdvisorRun? run)
+		{
+			if(s.Turn != _curTurn)
+			{
+				CloseTurn();
+				_curTurn = s.Turn;
+				_turnStart = snap;
+				_prevSnap = null;
+				_turnNames.Clear();
+				_turnSpells.Clear();
+				_turnTavernSeen.Clear();
+				_turnAdvice = null;
+			}
+			foreach(var kv in snap.Names)
+				_turnNames[kv.Key] = kv.Value;
+			foreach(var id in snap.Tavern.Keys)
+				_turnTavernSeen.Add(id);
+			if(_turnStart != null && _turnStart.Tavern.Count == 0 && snap.Tavern.Count > 0)
+				_turnStart = snap;   // 回合开始那一刻酒馆还是空的，用酒馆刷出来后的局面做起点
+			if(_prevSnap != null)
+			{
+				var kept = _prevSnap.Tavern.Keys.Any(snap.Tavern.ContainsKey) || _prevSnap.TavernSpells.Any(snap.TavernSpells.Contains);
+				if(kept)
+					foreach(var id in _prevSnap.TavernSpells.Where(id => !snap.TavernSpells.Contains(id)))
+						_turnSpells.Add(_turnNames.TryGetValue(id, out var n) ? n : "?");
+			}
+			_prevSnap = snap;
+			// 回合开始后的第一份建议（酒馆刷出来以后算的）
+			if(_turnAdvice == null && run != null && run.Turn == s.Turn && run.Snapshot.Tavern.Count > 0)
+				_turnAdvice = run;
+		}
+
+		private void CloseTurn()
+		{
+			if(_curTurn <= 0 || _turnStart == null || _lastRecruitSnap == null || _lastRecruitTurn != _curTurn)
+			{
+				_curTurn = 0;
+				return;
+			}
+			var start = _turnStart;
+			var end = _lastRecruitSnap;
+			var newGolden = new HashSet<string>(end.GoldenBases.Except(start.GoldenBases));
+			string Name(int id) => _turnNames.TryGetValue(id, out var n) ? n : "?";
+
+			var upgraded = start.Tier >= 1 && end.Tier > start.Tier;
+			// 这回合见过的所有酒馆随从里，最后归你的（或合成了金色的）= 买的
+			var bought = _turnTavernSeen.Where(end.Owned.ContainsKey).ToList();
+			var sold = start.Owned.Where(kv => !end.Owned.ContainsKey(kv.Key) && !newGolden.Contains(kv.Value)).Select(kv => kv.Key).ToList();
+
+			var actual = new List<string>();
+			if(upgraded) actual.Add($"升到 {end.Tier} 本");
+			if(bought.Count > 0) actual.Add("买 " + string.Join("、", bought.Select(Name)));
+			if(_turnSpells.Count > 0) actual.Add("法术 " + string.Join("、", _turnSpells));
+			if(sold.Count > 0) actual.Add("卖 " + string.Join("、", sold.Select(Name)));
+
+			var rec = new TurnRecord
+			{
+				Turn = _curTurn,
+				Tier = end.Tier,
+				Actual = actual.Count > 0 ? string.Join("；", actual) : "没买也没升本",
+				ActualUpgrade = upgraded,
+			};
+			if(_turnAdvice != null)
+			{
+				rec.Advice = _turnAdvice.TopSummary;
+				rec.AdviceUpgrade = _turnAdvice.TopUpgrade;
+				var adviceBuys = new HashSet<string>(_turnAdvice.TopBuys.Select(Name));
+				var actualBuys = new HashSet<string>(bought.Select(Name));
+				var sameUp = rec.AdviceUpgrade == upgraded;
+				rec.Match = sameUp && adviceBuys.SetEquals(actualBuys) ? "same"
+					: sameUp || adviceBuys.Overlaps(actualBuys) ? "partial" : "diff";
+			}
+			else
+				rec.Match = "none";
+
+			var log = _turnLog.Where(r => r.Turn != rec.Turn).ToList();
+			log.Add(rec);
+			_turnLog = log;
+			_curTurn = 0;
+		}
+
 		private void Finish()
 		{
+			CloseTurn();
 			var key = _gameKey;
 			_gameKey = null;
 			_openRun = null;

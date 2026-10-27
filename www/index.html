@@ -126,6 +126,23 @@
   .op.sell { background: var(--loss-soft); color: var(--loss); }
   .op.upgrade { background: var(--gold-soft); color: var(--gold); }
   .op.freeze { background: var(--frost-soft); color: var(--frost); }
+  .op.spell { background: #efe8fb; color: #6a3fb5; }
+  .op.keep { background: var(--rail); color: var(--muted); }
+
+  /* ---------- 回合记录 ---------- */
+  .tl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tl th, .tl td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  .tl th { font-size: 12px; font-weight: 400; color: var(--muted); background: var(--rail); border-bottom: 1px solid var(--rule); }
+  .tl td.t { white-space: nowrap; color: var(--muted); }
+  .tl td.t b { color: var(--ink); }
+  .tl .m { display: inline-block; font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 999px; line-height: 18px; white-space: nowrap; }
+  .tl .m.same { background: var(--win-soft); color: var(--win); }
+  .tl .m.partial { background: var(--gold-soft); color: var(--gold); }
+  .tl .m.diff { background: var(--loss-soft); color: var(--loss); }
+  .tl .m.none { background: var(--rail); color: var(--faint); }
+  .tl tr.now td { background: #f7f9fe; }
+  .tl-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius-m); }
+  .tl-sum { font-size: 12px; color: var(--muted); }
   .steps .g { font-size: 12px; color: var(--faint); white-space: nowrap; }
   .reasons { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
   .advice-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); margin-top: 10px; }
@@ -337,7 +354,13 @@
       { place: 8, playerId: 18, heroCardId: 'TB_BaconShop_HERO_16', heroName: '挂机的阿凯', health: 0, armor: 0, tavernTier: 2, isPlayer: false, dead: true }
     ],
     nextOpponentPlayerId: 12,
-    learning: { enabled: true, gamesCollected: 7, samplesCollected: 64, minGames: 30, samplesThisGame: 5, fitting: false, lastFitTime: null, lastFitMessage: null },
+    turnLog: [
+      { turn: 4, tier: 2, advice: '买 南海卖艺者、瞌睡雏龙', adviceUpgrade: false, actual: '买 南海卖艺者、瞌睡雏龙', actualUpgrade: false, match: 'same' },
+      { turn: 5, tier: 3, advice: '升本；买 暮光使者', adviceUpgrade: true, actual: '升到 3 本；买 暮光使者', actualUpgrade: true, match: 'same' },
+      { turn: 6, tier: 3, advice: '买 奖品促销龙、赛博巨龙；卖 南海卖艺者', adviceUpgrade: false, actual: '买 奖品促销龙；法术 香蕉', actualUpgrade: false, match: 'partial' },
+      { turn: 7, tier: 4, advice: '买 卡雷苟斯、虚空幼龙', adviceUpgrade: false, actual: '升到 4 本；买 卡雷苟斯', actualUpgrade: true, match: 'partial' },
+      { turn: 8, tier: 4, advice: '升本', adviceUpgrade: true, actual: '买 赛博巨龙、砂岩幼龙；卖 南海卖艺者', actualUpgrade: false, match: 'diff' } ],
+    learning: { enabled: true, gamesCollected: 3, samplesCollected: 41, minGames: 30, samplesThisGame: 5, fitting: false, lastFitTime: null, lastFitMessage: null },
     simulation: {
       available: true, message: null,
       live: { turn: 8, state: 'Shopping', errorState: 'None', hasResult: true, winRate: 0.712, tieRate: 0.064, lossRate: 0.224,
@@ -355,15 +378,29 @@
           winRate: 0.457, tieRate: 0.088, lossRate: 0.455, winLethal: 0.402, lossLethal: 0, avgDamageDealt: 9.8, avgDamageTaken: 9.1, simulationCount: 3000 }
       ] },
       optimizer: { status: 'idle', requestId: 0, evaluated: 0, currentOrder: [], bestOrder: [], bestOrderNames: [] },
-      advisor: { status: 'done', turn: 9, targetHeroName: '伊利丹·怒风', targetBoardSeenTurn: 7, plansConsidered: 30, plansSimulated: 13, elapsedMs: 2740,
-        message: '战吼、回合结束等招募阶段效果没有计入', desiredTier: 5, hpFactor: 0.911, runnerUps: 10,
+      advisor: { status: 'done', turn: 9, targetHeroName: '伊利丹·怒风', targetBoardSeenTurn: 7, plansConsidered: 41, plansSimulated: 13, elapsedMs: 180,
+        message: '战吼、回合结束、法术等效果没有模拟，用“随从效果 / 法术”特征近似；英雄技能没有计入', desiredTier: 5, hpFactor: 0.911, runnerUps: 24,
         weights: [
           { key: 'sim', name: '战力', value: 1.0, default: 1.0 }, { key: 'heur', name: '估值战力', value: 0.15, default: 0.15 },
           { key: 'upgrade', name: '升本', value: 0.35, default: 0.35 }, { key: 'behind', name: '落后节奏', value: 0.12, default: 0.12 },
           { key: 'triple', name: '三连', value: 0.45, default: 0.45 }, { key: 'pair', name: '对子', value: 0.06, default: 0.06 },
-          { key: 'tribe', name: '种族', value: 0.04, default: 0.04 }, { key: 'refresh', name: '剩余金币', value: 0.015, default: 0.015 } ],
+          { key: 'tribe', name: '种族', value: 0.04, default: 0.04 }, { key: 'effect', name: '随从效果', value: 0.08, default: 0.08 },
+          { key: 'buys', name: '购买', value: 0.03, default: 0.03 }, { key: 'spell', name: '法术', value: 0.06, default: 0.06 },
+          { key: 'refresh', name: '剩余金币', value: 0.015, default: 0.015 } ],
         plans: [
-          { rank: 1, score: 0.524, goldLeft: 0, finalBoard: [101,102,103,104,105,106,120],
+          { rank: 1, score: 0.565, goldLeft: 2, finalBoard: [101,102,103,104,105,120,203],
+            steps: [
+              { type: 'sell', text: '卖掉 虚空幼龙（7/7）', entityId: 106, gold: 8 },
+              { type: 'buy', text: '买酒馆第 3 个：千折纸龙（2/3，有效果）', entityId: 203, gold: 5 },
+              { type: 'buy', text: '买酒馆第 1 个：戈德林（4/4，有效果）', entityId: 201, gold: 2 },
+              { type: 'play', text: '打出：砂岩幼龙、千折纸龙', entityId: 0, gold: 2 },
+              { type: 'keep', text: '留在手里：戈德林', entityId: 0, gold: 2 },
+              { type: 'refresh', text: '剩 2 金：可以刷新 2 次找更好的', entityId: 0, gold: 2 } ],
+            sim: { winRate: 0.66, tieRate: 0.05, lossRate: 0.29, winLethal: 0, lossLethal: 0, avgDamageDealt: 10.4, avgDamageTaken: 7.9, simulationCount: 1000 },
+            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 66% / 负 29%', '没升本，落后节奏（第 9 回合建议 5 本）', '买了 1 个主种族（龙）随从', '买有效果的随从：千折纸龙、戈德林（效果本身没有模拟）'],
+            features: { sim: 0.3788, behind: -1, tribe: 1, buys: 2, effect: 2.2, refresh: 2 },
+            scoreParts: { '战力': 0.379, '落后节奏': -0.12, '种族': 0.04, '购买': 0.06, '随从效果': 0.176, '剩余金币': 0.03 } },
+          { rank: 2, score: 0.524, goldLeft: 0, finalBoard: [101,102,103,104,105,106,120],
             steps: [
               { type: 'upgrade', text: '升到 5 本（7 金）', entityId: 0, gold: 0 },
               { type: 'play', text: '打出：砂岩幼龙', entityId: 0, gold: 0 } ],
@@ -371,26 +408,15 @@
             reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 55% / 负 38%', '升本节奏：第 9 回合建议 5 本'],
             features: { sim: 0.1739, upgrade: 1 },
             scoreParts: { '战力': 0.174, '升本': 0.35 } },
-          { rank: 2, score: 0.329, goldLeft: 2, finalBoard: [101,102,103,104,105,120,203],
-            steps: [
-              { type: 'sell', text: '卖掉 虚空幼龙（7/7）', entityId: 106, gold: 8 },
-              { type: 'buy', text: '买酒馆第 3 个：千折纸龙（2/3）', entityId: 203, gold: 5 },
-              { type: 'buy', text: '买酒馆第 1 个：戈德林（4/4）', entityId: 201, gold: 2 },
-              { type: 'play', text: '打出：砂岩幼龙、千折纸龙、戈德林', entityId: 0, gold: 2 },
-              { type: 'refresh', text: '剩 2 金：可以刷新 2 次找更好的', entityId: 0, gold: 2 } ],
-            sim: { winRate: 0.66, tieRate: 0.05, lossRate: 0.29, winLethal: 0, lossLethal: 0, avgDamageDealt: 10.4, avgDamageTaken: 7.9, simulationCount: 1000 },
-            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 66% / 负 29%', '没升本，落后节奏（第 9 回合建议 5 本）', '买了 1 个主种族（龙）随从'],
-            features: { sim: 0.3788, behind: -1, tribe: 1, refresh: 2 },
-            scoreParts: { '战力': 0.379, '落后节奏': -0.12, '种族': 0.04, '剩余金币': 0.03 } },
-          { rank: 3, score: 0.191, goldLeft: 4, finalBoard: [101,102,103,104,105,106,204],
+          { rank: 3, score: 0.236, goldLeft: 0, finalBoard: [101,102,103,104,105,106,204],
             steps: [
               { type: 'buy', text: '买酒馆第 4 个：偏折机器人（3/2）', entityId: 204, gold: 4 },
-              { type: 'play', text: '打出：砂岩幼龙、偏折机器人', entityId: 0, gold: 4 },
-              { type: 'refresh', text: '剩 4 金：可以刷新 4 次找更好的', entityId: 0, gold: 4 } ],
+              { type: 'spell', text: '买法术第 6 个：布莱恩的祝福（4 金）', entityId: 206, gold: 0 },
+              { type: 'play', text: '打出：偏折机器人', entityId: 0, gold: 0 } ],
             sim: { winRate: 0.6, tieRate: 0.06, lossRate: 0.34, winLethal: 0, lossLethal: 0, avgDamageDealt: 9.9, avgDamageTaken: 8.1, simulationCount: 1000 },
-            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 60% / 负 34%', '没升本，落后节奏（第 9 回合建议 5 本）'],
-            features: { sim: 0.2659, behind: -1, refresh: 3 },
-            scoreParts: { '战力': 0.266, '落后节奏': -0.12, '剩余金币': 0.045 } } ] }
+            reasons: ['对 伊利丹·怒风（第 7 回合阵容）胜 60% / 负 34%', '没升本，落后节奏（第 9 回合建议 5 本）', '买法术 布莱恩的祝福（效果没有模拟）'],
+            features: { sim: 0.2659, behind: -1, buys: 1, spell: 1 },
+            scoreParts: { '战力': 0.266, '落后节奏': -0.12, '购买': 0.03, '法术': 0.06 } } ] }
     }
   };
 
@@ -436,7 +462,7 @@
     ? `<div class="row">${cards.map(c => cardHtml(c, opts)).join('')}</div>` : `<div class="empty">${empty}</div>`;
 
   // ---------- 本回合建议 ----------
-  const OP = { upgrade: '升本', sell: '卖', buy: '买', play: '打出', refresh: '刷新', freeze: '冻结', pass: '跳过' };
+  const OP = { upgrade: '升本', sell: '卖', buy: '买', spell: '法术', play: '打出', keep: '留手', refresh: '刷新', freeze: '冻结', pass: '跳过' };
   function planHtml(pl, best) {
     return `<div class="plan ${best ? 'best' : ''}">
       <div class="plan-head"><b>${best ? '推荐' : '备选 ' + (pl.rank - 1)}</b><span class="score">得分 <strong>${num(pl.score)}</strong></span></div>
@@ -473,6 +499,9 @@
     triple: '这套操作凑成几个三连',
     pair: '新凑成几个对子',
     tribe: '买了几个主种族随从',
+    effect: '买的随从里有效果的（按星级折算）',
+    buys: '买了几个随从',
+    spell: '买酒馆法术（按星级折算）',
     refresh: '剩下的金币够刷新几次',
   };
   function ledgerHtml(s) {
@@ -558,6 +587,24 @@
       <div class="order">从左到右：${order}</div></div>`;
   }
 
+  // ---------- 本局回合记录：回合开始时推荐了什么 / 你实际做了什么 ----------
+  const MATCH = { same: '一致', partial: '部分一致', diff: '不同', none: '没有建议' };
+  function turnLogHtml(s) {
+    const log = (s.turnLog || []).slice().sort((a, b) => b.turn - a.turn);
+    if (!log.length) return '';
+    const judged = log.filter(r => r.match !== 'none');
+    const same = judged.filter(r => r.match === 'same').length;
+    const upAgree = judged.filter(r => r.adviceUpgrade === r.actualUpgrade).length;
+    const rows = log.map(r => `<tr class="${r.turn === s.turn ? 'now' : ''}">
+        <td class="t"><b>${r.turn}</b> 回合<br>${r.tier} 本</td>
+        <td>${esc(r.advice || '—')}</td>
+        <td>${esc(r.actual)}</td>
+        <td><span class="m ${r.match}">${MATCH[r.match] || r.match}</span></td></tr>`).join('');
+    return `<section class="block"><h2>本局回合记录 <span class="sub">推荐 = 每回合酒馆刷出来后的第一份建议</span></h2>
+      ${judged.length ? `<div class="tl-sum" style="margin-bottom:8px">${judged.length} 个回合里，和推荐完全一致 ${same} 个；升不升本一致 ${upAgree} 个</div>` : ''}
+      <div class="tl-wrap"><table class="tl"><thead><tr><th>回合</th><th>推荐</th><th>你的操作</th><th>对比</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  }
+
   // ---------- 右栏 ----------
   function leaderboardHtml(s) {
     const lb = s.leaderboard || [];
@@ -613,10 +660,11 @@
     const best = a && s.phase === 'recruit' && (a.plans || [])[0];
     if (!best) return;
     for (const st of best.steps) {
-      if (!st.entityId || (st.type !== 'buy' && st.type !== 'sell')) continue;
+      if (!st.entityId || !['buy', 'sell', 'spell'].includes(st.type)) continue;
+      const kind = st.type === 'sell' ? 'sell' : 'buy';
       document.querySelectorAll(`[data-eid="${st.entityId}"]`).forEach(el => {
-        el.classList.add('mark-' + st.type);
-        el.insertAdjacentHTML('afterbegin', `<span class="mark-tag">${st.type === 'buy' ? '买' : '卖'}</span>`);
+        el.classList.add('mark-' + kind);
+        el.insertAdjacentHTML('afterbegin', `<span class="mark-tag">${kind === 'buy' ? '买' : '卖'}</span>`);
       });
     }
   }
@@ -673,6 +721,7 @@
           ${extras.length ? `<section class="block"><h2>饰品和任务奖励</h2>${row(extras, '')}</section>` : ''}
         </div>
         ${matchupsHtml(s)}
+        ${turnLogHtml(s)}
       </div>
       ${rail}
     </div>`;

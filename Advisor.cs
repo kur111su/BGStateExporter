@@ -12,11 +12,13 @@ namespace BGStateExporter
 {
 	/// <summary>
 	/// 第一层：规则 + 搜索。
-	/// 招募阶段枚举“升不升本 × 买哪几个 × 卖谁”的组合，算出结束时的场面，
-	/// 用 Bob's Buddy 对目标对手（下个对手上次的阵容）模拟，再加上升本节奏、三连、种族、剩余金币等启发式打分，
-	/// 输出得分最高的 3 个方案。没有对手阵容时（前几回合）只用随从估值。
+	/// 招募阶段枚举“升不升本 × 买哪几个随从 × 买不买某个法术”的组合。
+	/// 每个组合里，手牌和新买的随从按估值从高到低尝试上场：场上有空位就上，没空位但比场上最弱的强就替换（卖掉最弱的），
+	/// 否则留在手里——不会为了打出手牌去卖掉更强的随从。
+	/// 结束时的场面用 Bob's Buddy 对目标对手（下个对手上次的阵容）模拟，再加上升本节奏、三连、种族、
+	/// 随从效果、购买、法术、剩余金币等特征打分，输出得分最高的 3 个方案。没有对手阵容时（前几回合）只用随从估值。
 	///
-	/// 已知不考虑：战吼 / 回合结束等招募阶段效果、酒馆法术、英雄技能、刷新后会出什么。
+	/// 招募阶段效果（战吼、回合结束等）、法术效果模拟不了，用“随从效果 / 法术”特征近似；英雄技能和刷新结果不考虑。
 	/// </summary>
 	internal sealed partial class SimManager
 	{
@@ -46,7 +48,8 @@ namespace BGStateExporter
 			public List<Entity> Board = new();      // 当前场面，从左到右
 			public List<Entity> Hand = new();       // 手牌里的随从（打出免费）
 			public List<Entity> Tavern = new();     // 酒馆里的随从
-			public int TavernSpells;
+			public List<Entity> Spells = new();     // 酒馆里的法术
+			public int HandCount;                   // 手牌总数（含法术），上限 10
 			public string? DominantRace;
 			public CapturedOpponent? Target;
 			public bool TargetIsNext;
@@ -57,6 +60,7 @@ namespace BGStateExporter
 		{
 			public Entity E = null!;
 			public string Src = "";                 // board | hand | buy | triple
+			public int Index;                       // 在原场面里的位置（board 用）
 			public double V;
 			public string BaseId = "";
 			public bool Golden;
@@ -66,7 +70,9 @@ namespace BGStateExporter
 		{
 			public bool Upgrade;
 			public List<Entity> Buys = new();
+			public Entity? Spell;                   // 买的酒馆法术（最多一个）
 			public List<Slot> Final = new();
+			public List<Slot> Kept = new();         // 买了 / 手里有，但这回合不上场
 			public List<Entity> Sells = new();
 			public List<string> Triples = new();    // 凑成三连的随从名
 			public int Pairs;
@@ -106,6 +112,8 @@ namespace BGStateExporter
 				return;
 			if((DateTime.Now - _advisorChangedAt).TotalMilliseconds < AdvisorDebounceMs)
 				return;
+			if(!state.Tavern.Any(m => m.Type == "minion"))
+				return;   // 回合刚开始酒馆还没刷出来（金币也可能还没到账），等一下再算
 
 			AdvisorInput input;
 			try
@@ -161,7 +169,9 @@ namespace BGStateExporter
 			var shop = game.Opponent.Board.ToList();
 			input.Tavern = shop.Where(e => e.IsMinion && !string.IsNullOrEmpty(e.CardId))
 				.OrderBy(e => e.ZonePosition).Select(e => e.Clone()).ToList();
-			input.TavernSpells = shop.Count(e => e.IsBattlegroundsSpell || e.IsSpell);
+			input.Spells = shop.Where(e => (e.IsBattlegroundsSpell || e.IsSpell) && !string.IsNullOrEmpty(e.CardId))
+				.OrderBy(e => e.ZonePosition).Select(e => e.Clone()).ToList();
+			input.HandCount = game.Player.Hand.Count();
 			input.DominantRace = DominantRace(input.Board.Concat(input.Hand));
 
 			var opponents = CaptureOpponents(game);
@@ -251,9 +261,13 @@ namespace BGStateExporter
 					{
 						Upgrade = c.Upgrade,
 						Buys = c.Buys.Select(e => e.Id).ToList(),
+						Spell = c.Spell?.Id ?? 0,
 						Sells = c.Sells.Select(e => e.Id).ToList(),
 						F = new Dictionary<string, double>(c.F),
 					}).ToList(),
+					TopSummary = top.Count > 0 ? Summarize(top[0]) : "",
+					TopUpgrade = top.Count > 0 && top[0].Upgrade,
+					TopBuys = top.Count > 0 ? top[0].Buys.Select(e => e.Id).ToList() : new List<int>(),
 				};
 				foreach(var c in top)
 					Describe(c, input, w);
@@ -263,9 +277,7 @@ namespace BGStateExporter
 					msg.Add("还没见过任何对手的阵容，这回合只按随从估值排序");
 				else if(!input.TargetIsNext)
 					msg.Add("下个对手的阵容未知，用目前见过最强的阵容模拟");
-				if(input.TavernSpells > 0)
-					msg.Add("酒馆法术和英雄技能没有计入");
-				msg.Add("战吼、回合结束等招募阶段效果没有计入");
+				msg.Add("战吼、回合结束、法术等效果没有模拟，用“随从效果 / 法术”特征近似；英雄技能没有计入");
 
 				_advisor = new AdvisorState
 				{
@@ -316,89 +328,102 @@ namespace BGStateExporter
 			}
 		}
 
-		/// <summary>枚举所有“升不升本 × 买哪几个”的组合，算出卖谁、三连、最终场面和剩余金币。</summary>
+		/// <summary>枚举“升不升本 × 买哪几个随从 × 买不买法术”，算出上场 / 留手 / 卖出、三连、最终场面和剩余金币。</summary>
 		private static List<Candidate> Enumerate(AdvisorInput input, AdvisorWeights w)
 		{
 			var norm = StatNorm(input);
-			Slot ToSlot(Entity e, string src) => new()
+			Slot ToSlot(Entity e, string src, int index = -1) => new()
 			{
-				E = e, Src = src, V = Value(e, norm, input.DominantRace, input.Tier),
+				E = e, Src = src, Index = index, V = Value(e, norm, input.DominantRace, input.Tier),
 				BaseId = BaseId(e.CardId), Golden = e.HasTag(GameTag.PREMIUM),
 			};
 
-			// 酒馆里先按估值挑前几个，再加上能和已有随从凑对/凑三连的
+			// 酒馆随从：能和已有随从凑对 / 三连的优先，其次按“身材估值 + 效果”排序，取前几个
 			var owned = input.Board.Concat(input.Hand).Where(e => !e.HasTag(GameTag.PREMIUM))
 				.GroupBy(e => BaseId(e.CardId)).ToDictionary(g => g.Key, g => g.Count());
 			var pool = input.Tavern
 				.OrderByDescending(e => owned.ContainsKey(BaseId(e.CardId)) ? 1 : 0)
-				.ThenByDescending(e => Value(e, norm, input.DominantRace, input.Tier))
+				.ThenByDescending(e => Value(e, norm, input.DominantRace, input.Tier) + EffectScore(e, input.Tier))
 				.Take(Math.Max(1, w.Candidates))
 				.ToList();
 
 			var subsets = new List<List<Entity>> { new() };
 			foreach(var e in pool)
-				subsets.AddRange(subsets.Where(s => s.Count < w.MaxBuys).Select(s => s.Concat(new[] { e }).ToList()).ToList());
+				subsets.AddRange(subsets.Where(x => x.Count < w.MaxBuys).Select(x => x.Concat(new[] { e }).ToList()).ToList());
 
-			var result = new List<Candidate>();
+			// 法术：买得起的里，星级高的优先
+			var spellOptions = new List<Entity?> { null };
+			spellOptions.AddRange(input.Spells.Where(sp => SpellCost(sp) <= input.Gold)
+				.OrderByDescending(SpellTier).ThenBy(SpellCost)
+				.Take(Math.Max(0, w.SpellCandidates)));
+
 			var upgradeOptions = input.Shop.CanUpgrade && input.Gold >= input.Shop.UpgradeCost
 				? new[] { false, true } : new[] { false };
 
+			var result = new List<Candidate>();
 			foreach(var up in upgradeOptions)
+			foreach(var spell in spellOptions)
 			foreach(var buys in subsets)
 			{
-				var c = new Candidate { Upgrade = up, Buys = buys };
-				var gold = input.Gold - (up ? input.Shop.UpgradeCost : 0);
+				var c = new Candidate { Upgrade = up, Buys = buys, Spell = spell };
+				var gold = input.Gold - (up ? input.Shop.UpgradeCost : 0) - buys.Count * input.Shop.BuyCost
+					- (spell != null ? SpellCost(spell) : 0);
 
-				// 场面 → 手牌随从 → 新买的，依次排在右边
-				var slots = input.Board.Select(e => ToSlot(e, "board"))
-					.Concat(input.Hand.Select(e => ToSlot(e, "hand")))
-					.Concat(buys.Select(e => ToSlot(e, "buy")))
-					.ToList();
+				var boardSlots = input.Board.Select((e, i) => ToSlot(e, "board", i)).ToList();
+				var extras = input.Hand.Select(e => ToSlot(e, "hand")).Concat(buys.Select(e => ToSlot(e, "buy"))).ToList();
 
-				// 三连：同一随从（非金色）凑够 3 个就合成金色
-				foreach(var g in slots.Where(s => !s.Golden).GroupBy(s => s.BaseId).Where(g => g.Count() >= 3).ToList())
+				// 三连：同一随从（非金色）凑够 3 个就合成金色（只处理这回合买出来的三连）
+				var all = boardSlots.Concat(extras).ToList();
+				foreach(var g in all.Where(x => !x.Golden).GroupBy(x => x.BaseId).Where(g => g.Count() >= 3).ToList())
 				{
 					var three = g.Take(3).ToList();
-					if(!three.Any(s => s.Src == "buy"))
-						continue;   // 不是这回合买出来的三连，游戏已经自动合成过了
-					var merged = MergeTriple(three);
-					var idx = slots.IndexOf(three[0]);
-					foreach(var s in three)
-						slots.Remove(s);
-					slots.Insert(Math.Min(idx, slots.Count), ToSlot(merged, "triple"));
+					if(!three.Any(x => x.Src == "buy"))
+						continue;
+					foreach(var x in three)
+					{
+						boardSlots.Remove(x);
+						extras.Remove(x);
+					}
+					extras.Add(ToSlot(MergeTriple(three), "triple"));
 					c.Triples.Add(three[0].E.LocalizedName ?? three[0].E.CardId ?? "?");
 				}
 
-				// 对子：新买的随从和已有的凑成一对
+				// 上场：场上的随从保留原位；手牌 / 新买的 / 三连金色按估值从高到低，
+				// 有空位就上；没空位但比场上最弱的强，就卖掉最弱的换上；否则留在手里
+				var final = boardSlots.ToList();
+				foreach(var x in extras.OrderByDescending(x => x.V))
+				{
+					if(final.Count < BoardLimit)
+					{
+						final.Add(x);
+						continue;
+					}
+					var weakest = final.Where(f => f.Src == "board").OrderBy(f => f.V).FirstOrDefault();
+					if(weakest != null && weakest.V < x.V)
+					{
+						final[final.IndexOf(weakest)] = x;
+						c.Sells.Add(weakest.E);
+						gold += SellValue(weakest.E);
+					}
+					else
+						c.Kept.Add(x);
+				}
+				if(gold < 0)
+					continue;
+
+				// 手牌上限 10：原手牌 − 打出的手牌随从 + 留在手里的新随从
+				var playedFromHand = final.Count(f => f.Src == "hand");
+				var newInHand = c.Kept.Count(k => k.Src != "hand");
+				if(input.HandCount - playedFromHand + newInHand > 10)
+					continue;
+
 				c.Pairs = buys.Select(e => BaseId(e.CardId)).Distinct()
 					.Count(id => owned.TryGetValue(id, out var n) && n == 1);
 				c.TribeHits = input.DominantRace == null ? 0
 					: buys.Count(e => Races(e).Contains(input.DominantRace));
-
-				// 位置不够：卖掉场上最弱的（不卖三连材料、不卖新买的）
-				var overflow = slots.Count - BoardLimit;
-				if(overflow > 0)
-				{
-					var sellable = slots.Where(s => s.Src == "board").OrderBy(s => s.V).Take(overflow).ToList();
-					if(sellable.Count < overflow)
-						continue;   // 新随从太多放不下
-					var weakestNew = slots.Where(s => s.Src == "buy").Select(s => s.V).DefaultIfEmpty(double.MaxValue).Min();
-					if(sellable.Max(s => s.V) > weakestNew)
-						continue;   // 卖掉的比买的还强，这个方案没意义
-					foreach(var s in sellable)
-					{
-						slots.Remove(s);
-						c.Sells.Add(s.E);
-						gold += SellValue(s.E);
-					}
-				}
-
-				var cost = buys.Count * input.Shop.BuyCost;
-				if(cost > gold)
-					continue;
-				c.GoldLeft = gold - cost;
-				c.Final = slots;
-				c.Power = slots.Sum(s => s.V);
+				c.GoldLeft = gold;
+				c.Final = final;
+				c.Power = final.Sum(f => f.V);
 				result.Add(c);
 			}
 			return result;
@@ -411,6 +436,9 @@ namespace BGStateExporter
 		///   upgrade = 升本时：落后节奏的等级数（−1～2）
 		///   behind  = 不升本且落后节奏时：−落后等级数
 		///   triple / pair / tribe = 三连数 / 新对子数 / 主种族随从数
+		///   effect  = 买的随从里有招募 / 战斗效果的，按 星级 ÷ 酒馆等级 折算后求和
+		///   buys    = 买了几个随从
+		///   spell   = 买了酒馆法术时：星级 ÷ 酒馆等级
 		///   refresh = 剩余金币够刷新几次（含免费刷新，有上限）
 		/// </summary>
 		private static void ComputeFeatures(Candidate c, AdvisorInput input, AdvisorWeights w)
@@ -425,6 +453,11 @@ namespace BGStateExporter
 			if(c.Triples.Count > 0) c.F["triple"] = c.Triples.Count;
 			if(c.Pairs > 0) c.F["pair"] = c.Pairs;
 			if(c.TribeHits > 0) c.F["tribe"] = c.TribeHits;
+
+			if(c.Buys.Count > 0) c.F["buys"] = c.Buys.Count;
+			var effect = c.Buys.Sum(e => EffectScore(e, input.Tier));
+			if(effect > 0) c.F["effect"] = Math.Round(effect, 3);
+			if(c.Spell != null) c.F["spell"] = Math.Round(TierFactor(SpellTier(c.Spell), input.Tier), 3);
 
 			var refreshCost = Math.Max(1, input.Shop.RefreshCost);
 			var refreshes = Math.Min(w.MaxRefreshValue, c.GoldLeft / refreshCost + input.Shop.FreeRefreshes);
@@ -462,17 +495,28 @@ namespace BGStateExporter
 				gold += SellValue(e);
 				c.Steps.Add(new PlanStep { Type = "sell", Text = $"卖掉 {N(e)}（{e.Attack}/{e.Health}）", EntityId = e.Id, Gold = gold });
 			}
+			// 酒馆位置按酒馆里的实际顺序（随从和法术一起数）
+			var shopOrder = input.Tavern.Concat(input.Spells).OrderBy(e => e.ZonePosition).ToList();
+			int Pos(Entity e) { var i = shopOrder.FindIndex(x => x.Id == e.Id); return i >= 0 ? i + 1 : 0; }
 			foreach(var e in c.Buys)
 			{
 				gold -= input.Shop.BuyCost;
-				var pos = input.Tavern.IndexOf(e) + 1;
-				c.Steps.Add(new PlanStep { Type = "buy", Text = $"买酒馆第 {pos} 个：{N(e)}（{e.Attack}/{e.Health}）", EntityId = e.Id, Gold = gold });
+				var tag = HasEffect(e) ? "，有效果" : "";
+				c.Steps.Add(new PlanStep { Type = "buy", Text = $"买酒馆第 {Pos(e)} 个：{N(e)}（{e.Attack}/{e.Health}{tag}）", EntityId = e.Id, Gold = gold });
+			}
+			if(c.Spell != null)
+			{
+				gold -= SpellCost(c.Spell);
+				c.Steps.Add(new PlanStep { Type = "spell", Text = $"买法术第 {Pos(c.Spell)} 个：{N(c.Spell)}（{SpellCost(c.Spell)} 金）", EntityId = c.Spell.Id, Gold = gold });
 			}
 			foreach(var name in c.Triples)
-				c.Steps.Add(new PlanStep { Type = "play", Text = $"三连：{name} 合成金色后打出", Gold = gold });
-			var played = c.Final.Where(s => s.Src == "hand" || s.Src == "buy").Select(s => N(s.E)).ToList();
+				c.Steps.Add(new PlanStep { Type = "play", Text = $"三连：{name} 合成金色", Gold = gold });
+			var played = c.Final.Where(x => x.Src != "board").Select(x => N(x.E) + (x.Src == "triple" ? "（金色）" : "")).ToList();
 			if(played.Count > 0)
 				c.Steps.Add(new PlanStep { Type = "play", Text = "打出：" + string.Join("、", played), Gold = gold });
+			var kept = c.Kept.Where(x => x.Src != "hand").Select(x => N(x.E)).ToList();
+			if(kept.Count > 0)
+				c.Steps.Add(new PlanStep { Type = "keep", Text = "留在手里：" + string.Join("、", kept), Gold = gold });
 
 			// 剩余金币：酒馆里还有想要但买不起的就冻结，否则刷新
 			var unbought = input.Tavern.Where(e => !c.Buys.Contains(e)).ToList();
@@ -500,6 +544,9 @@ namespace BGStateExporter
 				c.Reasons.Add($"没升本，落后节奏（第 {input.Turn} 回合建议 {desired} 本）");
 			if(c.Triples.Count > 0) c.Reasons.Add("凑成三连：" + string.Join("、", c.Triples));
 			if(c.Pairs > 0) c.Reasons.Add($"凑成 {c.Pairs} 个对子");
+			var effects = c.Buys.Where(HasEffect).Select(N).ToList();
+			if(effects.Count > 0) c.Reasons.Add("买有效果的随从：" + string.Join("、", effects) + "（效果本身没有模拟）");
+			if(c.Spell != null) c.Reasons.Add($"买法术 {N(c.Spell)}（效果没有模拟）");
 			if(c.TribeHits > 0) c.Reasons.Add($"买了 {c.TribeHits} 个主种族（{RaceName(input.DominantRace)}）随从");
 		}
 
@@ -513,7 +560,71 @@ namespace BGStateExporter
 			}
 			foreach(var e in input.Tavern)
 				snap.Tavern[e.Id] = TurnSnapshot.BaseId(e.CardId);
+			foreach(var e in input.Spells)
+				snap.TavernSpells.Add(e.Id);
 			return snap;
+		}
+
+		/// <summary>一句话概括方案，用于回合记录。</summary>
+		private static string Summarize(Candidate c)
+		{
+			string N(Entity e) => e.LocalizedName ?? e.CardId ?? "?";
+			var parts = new List<string>();
+			if(c.Upgrade) parts.Add("升本");
+			if(c.Buys.Count > 0) parts.Add("买 " + string.Join("、", c.Buys.Select(N)));
+			if(c.Spell != null) parts.Add("法术 " + N(c.Spell));
+			if(c.Sells.Count > 0) parts.Add("卖 " + string.Join("、", c.Sells.Select(N)));
+			return parts.Count > 0 ? string.Join("；", parts) : "不买，刷新或结束";
+		}
+
+		// ---------- 随从效果 / 法术 ----------
+
+		// 有这些标记的随从，价值主要在招募或战斗中的效果，单看身材会被低估
+		private static readonly int[] EffectTags =
+		{
+			218,  // BATTLECRY 战吼
+			3744, // END_OF_TURN_TRIGGER 回合结束
+			2129, // AVENGE 复仇
+			1531, // START_OF_COMBAT 战斗开始
+			4204, // BACON_RALLY 集结
+			2359, // SPELLCRAFT 法术迸发
+			849,  // MAGNETIC 磁力
+			32,   // TRIGGER_VISUAL 其它触发效果
+			362,  // AURA 光环
+			923,  // OVERKILL 超杀
+			1637, // FRENZY 暴怒
+			217,  // DEATHRATTLE 亡语
+		};
+
+		private static bool HasEffect(Entity e)
+		{
+			var data = e.Card.Data?.Entity;
+			foreach(var t in EffectTags)
+				if(e.GetTag((GameTag)t) > 0 || (data != null && data.GetTag((GameTag)t) > 0))
+					return true;
+			return false;
+		}
+
+		private static int MinionTier(Entity e)
+		{
+			var t = e.GetTag(GameTag.TECH_LEVEL);
+			return t > 0 ? t : e.Card.TechLevel;
+		}
+
+		/// <summary>星级相对酒馆等级的折算：本级卡 = 1，低级卡打折，高级卡（发现 / 三连奖励）略加。</summary>
+		private static double TierFactor(int cardTier, int playerTier) =>
+			Math.Max(0.4, Math.Min(1.2, cardTier / (double)Math.Max(1, playerTier)));
+
+		private static double EffectScore(Entity e, int playerTier) =>
+			HasEffect(e) ? TierFactor(Math.Max(1, MinionTier(e)), playerTier) : 0;
+
+		private static int SpellTier(Entity e) => Math.Max(1, MinionTier(e));
+
+		private static int SpellCost(Entity e)
+		{
+			var c = e.GetTag(GameTag.COST);
+			if(c <= 0) c = e.Card.Cost;
+			return Math.Max(0, c);
 		}
 
 		// ---------- 估值工具 ----------
@@ -530,7 +641,7 @@ namespace BGStateExporter
 		private static double Value(Entity e, double norm, string? dominantRace, int tier)
 		{
 			var v = (e.Attack + Math.Max(0, e.Health)) / norm;
-			v += 0.15 * e.GetTag(GameTag.TECH_LEVEL);
+			v += 0.15 * MinionTier(e);
 			if(e.HasTag(GameTag.PREMIUM)) v += 0.8;
 			if(e.HasTag(GameTag.DIVINE_SHIELD)) v += 0.5;
 			if(e.HasTag(GameTag.TAUNT)) v += 0.1;
