@@ -105,6 +105,18 @@ CARD_STATE = {
     "BG32_MagicItem_801t": lambda sd: [("levels", max(0, sd[0] - 1))],    # 森林之心：提升次数
 }
 
+# “每 N 次……（还剩 x 个！）”的饰品 / 奖励：插件 scriptData[0] = 还剩几次（0 = 刚触发，下一轮从 N 开始），
+# TavernGym 用 counters 记已经累计了几次（Engine::tick_counter）。N 取自 TavernGym 源码。
+TICK_EVERY = {
+    "BG36_MagicItem_307": 3, "BG36_MagicItem_370": 2, "BG30_MagicItem_891": 2, "BG36_MagicItem_418": 3,
+    "BG30_MagicItem_541": 3, "BG35_MagicItem_305": 2, "BG35_MagicItem_861": 11, "BG36_MagicItem_407": 13,
+    "BG36_MagicItem_409": 10, "BG36_MagicItem_410": 25, "BG28_Reward_508": 5, "BG30_MagicItem_425": 2,
+    "BG30_MagicItem_435": 3, "BG30_MagicItem_707": 3, "BG30_MagicItem_951": 6, "BG32_MagicItem_300": 2,
+    "BG35_MagicItem_700": 6, "BG35_MagicItem_817": 2, "BG36_MagicItem_850": 5,
+}
+for _k, _n in TICK_EVERY.items():
+    CARD_STATE.setdefault(_k, (lambda n: lambda sd: [("counters", (n - sd[0]) % n if 0 <= sd[0] <= n else 0)])(_n))
+
 
 def _card_state(me: dict, cards: list[dict], warnings: list[str]) -> None:
     cat = catalog()
@@ -320,6 +332,10 @@ def build_game(state: dict, seed: int = 0, config: dict | None = None) -> tuple[
     tags = {k.upper(): v for k, v in (p0.get("playerTags") or {}).items()}
     patch = {f: tags[t] for t, f in STAT_TAGS.items() if t in tags}
     patch.update({f: tags[t] for t, f in GEM_TAGS.items() if t in tags})
+    if "DAMAGE_DEALT_TO_HERO_LAST_TURN" in tags:             # 上一场战斗输了（蓝壳始祖龟等）
+        patch["lost_last"] = bool(tags["DAMAGE_DEALT_TO_HERO_LAST_TURN"])
+        if patch["lost_last"]:
+            patch["won_last"] = False
     # 插件的酒馆法术加成是总数（含场上光环、饰品），TavernGym 的 spell_atk/hp 只是“本局”部分
     da, dh = spell_extra_dynamic(board, p0.get("trinkets") or [])
     for t, f, d in (("TAVERN_SPELL_ATTACK_INCREASE", "spell_atk", da), ("TAVERN_SPELL_HEALTH_INCREASE", "spell_hp", dh)):
@@ -337,7 +353,7 @@ def build_game(state: dict, seed: int = 0, config: dict | None = None) -> tuple[
     else:
         warnings.append("存档里找不到 players[0].stats")
     me["trinkets"] = held_trinkets
-    _card_state(me, p0.get("trinkets") or [], warnings)
+    _card_state(me, (p0.get("trinkets") or []) + (p0.get("questRewards") or []), warnings)
     if me.get("pending"):
         # 重建过程中（选英雄、给饰品等）产生的待选项不是插件局面里的；插件局面里的待选项（offered）暂不重建
         warnings.append(f"去掉重建时产生的待选项 {len(me['pending'])} 个")

@@ -21,6 +21,7 @@ from .logs import Action
 A_END, A_REFRESH, A_FREEZE, A_UPGRADE, A_HERO_POWER = 0, 1, 2, 3, 4
 A_BUY, A_SELL, A_ACTIVATE, A_CHOOSE, A_PLAY, A_MAGNETIZE, A_MOVE = 8, 16, 23, 30, 46, 126, 196
 N_POS, N_BOARD = 8, 7
+TRIPLE = "TB_BaconShop_Triples_01"
 
 
 # ---------------- 可见局面 ----------------
@@ -151,11 +152,17 @@ def _score(g, reals: list[dict], shop: bool) -> tuple[int, list[str], dict, int]
     best = None
     for i, real in enumerate(reals):
         d = diff(pred, real, shop)
-        if best is None or len(d) < best[0]:
-            best = (len(d), d, pred, i)
+        n = _weight(d)
+        if best is None or n < best[0]:
+            best = (n, d, pred, i)
         if not d:
             break
     return best
+
+
+def _weight(d: list[str]) -> int:
+    """差异打分：停在选择中途（待选项不一致）比选完之后攻防有点出入差得多。"""
+    return sum(3 if x.startswith("待选") else 1 for x in d)
 
 
 def _resolve(g, reals: list[dict], shop: bool, depth: int = 0) -> tuple:
@@ -163,6 +170,18 @@ def _resolve(g, reals: list[dict], shop: bool, depth: int = 0) -> tuple:
     (差异数, 差异, 预测局面, 候选下标, 局面)。"""
     here = _score(g, reals, shop) + (g,)
     pend = _pending(g) if depth < 4 else None
+    if not pend and here[0] and depth < 4:
+        # 三连奖励：你常常在插件记下它进手牌之前就用掉了（记录里直接是发现的结果）
+        hand = json.loads(g.view(0))["me"].get("hand") or []
+        tri = [i for i, h in enumerate(hand) if _item_id(h) == TRIPLE]
+        if tri and all(r["hand"].get(TRIPLE, 0) < sum(1 for h in hand if _item_id(h) == TRIPLE) for r in reals):
+            g2 = g.copy()
+            try:
+                g2.step(0, A_PLAY + tri[0] * N_POS)
+            except ValueError:
+                return here
+            r = _resolve(g2, reals, shop, depth + 1)
+            return r if r[0] < here[0] else here
     if not pend or here[0] == 0:
         return here
     opts = pend.get("options") or []
@@ -195,7 +214,12 @@ def _reseed(g, seed: int):
     return taverngym.Game.from_json(json.dumps(s))
 
 
-def check_action(a: Action, seed: int = 0, trials: int = 4) -> dict:
+def _random_like(d: list[str]) -> bool:
+    return any(x.startswith("酒馆") for x in d) and not any(x.startswith(("待选", "等级", "场面")) for x in d)
+
+
+def check_action(a: Action, seed: int = 0, trials: int = 4, carry: dict | None = None) -> dict:
+    """carry：同一局上一个动作的 lagDelta（动画还没到账的攻防），用来认出“动作前的记录还没跟上”。"""
     out = {"file": a.before.get("_file"), "turn": a.turn, "kind": a.kind, "card": base_id(a.card_id) or a.kind}
     if a.kind == "multi":
         out.update(result="skipped", why="记录合并了几个动作")
@@ -217,8 +241,11 @@ def check_action(a: Action, seed: int = 0, trials: int = 4) -> dict:
     shop = a.kind not in ("refresh", "upgrade")    # 刷新是随机的；升本后可能有“升级时刷新”的效果
     best = None
     legal = False
-    for t in range(trials):
-        gs = g0 if t == 0 else _reseed(g0, seed * 1000 + t)
+    t = 0
+    while t < trials or (t < trials * 4 and best is not None and best[0] > 0 and _random_like(best[1])):
+        # 差异里有酒馆变化（随机吞食、随机刷新、随机目标……）的，多换几个随机种子
+        t += 1
+        gs = g0 if t == 1 else _reseed(g0, seed * 1000 + t)
         for act in acts:
             g = gs.copy()
             try:
@@ -238,6 +265,42 @@ def check_action(a: Action, seed: int = 0, trials: int = 4) -> dict:
         out.update(result="illegal", why=out.pop("refused", ""))
         return out
     score, d, pred, ci, _ = best
-    out.update(result="exact" if score == 0 else "aggregate" if aggregate_ok(pred, reals[ci]) else "mismatch",
-               diff=d[:6], warnings=warns[:3], afterIndex=ci)
+    res = "exact" if score == 0 else "aggregate" if aggregate_ok(pred, reals[ci]) else "mismatch"
+    if res != "exact":
+        lag = _lag(a, pred, (a.afters or [a.after])[ci], carry)
+        if lag is not None:
+            res = "lag"
+            out["lagDelta"] = lag
+    out.update(result=res, diff=d[:6], warnings=warns[:3], afterIndex=ci)
     return out
+
+
+def _lag(a: Action, pred: dict, real_rec: dict, carry: dict | None) -> dict | None:
+    """动画延迟：只有场上随从攻防不一致，而且每个不一致的随从都能这样解释——
+      往后：预测的攻防（和动作前不同）在之后十几条记录里出现了（记录还没跟上）；
+      往前：差值正好是上一个动作还没到账的那部分（carry，上一个动作的 lagDelta）。
+    能解释就返回这次还没到账的差值 {entityId: [攻, 血]}（给下一个动作用），否则 None。"""
+    real = visible_log(real_rec)
+    if pred["gold"] != real["gold"] or pred["tier"] != real["tier"] or pred["hand"] != real["hand"] or \
+            pred["pending"] != real["pending"] or [x[:2] for x in pred["board"]] != [x[:2] for x in real["board"]] or \
+            (a.kind not in ("refresh", "upgrade") and pred["shop"] != real["shop"]):
+        return None
+    rb = _by_pos(real_rec["player"].get("board"))
+    before = {c["entityId"]: (c.get("attack"), c.get("health")) for c in a.before["player"].get("board") or []}
+    carry = carry or {}
+    owe: dict = {}
+    bad = 0
+    for q, r, c in zip(pred["board"], real["board"], rb):
+        if q[2:4] == r[2:4]:
+            continue
+        eid = c["entityId"]
+        want = (q[2], q[3])
+        if want != before.get(eid) and any(
+                (m.get("attack"), m.get("health")) == want
+                for rec in a.later for m in rec["player"].get("board") or [] if m.get("entityId") == eid):
+            owe[str(eid)] = [q[2] - r[2], q[3] - r[3]]
+            continue
+        if carry.get(str(eid)) == [r[2] - q[2], r[3] - q[3]]:
+            continue
+        bad += 1
+    return owe if bad == 0 else None

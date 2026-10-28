@@ -164,6 +164,8 @@ class Action:
     after: dict = field(default_factory=dict, repr=False)
     # 动作之后到下一个动作之前出现过的各个不同的稳定局面（动画、三连合成、发现之后的选择等会让局面分几步变化）
     afters: list = field(default_factory=list, repr=False)
+    # 动作之后再往后的十几条记录（同一回合）：你操作比动画快时，攻防变化会晚到下一个动作之后才出现
+    later: list = field(default_factory=list, repr=False)
 
     def to_json(self) -> dict:
         return {"turn": self.turn, "kind": self.kind, "eid": self.eid, "cardId": self.card_id}
@@ -192,6 +194,8 @@ def primary_actions(s0: dict, s1: dict) -> list[Action]:
     T1, H1, B1 = _ids(s1.get("tavern") or []), _ids(p1.get("hand") or []), _ids(p1.get("board") or [])
     acts: list[Action] = []
     turn = int(s1.get("turn") or 0)
+    if not p0.get("tavernTier"):          # 对局刚开始、还没初始化完（等级 0 → 1、金币 0 → 3 不是升级）
+        return acts
     by0 = {c["entityId"]: c for c in (s0.get("tavern") or []) + (p0.get("hand") or []) + (p0.get("board") or [])}
     # 三连：同名的三张合成一张金色（不是玩家的动作；买第三张时可能和购买合在一条记录里）
     by1 = {c["entityId"]: c for c in (p1.get("hand") or []) + (p1.get("board") or [])}
@@ -254,12 +258,17 @@ def segment(records: list[dict]) -> list[Action]:
             continue
         if len(acts) > 1:
             acts = [Action(acts[0].turn, "multi", 0, "+".join(a.kind for a in acts))]
-        # 花钱的动作，金币常常比卡牌移动早一条记录扣掉：往前找到扣钱之前的那条
-        k = i
-        while k > 0 and records[k - 1].get("turn") == s0.get("turn") and \
-                _key(records[k - 1])[1:] == _key(records[k])[1:] and \
-                (records[k - 1]["player"].get("gold") or 0) > (records[k]["player"].get("gold") or 0):
-            k -= 1
+        # 金币常常比卡牌移动早一两条记录变化（花钱先扣、出售先加）：往前找到金币变化之前的那条。
+        # 只跨过“只有金币变了”的记录，方向要和动作一致（出售加钱，其它动作扣钱）
+        sign = 1 if acts[0].kind == "sell" else -1
+        k = j = i
+        while j > 0 and i - j < 8 and records[j - 1].get("turn") == s0.get("turn") and \
+                _key(records[j - 1])[1:] == _key(records[j])[1:] and \
+                sign * ((records[j]["player"].get("gold") or 0) - (records[j - 1]["player"].get("gold") or 0)) >= 0:
+            j -= 1
+            if records[j]["player"].get("gold") != records[i]["player"].get("gold"):
+                k = j          # 最早一条金币还没变的记录
+                break
         for a in acts:
             a.before = records[k]
         starts.append((i + 1, acts))
@@ -283,8 +292,10 @@ def segment(records: list[dict]) -> list[Action]:
             if k not in keys:
                 keys.add(k)
                 cands.append(records[x])
+        later = [r for r in records[end + 1:end + 25] if r.get("turn") == turn]
         for a in acts:
             a.after = after
             a.afters = cands[:8] or [after]
+            a.later = later
         out += acts
     return [a for a in out if a.before and a.after]

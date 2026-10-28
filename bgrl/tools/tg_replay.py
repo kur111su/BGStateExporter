@@ -117,16 +117,20 @@ def main() -> int:
             print(f"[{k}/{len(files)}] {name}：没有可回放的动作", flush=True)
             continue
         print(f"[{k}/{len(files)}] {name}：{len(fa)} 个动作，回放中…", end="", flush=True)
-        r = [check_action(x, seed=len(results) + i, trials=a.trials) for i, x in enumerate(fa)]
+        r, carry = [], None
+        for i, x in enumerate(fa):
+            res = check_action(x, seed=len(results) + i, trials=a.trials, carry=carry)
+            carry = res.get("lagDelta")
+            r.append(res)
         results += r
         c = Counter(x["result"] for x in r)
         chk = sum(v for kk, v in c.items() if kk != "skipped")
-        print(f" 一致 {(c['exact'] + c['aggregate']) / max(1, chk):.0%}（{dict(c)}）", flush=True)
+        print(f" 一致 {(c['exact'] + c['aggregate'] + c['lag']) / max(1, chk):.0%}（{dict(c)}）", flush=True)
     s = summarize(results)
     checked = sum(v for k, v in s["byResult"].items() if k != "skipped")
-    ok = s["byResult"].get("exact", 0) + s["byResult"].get("aggregate", 0)
+    ok = sum(s["byResult"].get(k, 0) for k in ("exact", "aggregate", "lag"))
     summary = (f"A5 回放：{len(results)} 个动作，检验 {checked} 个，完全一致 {s['byResult'].get('exact', 0)}，"
-               f"总量一致 {s['byResult'].get('aggregate', 0)}（合计 {ok / max(1, checked):.1%}）；"
+               f"总量一致 {s['byResult'].get('aggregate', 0)}，动画延迟 {s['byResult'].get('lag', 0)}（合计 {ok / max(1, checked):.1%}）；"
                f"{s['byResult']}；差异类别 {s['diffKinds']}；用时 {time.time() - t0:.0f} 秒")
     lines = [summary] + [f"  {names.get(row['card'], row['card'])}({row['card']}) {row['n']} 次，不一致 {row['bad']}  "
                          f"{row['examples'][:1]}" for row in s["cards"][:25] if row["bad"]]
