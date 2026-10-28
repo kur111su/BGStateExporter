@@ -22,16 +22,14 @@ _skins: dict[str, str] | None = None
 
 
 def _skin_map() -> dict[str, str]:
-    """皮肤 → 原英雄。优先用 bgrl/data/bg_cards.json 的 skins 表，没有就按卡牌编号的 _SKIN_ 后缀推断。"""
+    """皮肤 → 原英雄：tg/skins.json 只列去掉 _SKIN_ 后缀还对不上的那些，其余按后缀推断（hero_base）。"""
     global _skins
     if _skins is None:
-        _skins = {}
-        p = Path(__file__).resolve().parent.parent / "data" / "bg_cards.json"
-        if p.exists():
-            try:
-                _skins = dict(json.loads(p.read_text(encoding="utf-8")).get("skins") or {})
-            except (ValueError, OSError):
-                _skins = {}
+        try:
+            raw = json.loads((Path(__file__).resolve().parent / "skins.json").read_text(encoding="utf-8"))
+            _skins = {k: v for k, v in raw.items() if not k.startswith("_")}
+        except (ValueError, OSError):
+            _skins = {}
     return _skins
 
 

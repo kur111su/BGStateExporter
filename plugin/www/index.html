@@ -502,13 +502,13 @@
       ${meta}</section>`;
   }
 
-  // ---------- 模型建议（影子模式：bgrl\step_c1_shadow.bat 在本机 8766 端口提供） ----------
+  // ---------- 模型建议（影子模式：bgrl\shadow.bat 在本机 8766 端口提供） ----------
   const OPM = { buy: '买', sell: '卖', upgrade: '升本', freeze: '冻结', refresh: '刷新', spell: '法术', play: '打出',
                 hero: '技能', choose: '选择', activate: '发动', move: '调位', end: '结束', other: '' };
   let shadow = null, shadowFail = 0;
   function modelHtml(s) {
     if (!shadow) return `<section class="block"><h2>模型建议 <span class="sub">影子模式</span></h2>
-      <div class="empty">没有开启。运行 bgrl\\step_c1_shadow.bat 后，这里会显示训练中的模型给出的本回合方案（只供对照，不会操作游戏）。</div></section>`;
+      <div class="empty">没有开启。运行 bgrl\\shadow.bat 后，这里会显示训练中的模型给出的本回合方案（只供对照，不会操作游戏）。</div></section>`;
     const a = shadow.advice, m = shadow.model || {};
     const who = m.name ? `模型 ${esc(m.name)}${m.iter != null ? ' 第 ' + m.iter + ' 轮' : ''}` : '';
     const head = `<h2>模型建议 <span class="sub">影子模式，只供对照${who ? ' · ' + who : ''}</span></h2>`;

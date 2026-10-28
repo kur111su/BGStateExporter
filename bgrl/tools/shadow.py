@@ -1,7 +1,7 @@
 """C1 影子模式：读插件的实时局面，算出模型给的本回合方案，显示在插件面板（v0.9.2 起）和单独的网页上。
 只显示，不操作游戏。
 
-用法：python shadow.py [--run runs/main | --ckpt 某个检查点.pt] [--port 8766] [--device cpu]
+用法：python shadow.py [--run runs/v2 | --ckpt 某个检查点.pt] [--port 8766] [--device cpu]
   插件面板 http://localhost:8765/ 的“模型建议”一栏会自动出现；单独的网页 http://localhost:8766/ 也能看。
   训练还在跑时，latest.pt 每次更新后（换局时）自动换成新模型。
   每回合的方案记在 bgrl/reports/shadow/日期.jsonl，之后可以和你的实际操作对照。
@@ -22,6 +22,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
+from paths import DEFAULT_RUN, PLUGIN_PORT, REPORTS, SHADOW_PORT  # noqa: E402
 
 from tg.bridge import build_game  # noqa: E402
 from tg.logs import _key, _normalize, hero_base  # noqa: E402
@@ -81,7 +82,7 @@ class Shadow:
         self.last_key = None
         self.pending_key = None
         self.lock = threading.Lock()
-        self.logdir = ROOT / "reports" / "shadow"
+        self.logdir = REPORTS / "shadow"
         self.logdir.mkdir(parents=True, exist_ok=True)
 
     # ---------------- 模型 ----------------
@@ -205,10 +206,10 @@ class Shadow:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default=str(ROOT / "runs" / "v2"))
+    ap.add_argument("--run", default=str(DEFAULT_RUN))
     ap.add_argument("--ckpt", default="")
-    ap.add_argument("--port", type=int, default=8766)
-    ap.add_argument("--plugin-port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=SHADOW_PORT)
+    ap.add_argument("--plugin-port", type=int, default=PLUGIN_PORT)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--interval", type=float, default=0.4)
     a = ap.parse_args()

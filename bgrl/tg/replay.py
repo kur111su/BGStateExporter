@@ -15,12 +15,11 @@ import random
 from collections import Counter
 from typing import Any
 
+from .actions import (A_ACTIVATE, A_BUY, A_CHOOSE, A_HERO_POWER, A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL,
+                      A_UPGRADE, N_BOARD, N_POS)
 from .bridge import KW, base_id, build_game, _by_pos
 from .logs import Action
 
-A_END, A_REFRESH, A_FREEZE, A_UPGRADE, A_HERO_POWER = 0, 1, 2, 3, 4
-A_BUY, A_SELL, A_ACTIVATE, A_CHOOSE, A_PLAY, A_MAGNETIZE, A_MOVE = 8, 16, 23, 30, 46, 126, 196
-N_POS, N_BOARD = 8, 7
 TRIPLE = "TB_BaconShop_Triples_01"
 
 

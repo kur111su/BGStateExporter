@@ -4,7 +4,7 @@ name: bgrl TavernGym checks
 
 on:
   push:
-    paths: ["bgrl/tg/**", "bgrl/tests/**", "bgrl/tools/tg_bridge_check.py", "bgrl/tools/tg_replay.py", ".github/workflows/bgrl-tg.yml"]
+    paths: ["bgrl/tg/**", "bgrl/tests/**", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/tg_bridge_check.py", "bgrl/tools/tg_replay.py", ".github/workflows/bgrl-tg.yml"]
   workflow_dispatch:
 
 jobs:

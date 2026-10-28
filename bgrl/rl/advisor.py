@@ -18,8 +18,9 @@ import torch.nn.functional as F
 
 from .model import SIZES, build_model
 
-A_END, A_REFRESH, A_FREEZE, A_UPGRADE, A_HP, A_DARK_GIFT, A_CANCEL = 0, 1, 2, 3, 4, 6, 7
-A_BUY, A_SELL, A_ACTIVATE, A_CHOOSE, A_PLAY, A_MAGNETIZE, A_MOVE = 8, 16, 23, 30, 46, 126, 196
+from tg.actions import (A_ACTIVATE, A_BUY, A_CANCEL, A_CHOOSE, A_DARK_GIFT, A_END, A_FREEZE, A_MAGNETIZE, A_MOVE,
+                        A_PLAY, A_REFRESH, A_SELL, A_UPGRADE)
+from tg.actions import A_HERO_POWER as A_HP
 
 
 def _name(x) -> str:

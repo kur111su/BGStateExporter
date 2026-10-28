@@ -1,0 +1,19 @@
+{
+ "_说明": "皮肤编号 → 原英雄，只列去掉 _SKIN_ 后缀还对不上的（其余按后缀推断）。来源：HDT CardDefs（bg_cards.json 的 skins 表）。",
+ "BG26_HERO_100_SKIN_A": "BG25_HERO_105",
+ "TB_BaconShop_HERO_102_SKIN_F": "BG20_HERO_102",
+ "TB_BaconShop_HERO_102_SKIN_G": "BG20_HERO_102",
+ "TB_BaconShop_HERO_102_SKIN_H": "BG20_HERO_102",
+ "TB_BaconShop_HERO_103_SKIN_D": "BG20_HERO_103",
+ "TB_BaconShop_HERO_103_SKIN_E": "BG20_HERO_103",
+ "TB_BaconShop_HERO_103_SKIN_F": "BG20_HERO_103",
+ "TB_BaconShop_HERO_201_SKIN_D": "BG20_HERO_201",
+ "TB_BaconShop_HERO_201_SKIN_F": "BG20_HERO_201",
+ "TB_BaconShop_HERO_201_SKIN_G": "BG20_HERO_201",
+ "TB_BaconShop_HERO_44_SKIN_A": "BG23_HERO_306",
+ "TB_BaconShop_HERO_44_SKIN_B": "BG23_HERO_306",
+ "TB_BaconShop_HERO_44_SKIN_C": "BG23_HERO_306",
+ "TB_BaconShop_HERO_44_SKIN_D": "BG23_HERO_306",
+ "TB_BaconShop_HERO_44_SKIN_E": "BG23_HERO_306",
+ "TB_BaconShop_HERO_44_SKIN_F": "BG23_HERO_306"
+}

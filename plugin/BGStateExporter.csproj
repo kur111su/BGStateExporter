@@ -2,7 +2,7 @@
 
   <!--
     HDT 插件：酒馆战旗局面导出
-    编译：在 Windows 上运行 build.ps1（会自动找到 HDT 安装目录并复制到插件文件夹）
+    编译：在 Windows 上运行 plugin\build.ps1（会自动找到 HDT 安装目录并复制到插件文件夹）
     或手动：dotnet build -c Release -p:HDTPath="C:\Users\你\AppData\Local\HearthstoneDeckTracker\app-1.xx.x"
   -->
 
@@ -12,11 +12,11 @@
     <Nullable>enable</Nullable>
     <AssemblyName>BGStateExporter</AssemblyName>
     <RootNamespace>BGStateExporter</RootNamespace>
-    <Version>0.9.3</Version>
+    <Version>0.9.4</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <!-- 默认使用与本项目同级的 HDT 目录（例如 D:\claude\HDT），可用 -p:HDTPath=... 覆盖 -->
-    <HDTPath Condition="'$(HDTPath)' == ''">$(MSBuildThisFileDirectory)..\HDT</HDTPath>
+    <!-- 默认使用与仓库同级的 HDT 目录（例如 D:\claude\HDT），可用 -p:HDTPath=... 覆盖 -->
+    <HDTPath Condition="'$(HDTPath)' == ''">$(MSBuildThisFileDirectory)..\..\HDT</HDTPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -48,12 +48,6 @@
     <Reference Include="PresentationCore" />
     <Reference Include="WindowsBase" />
     <Reference Include="System.Xaml" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- bgrl/ 是独立的 Python 训练环境和 BGSimHost 项目，不编译进插件 -->
-    <Compile Remove="bgrl/**" />
-    <None Remove="bgrl/**" />
   </ItemGroup>
 
   <ItemGroup>

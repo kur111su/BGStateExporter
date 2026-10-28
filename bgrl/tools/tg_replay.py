@@ -1,7 +1,8 @@
 """A5 现实闭环回放：用对局记录里你的每一步检验 TavernGym（做法见 bgrl/tg/replay.py）。
 
 用法：
-  python tg_replay.py 对局记录.jsonl ...          直接读插件的对局记录（games 目录里的文件）
+  python tg_replay.py                              不给文件：读插件的 games 目录，报告写到 bgrl/reports/a5_replay.txt / .json
+  python tg_replay.py 对局记录.jsonl 或目录 ...    读指定的对局记录（--last N 只看最近 N 局）
   python tg_replay.py --fixture 回放.jsonl.gz      读 make_replay_fixture 生成的精简文件（CI 用）
   --annotate  把摘要和问题最多的卡打印成 GitHub Actions 注释
   --out 报告.json
@@ -22,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from tg.logs import Action, load_game, segment  # noqa: E402
 from tg.replay import check_action  # noqa: E402
+from paths import REPORTS, games_dir  # noqa: E402
 
 
 def actions_from_fixture(path: str) -> list[Action]:
@@ -87,6 +89,12 @@ def main() -> int:
     from tg.bridge import catalog
     names = {k: v.get("name_zh") or v.get("name") for k, v in catalog().items()}
 
+    if not a.paths and not a.fixture:               # 默认：插件的对局记录，报告放 bgrl/reports
+        a.paths = [str(games_dir())]
+        REPORTS.mkdir(parents=True, exist_ok=True)
+        a.out = a.out or str(REPORTS / "a5_replay.json")
+        a.txt = a.txt or str(REPORTS / "a5_replay.txt")
+        print(f"对局记录：{a.paths[0]}", flush=True)
     acts: list[Action] = []
     if a.fixture:
         acts = actions_from_fixture(a.fixture)

@@ -25,6 +25,7 @@ import torch.nn.functional as F
 
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
+from tg.actions import is_noop
 
 
 @dataclass
@@ -326,7 +327,7 @@ class Trainer:
                     actions[name][idx] = a[o:o + k]
                     if rid == 0:
                         ak = a[o:o + k]
-                        noop = (ak == 2) | (ak >= 196)                # 冻结、调站位
+                        noop = is_noop(ak)                            # 冻结、调站位
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=-cfg.noop_penalty * noop)
                         n_dec += k

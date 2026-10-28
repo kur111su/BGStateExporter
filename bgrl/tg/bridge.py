@@ -24,7 +24,7 @@ import json
 import re
 from typing import Any
 
-A_CHOOSE = 30
+from .actions import A_CHOOSE
 
 # 插件（HDT 标签名）→ TavernGym PlayerStats 字段
 STAT_TAGS = {
