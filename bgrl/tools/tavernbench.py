@@ -20,7 +20,7 @@ import gzip
 import json
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -136,6 +136,45 @@ def load_net(ckpt: str, device: str, smoke: bool):
     return Net(model, device), info
 
 
+def _kind(a: int) -> str:
+    return {0: "结束", 1: "刷新", 3: "升本"}.get(a, "买" if 8 <= a < 16 else "其它")
+
+
+def plan_summary(answers_path: Path) -> str:
+    """回合计划题（N1、N2）：正确答案是哪类第一步、模型选了哪类，以及选错平均多掉几个名次（标签里 128 局实测）。"""
+    if not answers_path.exists():
+        return ""
+    got = {}
+    for x in answers_path.read_text(encoding="utf-8").splitlines():
+        if x.strip():
+            r = json.loads(x)
+            got[r["id"]] = r
+    labels = {d["id"]: d for d in map(json.loads, (SET / "labels.jsonl").read_text(encoding="utf-8").splitlines())}
+    maps = {}
+    with gzip.open(SET / "states.jsonl.gz", "rt", encoding="utf-8") as fh:
+        for line in fh:
+            d = json.loads(line)
+            if d["id"][:2] in ("N1", "N2"):
+                maps[d["id"]] = {v: int(k) for k, v in d["map"].items()}
+    best, mine = Counter(), Counter()
+    loss = []
+    for iid, inv in maps.items():
+        r = got.get(iid)
+        if not r or not r.get("response"):
+            continue
+        lab = labels[iid]
+        my = json.loads(r["response"])["answer"]
+        best[_kind(inv[lab["answer"]])] += 1
+        mine[_kind(inv[my])] += 1
+        acts, mp = lab["meta"]["actions"], lab["meta"]["mean_place"]
+        loss.append(mp[acts.index(inv[my])] - min(mp))
+    if not loss:
+        return ""
+    fmt = lambda c: "、".join(f"{k} {v}" for k, v in c.most_common())   # noqa: E731
+    return (f"回合计划题（N1、N2，共 {len(loss)} 题）：正确的第一步 {fmt(best)}；模型选的 {fmt(mine)}；"
+            f"平均每题比最好的计划多掉 {sum(loss) / len(loss):.2f} 名")
+
+
 def report(name: str, out_dir: Path) -> str:
     from tavernbench.chance import expected
     from tavernbench.report import evaluate, load, summarize
@@ -171,6 +210,7 @@ def report(name: str, out_dir: Path) -> str:
     for sc in sorted(me_):
         if sc in ANSWERABLE:
             lines.append(f"  {sc:4s} {me_[sc]:.2f} / {ta.get(sc, float('nan')):.2f} / {chs.get(sc, float('nan')):.2f}")
+    lines += ["", plan_summary(out_dir / "answers.jsonl")]
     (out_dir / "report.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     text = "\n".join(lines)
     (out_dir / "report.txt").write_text(text + "\n", encoding="utf-8")
