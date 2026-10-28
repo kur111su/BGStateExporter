@@ -38,6 +38,22 @@ def actions_from_fixture(path: str) -> list[Action]:
     return out
 
 
+def schema_of(path: str) -> int:
+    """插件记录的格式版本（看前几行）。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for _, line in zip(range(20), fh):
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and "schema" in d:
+                    return int(d.get("schema") or 1)
+    except OSError:
+        return 0
+    return 1
+
+
 def summarize(results: list[dict]) -> dict:
     per = defaultdict(Counter)
     examples = defaultdict(list)
@@ -65,6 +81,8 @@ def main() -> int:
     ap.add_argument("--annotate", action="store_true")
     ap.add_argument("--out", default="")
     ap.add_argument("--trials", type=int, default=4)
+    ap.add_argument("--last", type=int, default=0, help="只回放最近几局（0 = 全部）")
+    ap.add_argument("--txt", default="", help="摘要另存为文本")
     a = ap.parse_args()
     from tg.bridge import catalog
     names = {k: v.get("name_zh") or v.get("name") for k, v in catalog().items()}
@@ -75,20 +93,46 @@ def main() -> int:
     files: list[str] = []
     for p in a.paths:
         files += sorted(glob.glob(os.path.join(p, "*.jsonl"))) if os.path.isdir(p) else [p]
-    for f in files:
-        acts += segment(load_game(f))
+    if a.last and len(files) > a.last:
+        files = files[-a.last:]
     t0 = time.time()
-    results = [check_action(x, seed=i, trials=a.trials) for i, x in enumerate(acts)]
+    results = []
+    if acts:
+        results = [check_action(x, seed=i, trials=a.trials) for i, x in enumerate(acts)]
+    for k, f in enumerate(files, 1):
+        name = os.path.basename(f)
+        sch = schema_of(f)
+        if sch == 0:
+            print(f"[{k}/{len(files)}] {name}：打不开，跳过", flush=True)
+            continue
+        if sch != 2:
+            print(f"[{k}/{len(files)}] {name}：旧版插件（v0.9 以前）的记录，信息不全，跳过", flush=True)
+            continue
+        try:
+            fa = segment(load_game(f))
+        except Exception as ex:                        # noqa: BLE001
+            print(f"[{k}/{len(files)}] {name}：读不了（{type(ex).__name__}: {ex}），跳过", flush=True)
+            continue
+        if not fa:
+            print(f"[{k}/{len(files)}] {name}：没有可回放的动作", flush=True)
+            continue
+        print(f"[{k}/{len(files)}] {name}：{len(fa)} 个动作，回放中…", end="", flush=True)
+        r = [check_action(x, seed=len(results) + i, trials=a.trials) for i, x in enumerate(fa)]
+        results += r
+        c = Counter(x["result"] for x in r)
+        chk = sum(v for kk, v in c.items() if kk != "skipped")
+        print(f" 一致 {(c['exact'] + c['aggregate']) / max(1, chk):.0%}（{dict(c)}）", flush=True)
     s = summarize(results)
     checked = sum(v for k, v in s["byResult"].items() if k != "skipped")
     ok = s["byResult"].get("exact", 0) + s["byResult"].get("aggregate", 0)
     summary = (f"A5 回放：{len(results)} 个动作，检验 {checked} 个，完全一致 {s['byResult'].get('exact', 0)}，"
                f"总量一致 {s['byResult'].get('aggregate', 0)}（合计 {ok / max(1, checked):.1%}）；"
                f"{s['byResult']}；差异类别 {s['diffKinds']}；用时 {time.time() - t0:.0f} 秒")
-    print(summary)
-    for row in s["cards"][:25]:
-        if row["bad"]:
-            print(f"  {names.get(row['card'], row['card'])}({row['card']}) {row['n']} 次，不一致 {row['bad']}  {row['examples'][:1]}")
+    lines = [summary] + [f"  {names.get(row['card'], row['card'])}({row['card']}) {row['n']} 次，不一致 {row['bad']}  "
+                         f"{row['examples'][:1]}" for row in s["cards"][:25] if row["bad"]]
+    print("\n".join(lines), flush=True)
+    if a.txt:
+        Path(a.txt).write_text("\n".join(lines) + "\n", encoding="utf-8")
     if a.annotate:
         def ann(level, msg):
             print(f"::{level}::" + msg.replace("\n", " ").replace("%", "%25")[:3000])
