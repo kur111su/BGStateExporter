@@ -46,6 +46,33 @@ def main() -> int:
         steps += int(ready.sum())
     print(f"随机初始化模型走了 {steps} 个决策，没有不合法动作")
 
+    # 优化后的前向（合并嵌入、只算有内容的词、压缩输入）和原来的写法结果一致
+    torch.manual_seed(0)
+    ref_m = build_model(64, 2, 2, 32).eval()
+    o = env.observe()
+    f = torch.as_tensor(o["features"]); c = torch.as_tensor(o["cards"]).long(); mk = torch.as_tensor(o["action_mask"])
+    f = f.clone(); f[:, :500] *= 50.0                                   # 带一些大数值
+    with torch.no_grad():
+        ref_m.pack = False
+        l0, v0, p0 = ref_m(f, c, mk, slow=True)
+        ref_m.pack = True
+        l1, v1, p1 = ref_m(f, c, mk)
+        from rl.model import soft_log
+        l2, v2, p2 = ref_m(soft_log(f), c, mk, compressed=True)
+    legal = mk
+    for a_, b_ in ((l0, l1), (l0, l2)):
+        assert torch.allclose(a_[legal], b_[legal], atol=2e-4, rtol=1e-4), (a_[legal] - b_[legal]).abs().max()
+    assert torch.allclose(v0, v1, atol=1e-4) and torch.allclose(p0, p2, atol=2e-4)
+    print("优化后的前向和原写法一致（最大差 %.2e）" % float((l0[legal] - l1[legal]).abs().max()))
+
+    # 训练数据按压缩后的半精度存：极大的数值也不会变成 inf
+    from rl.ppo import Policy
+    pol = Policy(ref_m, torch.device("cpu"))
+    huge = o["features"].copy(); huge[:, :100] = 1e7
+    res = pol(huge, o["cards"], o["action_mask"], want_obs=True)
+    assert np.isfinite(res[3]).all() and res[3].dtype == np.float16
+    print("压缩存储没有溢出")
+
     # GAE：γ=1、λ=1 时优势 = 最终奖励 - 价值；另一个槽位没打完，用自举价值
     r = Rollout(2)
     for i in range(3):

@@ -80,6 +80,11 @@ class Layout:
         return out
 
 
+def soft_log_np(x: np.ndarray) -> np.ndarray:
+    a = np.abs(x)
+    return np.where(a <= 1, x, np.sign(x) * (1 + np.log(np.maximum(a, 1)))).astype(np.float32)
+
+
 def soft_log(x: torch.Tensor) -> torch.Tensor:
     """输入压缩：|x| ≤ 1 不变，更大的按对数压（1 + ln|x|）。后期随从攻防上千（观察里是攻防/10），
     不压的话半精度下注意力会溢出成 NaN（训练第 200 轮测强度时崩溃就是这个）。"""
@@ -142,10 +147,55 @@ class EntityTransformer(nn.Module):
         # 价值 / 名次
         self.v_head = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 1))
         self.p_head = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 8))
+        # 每个词的类型和槽位序号（不是参数，不进检查点）
+        groups = [(0, 1), (1, 1), (2, L.NPW), (3, 2), (4, L.NQ), (5, 1), (6, 8), (7, L.NB), (8, L.NH), (9, L.NS),
+                  (10, L.NC), (11, L.NOPP)]
+        self.register_buffer("type_ids", torch.tensor([t for t, n in groups for _ in range(n)]), persistent=False)
+        self.register_buffer("slot_ids", torch.tensor([i for t, n in groups for i in range(n)]), persistent=False)
+        self.pack = True          # 只把有内容的词送进 Transformer（结果不变，省约一半计算）
 
     # ---------------- 编码 ----------------
 
     def _tokens(self, f: torch.Tensor, c: torch.Tensor):
+        """把观察变成 66 个词。和 _tokens_slow 数学上完全一样（同一套参数），只是把十几次小的嵌入 / 线性层
+        合并成几次大的，显卡上快很多。"""
+        B = f.shape[0]
+        L, fs, cs, d = self.L, self.fs, self.cs, self.d
+        E = self.card(c)                                       # [B,124,dc] 所有卡一次算
+        D = self.card_to_d(E)                                  # [B,124,d]
+        bias = self.card_to_d.bias
+        sl = lambda T, a, b=None: T[:, cs[a][0]:cs[b or a][1]]   # noqa: E731
+        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1)
+        nq = cs["quests"][1] - cs["quests"][0]
+        ns = cs["secrets"][1] - cs["secrets"][0]
+        # 任务、奥秘：原来是先把卡嵌入加起来再过线性层，线性层的偏置只算一次
+        q = sl(D, "quests").view(B, L.NQ, nq // L.NQ, d).sum(2) - (nq // L.NQ - 1) * bias
+        sec = sl(D, "secrets").sum(1, keepdim=True) - (ns - 1) * bias
+        bf = f[:, fs["board"][0]:fs["board"][1]].view(B, L.NB, L.MF)
+        board = self.f_minion(bf) + sl(D, "board")
+        n_it = L.NH + L.NS + L.NC
+        items_f = f[:, fs["hand"][0]:fs["choice"][1]].view(B, n_it, L.IF)
+        items = self.f_item(items_f) + sl(D, "hand", "choice")
+        of = f[:, fs["opp"][0]:fs["opp"][1]].view(B, L.NOPP, L.OPPF)
+        obf = f[:, fs["oppboard"][0]:fs["oppboard"][1]].view(B, L.NOPP, L.NB, L.MF)
+        obc = sl(E, "oppboard").view(B, L.NOPP, L.NB, -1)
+        om = self.opp_minion(torch.cat([obf, obc.to(obf.dtype)], -1))
+        opres = (obf[..., 0] > 0).to(om.dtype).unsqueeze(-1)
+        pooled = (om * opres).sum(2) / opres.sum(2).clamp(min=1.0)
+        ox = self.f_opp(of) + sl(D, "opphero") + pooled
+        x = torch.cat([g, sl(D, "hero"), sl(D, "powers"), sl(D, "deity", "source"), q, sec, sl(D, "trinkets"),
+                       board, items, ox], 1)
+        x = x + (self.type_emb(self.type_ids) + self.slot_emb(self.slot_ids)).to(x.dtype)
+        cc = c
+        qc = sl(cc, "quests").view(B, L.NQ, -1)
+        present = torch.cat([
+            torch.ones(B, 1, dtype=torch.bool, device=f.device),
+            sl(cc, "hero") > 0, sl(cc, "powers") > 0, sl(cc, "deity", "source") > 0, (qc > 0).any(2),
+            (sl(cc, "secrets") > 0).any(1, keepdim=True), sl(cc, "trinkets") > 0, bf[:, :, 0] > 0,
+            (items_f[:, :, 0] > 0) | (sl(cc, "hand", "choice") > 0), of[:, :, 0] > 0], 1)
+        return x, present
+
+    def _tokens_slow(self, f: torch.Tensor, c: torch.Tensor):
         B = f.shape[0]
         L, fs, cs, d = self.L, self.fs, self.cs, self.d
         dev = f.device
@@ -189,11 +239,29 @@ class EntityTransformer(nn.Module):
         present = torch.cat(pres, 1)
         return x, present
 
-    def forward(self, f: torch.Tensor, c: torch.Tensor, mask: torch.Tensor):
-        """返回 (动作 logits [B,245]（非法 = -1e9），价值 [B]，名次 logits [B,8])。"""
-        x, present = self._tokens(soft_log(f.float()), c.long())
-        h = self.norm(self.enc(x, src_key_padding_mask=~present))
-        h = h * present.unsqueeze(-1)
+    def encode(self, x: torch.Tensor, present: torch.Tensor) -> torch.Tensor:
+        """Transformer。pack=True 时每行只取有内容的词（挪到前面、截到本批最多的个数）再算，算完放回原位。
+        没有位置编码、空词被注意力屏蔽，所以和整行一起算结果相同。"""
+        if not self.pack:
+            return self.norm(self.enc(x, src_key_padding_mask=~present))
+        B, T, d = x.shape
+        order = torch.argsort((~present).to(torch.int32), dim=1, stable=True)   # 有内容的在前
+        tm = int(present.sum(1).max())
+        idx = order[:, :tm]
+        xp = torch.gather(x, 1, idx.unsqueeze(-1).expand(-1, -1, d))
+        pp = torch.gather(present, 1, idx)
+        hp = self.norm(self.enc(xp, src_key_padding_mask=~pp))
+        h = torch.zeros(B, T, d, dtype=hp.dtype, device=x.device)
+        return h.scatter(1, idx.unsqueeze(-1).expand(-1, -1, d), hp)
+
+    def forward(self, f: torch.Tensor, c: torch.Tensor, mask: torch.Tensor, compressed: bool = False,
+                slow: bool = False):
+        """返回 (动作 logits [B,245]（非法 = -1e9），价值 [B]，名次 logits [B,8])。
+        compressed=True：f 已经做过 soft_log（训练数据按压缩后的半精度存，避免溢出）。"""
+        x_in = f.float() if compressed else soft_log(f.float())
+        x, present = (self._tokens_slow if slow else self._tokens)(x_in, c.long())
+        h = self.encode(x, present)
+        h = h * present.unsqueeze(-1).to(h.dtype)
         idx = {}
         o = 0
         for name, n in (("global", 1), ("hero", 1), ("powers", self.L.NPW), ("ds", 2), ("quests", self.L.NQ),

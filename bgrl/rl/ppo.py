@@ -24,7 +24,7 @@ import torch
 import torch.nn.functional as F
 
 from .league import League, load_real_profile
-from .model import SIZES, build_model, n_params
+from .model import SIZES, build_model, n_params, soft_log
 
 
 @dataclass
@@ -55,6 +55,7 @@ class Config:
     lr: float = 1e-4               # 3e-4 时第 310–325 轮更新过猛（KL 超标、名次头发散）
     minibatch: int = 4096
     micro_batch: int = 512         # 一次放进显卡的样本数（显存不够就调小；不影响结果，只影响速度）
+    lr_recover_iters: int = 50     # 回退后连续这么多轮正常，学习率翻倍（最多回到 lr）
     epochs: int = 1
     anchor_coef: float = 0.1
     anchor_iters: int = 100
@@ -92,15 +93,25 @@ class Policy:
         self.amp = amp and device.type == "cuda"
         self.bad_rows = 0                      # 输出出现 NaN 的局面数（应该一直是 0）
 
-    @torch.no_grad()
-    def __call__(self, f, c, m, greedy=False):
+    @torch.inference_mode()
+    def __call__(self, f, c, m, greedy=False, want_obs=False):
+        """want_obs=True 时另外返回压缩后的观察（float16，存训练数据用：压缩后最大十几，不会溢出）。"""
         f = torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.device, non_blocking=True)
         c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.device, non_blocking=True)
         m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.device, non_blocking=True)
+        fz = soft_log(f)
         with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.amp):
-            a, logp, v = self.model.act(f, c, m, greedy)
+            logits, v, _ = self.model(fz, c, m, compressed=True)
+        if greedy:
+            a = logits.argmax(-1)
+        else:
+            a = torch.distributions.Categorical(logits=logits).sample()
+        logp = torch.log_softmax(logits, -1).gather(1, a.unsqueeze(1)).squeeze(1)
         self.bad_rows += int(getattr(self.model, "last_bad", 0))
-        return a.cpu().numpy(), logp.float().cpu().numpy(), v.float().cpu().numpy()
+        out = (a.cpu().numpy(), logp.float().cpu().numpy(), v.float().cpu().numpy())
+        if want_obs:
+            out = out + (fz.half().cpu().numpy(),)
+        return out
 
 
 class Rollout:
@@ -175,9 +186,8 @@ class Rollout:
         b["adv"] = adv
         b["ret"] = adv + v
         b["place"] = np.asarray([self.place.get((int(s), int(e)), 0) for s, e in zip(slot, ep)], dtype=np.int64)
-        keep_last = self.last.copy()
+        self.place.clear()                 # 之后的决策只会属于还没结束的局，旧的名次用不到了
         self.reset()
-        self.last_prev = keep_last
         return b
 
 
@@ -198,6 +208,7 @@ class Trainer:
         self.amp = cfg.amp and self.dev.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=False)      # bfloat16 不需要缩放
         self.rollbacks = 0
+        self.since_rollback = 0
         self.good = None                       # 最近一次健康时的模型和优化器（出问题时回退到这里）
         self.learner = Policy(self.model, self.dev, self.amp)
         self.envs = []                                 # (名字, 环境, 槽位起点)
@@ -289,23 +300,34 @@ class Trainer:
         t0 = time.time()
         t_env = t_net = 0.0
         for _ in range(cfg.steps_per_iter):
-            for name, env, off in self.envs:
-                obs = self.obs[name]
-                ready = np.flatnonzero(obs["ready"])
-                actions = np.zeros(env.n_slots, dtype=np.int64)
-                ta = time.time()
+            # 先把所有环境里同一个模型要算的局面合在一起，一次前向（比每个环境各算一次快）
+            ta = time.time()
+            actions = {name: np.zeros(env.n_slots, dtype=np.int64) for name, env, _ in self.envs}
+            groups = defaultdict(list)                 # 模型编号 -> [(环境下标, 槽位数组)]
+            for ei, (name, env, off) in enumerate(self.envs):
+                ready = np.flatnonzero(self.obs[name]["ready"])
                 if len(ready):
                     roles = self.role[off + ready]
                     for rid in np.unique(roles):
-                        idx = ready[roles == rid]
-                        f, c, m = obs["features"][idx], obs["cards"][idx], obs["action_mask"][idx]
-                        a, logp, v = self._policy(int(rid))(f, c, m)
-                        actions[idx] = a
-                        if rid == 0:
-                            self.rollout.add(off + idx, f, c, m, a, logp, v)
-                            n_dec += len(idx)
-                tb = time.time()
-                rewards, dones, info = env.step(actions)
+                        groups[int(rid)].append((ei, ready[roles == rid]))
+            for rid, parts in groups.items():
+                cat = lambda key: np.concatenate([self.obs[self.envs[ei][0]][key][idx] for ei, idx in parts])  # noqa: E731
+                f, c, m = cat("features"), cat("cards"), cat("action_mask")
+                res = self._policy(rid)(f, c, m, want_obs=(rid == 0))
+                a = res[0]
+                o = 0
+                for ei, idx in parts:
+                    name, env, off = self.envs[ei]
+                    k = len(idx)
+                    actions[name][idx] = a[o:o + k]
+                    if rid == 0:
+                        self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], a[o:o + k],
+                                         res[1][o:o + k], res[2][o:o + k])
+                        n_dec += k
+                    o += k
+            tb = time.time()
+            for name, env, off in self.envs:
+                rewards, dones, info = env.step(actions[name])
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
                         self.rollout.reward(off + int(i), rewards[i], bool(dones[i]), info["placement"][i])
@@ -320,8 +342,8 @@ class Trainer:
                         if e != self.episode[name][g]:
                             self.episode[name][g] = e
                             self._assign(name, env, off, int(g))
-                t_net += tb - ta
-                t_env += time.time() - tb
+            t_net += tb - ta
+            t_env += time.time() - tb
         # 没打完的：用当前局面的价值自举
         last_values = np.zeros(self.n_slots, dtype=np.float32)
         for name, env, off in self.envs:
@@ -367,7 +389,7 @@ class Trainer:
                     R = t(b["ret"][j], torch.float32)
                     P = t(b["place"][j], torch.long)
                     with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
-                        logits, v, pl = self.model(f, c, m)
+                        logits, v, pl = self.model(f, c, m, compressed=True)
                     stats["bad_rows"].append(float(getattr(self.model, "last_bad", 0)))
                     logp_all = F.log_softmax(logits.float(), -1)
                     logp = logp_all.gather(1, a.unsqueeze(1)).squeeze(1)
@@ -381,7 +403,7 @@ class Trainer:
                     loss = pg + cfg.vf_coef * vf - cfg.ent_coef * ent + cfg.aux_coef * aux
                     if use_anchor:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
-                            ref = F.log_softmax(self.anchor(f, c, m)[0].float(), -1)
+                            ref = F.log_softmax(self.anchor(f, c, m, compressed=True)[0].float(), -1)
                         kl_anchor = (ref.exp() * (ref - logp_all)).masked_fill(~m, 0).sum(-1).mean()
                         loss = loss + cfg.anchor_coef * kl_anchor
                         stats["kl_anchor"].append(kl_anchor.item())
@@ -535,7 +557,15 @@ class Trainer:
             t_upd = time.time() - t1
             self.iter += 1
             problem = self.health(upd)
+            if not problem:
+                self.since_rollback += 1
+                g0 = self.opt.param_groups[0]["lr"]
+                if g0 < cfg.lr and self.since_rollback >= cfg.lr_recover_iters:
+                    for g in self.opt.param_groups:
+                        g["lr"] = min(cfg.lr, g["lr"] * 2)
+                    self.since_rollback = 0
             if problem:
+                self.since_rollback = 0
                 self.rollback(problem)
                 rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "rollback": problem,
                        "lr": self.opt.param_groups[0]["lr"], "rollbacks": self.rollbacks}
@@ -547,7 +577,7 @@ class Trainer:
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
-                   "t_update": round(t_upd, 1), **upd}
+                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"], **upd}
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
                 if ps:
