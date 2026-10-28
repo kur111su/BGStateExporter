@@ -9,6 +9,7 @@
 | `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 | `reports\setup.txt` |
 | `train.bat` | 训练（第二阶段 `runs\v3`：机器人按真人强度加强，从第一阶段 `runs\v2` 的模型开始），关掉窗口再开会接着练。其它设置：`train.bat --help` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
 | `shadow.bat` | 影子模式：插件面板“模型建议”一栏、http://localhost:8766/ 。训练中换局时自动换上最新模型（当前训练目录还没有模型时，用最近更新的其它训练目录的）。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
+| `tavernbench.bat` | 用 TavernBench 测当前模型（约几分钟，只用 CPU，训练开着也行）。`tavernbench.bat --ckpt runs\v2\latest.pt` 测指定模型 | `reports\tavernbench\<模型>\report.txt` |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 
 需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
@@ -23,6 +24,7 @@
 | `shadow` | `tools/shadow.py` | 影子模式服务 |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
 | `shadow-eval` | `tools/shadow_eval.py` | 影子模式评估：按模型版本统计模型方案和你实际操作对得上多少（第一步同类 / 同一张卡 / 在方案里），结果写到 `reports\shadow_eval.json` |
+| `tavernbench` | `tools/tavernbench.py` | C3：用 TavernBench（论文的 368 题评测集，`third_party/tavernbench`）测模型，和论文公布的 TavernAgent、大语言模型、Jev 比；`--ckpt` 指定模型。结果在 `reports\tavernbench\<模型>\report.txt` |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
 | `profile` | `tools/opp_profile.py` | B1 对手画像：真人对局 vs 脚本机器人（`--save` 更新 `rl/real_profile.json`） |
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
