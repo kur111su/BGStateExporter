@@ -48,11 +48,11 @@ class Config:
     lam: float = 0.995
     clip: float = 0.2
     target_kl: float = 0.05
-    ent_coef: float = 0.002
+    ent_coef: float = 0.005        # 论文 0.002；我们每轮样本少、噪声大，第一次训练第 330 轮策略塌缩（熵掉到 0.3），调高一点
     vf_coef: float = 0.5
     aux_coef: float = 0.1
     max_grad_norm: float = 1.0
-    lr: float = 3e-4
+    lr: float = 1e-4               # 3e-4 时第 310–325 轮更新过猛（KL 超标、名次头发散）
     minibatch: int = 4096
     micro_batch: int = 512         # 一次放进显卡的样本数（显存不够就调小；不影响结果，只影响速度）
     epochs: int = 1
@@ -64,7 +64,8 @@ class Config:
     save_every: int = 10
     eval_every: int = 50
     eval_games: int = 128          # 64 局时平均名次的误差约 ±0.3，128 局约 ±0.2
-    amp: bool = True
+    amp: bool = True               # 混合精度用 bfloat16（数值范围和 float32 一样，不会溢出；3070 支持）
+    max_rollbacks: int = 5         # 连续出问题回退几次后停止训练
     # 每回合最多几个操作（第 1、2、3… 回合，最后一个数用于之后所有回合）。TavernGym 默认不限：
     # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
@@ -89,14 +90,16 @@ class Policy:
     def __init__(self, model, device, amp=False):
         self.model, self.device = model, device
         self.amp = amp and device.type == "cuda"
+        self.bad_rows = 0                      # 输出出现 NaN 的局面数（应该一直是 0）
 
     @torch.no_grad()
     def __call__(self, f, c, m, greedy=False):
         f = torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.device, non_blocking=True)
         c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.device, non_blocking=True)
         m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.device, non_blocking=True)
-        with torch.autocast(self.device.type, enabled=self.amp):
+        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.amp):
             a, logp, v = self.model.act(f, c, m, greedy)
+        self.bad_rows += int(getattr(self.model, "last_bad", 0))
         return a.cpu().numpy(), logp.float().cpu().numpy(), v.float().cpu().numpy()
 
 
@@ -193,7 +196,9 @@ class Trainer:
         self.model = build_model(**self.mkw).to(self.dev)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=cfg.lr, eps=1e-5)
         self.amp = cfg.amp and self.dev.type == "cuda"
-        self.scaler = torch.amp.GradScaler("cuda", enabled=self.amp)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=False)      # bfloat16 不需要缩放
+        self.rollbacks = 0
+        self.good = None                       # 最近一次健康时的模型和优化器（出问题时回退到这里）
         self.learner = Policy(self.model, self.dev, self.amp)
         self.envs = []                                 # (名字, 环境, 槽位起点)
         off = 0
@@ -353,7 +358,7 @@ class Trainer:
                     j = mb[u:u + cfg.micro_batch]
                     w = len(j) / len(mb)
                     t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
-                    f = t(b["f"][j], torch.float16 if self.amp else torch.float32)
+                    f = t(b["f"][j], torch.float32)
                     c = t(b["c"][j], torch.long)
                     m = t(np.unpackbits(b["m"][j], axis=1)[:, :A_N].astype(bool), torch.bool)
                     a = t(b["a"][j], torch.long)
@@ -361,8 +366,9 @@ class Trainer:
                     A = t(adv[j], torch.float32)
                     R = t(b["ret"][j], torch.float32)
                     P = t(b["place"][j], torch.long)
-                    with torch.autocast(self.dev.type, enabled=self.amp):
-                        logits, v, pl = self.model(f.float(), c, m)
+                    with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+                        logits, v, pl = self.model(f, c, m)
+                    stats["bad_rows"].append(float(getattr(self.model, "last_bad", 0)))
                     logp_all = F.log_softmax(logits.float(), -1)
                     logp = logp_all.gather(1, a.unsqueeze(1)).squeeze(1)
                     ratio = torch.exp(logp - old)
@@ -374,8 +380,8 @@ class Trainer:
                         torch.zeros((), device=self.dev)
                     loss = pg + cfg.vf_coef * vf - cfg.ent_coef * ent + cfg.aux_coef * aux
                     if use_anchor:
-                        with torch.no_grad(), torch.autocast(self.dev.type, enabled=self.amp):
-                            ref = F.log_softmax(self.anchor(f.float(), c, m)[0].float(), -1)
+                        with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+                            ref = F.log_softmax(self.anchor(f, c, m)[0].float(), -1)
                         kl_anchor = (ref.exp() * (ref - logp_all)).masked_fill(~m, 0).sum(-1).mean()
                         loss = loss + cfg.anchor_coef * kl_anchor
                         stats["kl_anchor"].append(kl_anchor.item())
@@ -387,16 +393,22 @@ class Trainer:
                                    ("aux", aux.item()), ("kl", kl),
                                    ("clipfrac", ((ratio - 1).abs() > cfg.clip).float().mean().item())):
                         stats[k_].append(v_)
-                self.scaler.unscale_(self.opt)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
-                self.scaler.step(self.opt)
-                self.scaler.update()
+                gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
+                if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
+                    stats["skipped"].append(1.0)
+                    self.opt.zero_grad(set_to_none=True)
+                    continue
+                stats["skipped"].append(0.0)
+                stats["grad_norm"].append(float(gn))
+                self.opt.step()
                 if sum(kls) > cfg.target_kl:
                     stop = True
                     break
             if stop:
                 break
         out = {k: float(np.mean(v)) for k, v in stats.items()}
+        out["bad_rows"] = int(sum(stats.get("bad_rows", [])))
+        out["skipped"] = int(sum(stats.get("skipped", [])))
         out["early_stop"] = stop
         if self.dev.type == "cuda":
             out["gpu_mem_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
@@ -445,6 +457,50 @@ class Trainer:
 
     # ---------------- 主循环 ----------------
 
+    # ---------------- 健康检查 / 回退 ----------------
+
+    def health(self, upd: dict) -> str:
+        """这一轮有没有出问题（返回问题描述，没有返回空串）。第一次训练第 310 轮起更新失控、
+        第 455 轮起参数变成 NaN，之前的保险把 NaN 悄悄换成了随机动作，又白跑了 800 轮——现在直接回退。"""
+        if any(not torch.isfinite(p).all() for p in self.model.parameters()):
+            return "模型参数出现 NaN / inf"
+        if self.learner.bad_rows or upd.get("bad_rows"):
+            return f"网络输出出现 NaN（采样 {self.learner.bad_rows} 个、更新 {upd.get('bad_rows', 0)} 个局面）"
+        if upd.get("skipped", 0) >= 2:
+            return f"有 {upd['skipped']} 个小批的梯度是 NaN / inf"
+        if upd.get("aux", 0) > 4.0:
+            return f"名次头损失发散（{upd['aux']:.2f}）"
+        return ""
+
+    def mark_good(self):
+        import copy
+        self.good = (copy.deepcopy(self.model.state_dict()), copy.deepcopy(self.opt.state_dict()), self.iter)
+        self.rollbacks = 0
+
+    def rollback(self, problem: str):
+        self.rollbacks += 1
+        print(f"第 {self.iter} 轮出问题：{problem}。回退到第 {self.good[2] if self.good else '?'} 轮，学习率减半。", flush=True)
+        if self.rollbacks > self.cfg.max_rollbacks or self.good is None:
+            self.log_f.write(json.dumps({"iter": self.iter, "stopped": problem}, ensure_ascii=False) + "\n")
+            self.log_f.flush()
+            raise RuntimeError(f"连续回退 {self.rollbacks} 次仍然出问题（{problem}），训练停止。把 log.jsonl 发给 Claude。")
+        sd, od, it = self.good
+        self.model.load_state_dict(sd)
+        self.opt.load_state_dict(od)
+        for g in self.opt.param_groups:
+            g["lr"] *= 0.5
+        self.iter = it
+        self.snap_cache.clear()
+
+    def init_from(self, path):
+        """用另一个检查点 / 快照的参数开始（不带优化器和对手库）。"""
+        ck = torch.load(path, map_location=self.dev, weights_only=False)
+        sd = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
+        if any(not torch.isfinite(v).all() for v in sd.values() if torch.is_tensor(v) and v.is_floating_point()):
+            raise ValueError(f"{path} 里的参数有 NaN / inf，不能用")
+        self.model.load_state_dict(sd)
+        print(f"从 {path} 的参数开始", flush=True)
+
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw}, self.run / "latest.pt")
@@ -469,12 +525,25 @@ class Trainer:
     def train(self, iters=None, on_log=None):
         cfg = self.cfg
         end = self.iter + (iters or cfg.iters)
+        if self.good is None:
+            self.mark_good()
         while self.iter < end:
+            self.learner.bad_rows = 0
             batch, n_dec, t_col, t_env, t_net = self.collect()
             t1 = time.time()
             upd = self.update(batch) if batch is not None else {}
             t_upd = time.time() - t1
             self.iter += 1
+            problem = self.health(upd)
+            if problem:
+                self.rollback(problem)
+                rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "rollback": problem,
+                       "lr": self.opt.param_groups[0]["lr"], "rollbacks": self.rollbacks}
+                self.log_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                self.log_f.flush()
+                if on_log:
+                    on_log(rec)
+                continue
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
@@ -492,6 +561,7 @@ class Trainer:
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
+                self.mark_good()
             self.log_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self.log_f.flush()
             if on_log:

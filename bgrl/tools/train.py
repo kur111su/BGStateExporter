@@ -28,6 +28,7 @@ def main() -> int:
     ap.add_argument("--run", default="")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--stage", action="store_true", help="新阶段：以当前策略为锚加 KL 约束")
+    ap.add_argument("--init", default="", help="新训练从这个检查点 / 快照的参数开始（已有 latest.pt 时忽略）")
     for f in dataclasses.fields(Config):
         if f.name == "run_dir":
             continue
@@ -59,12 +60,17 @@ def main() -> int:
     if a.resume and latest.exists():
         tr.load(latest)
         print(f"从 {latest} 继续（第 {tr.iter} 轮）")
+    elif a.init:
+        tr.init_from(a.init)
     if a.stage:
         tr.start_stage()
 
     def show(rec):
+        if "rollback" in rec:
+            print(json.dumps(rec, ensure_ascii=False), flush=True)
+            return
         keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
-                "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop")
+                "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop", "bad_rows", "skipped")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
     tr.train(cfg.iters, on_log=show)

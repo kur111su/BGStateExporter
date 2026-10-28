@@ -141,6 +141,8 @@ def load_model(path: str | Path, device: str = "cpu"):
         for k in ("d", "layers", "heads", "dc"):
             if cfg and cfg.get(k):
                 kw[k] = cfg[k]
+    if any(torch.is_tensor(v) and v.is_floating_point() and not torch.isfinite(v).all() for v in state.values()):
+        raise ValueError(f"{path.name} 的参数有 NaN / inf（训练出过问题），不能用")
     model = build_model(**kw).to(device).eval()
     model.load_state_dict(state)
     info["size"] = kw

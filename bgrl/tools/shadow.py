@@ -205,7 +205,7 @@ class Shadow:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default=str(ROOT / "runs" / "main"))
+    ap.add_argument("--run", default=str(ROOT / "runs" / "v2"))
     ap.add_argument("--ckpt", default="")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--plugin-port", type=int, default=8765)

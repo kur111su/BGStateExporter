@@ -223,7 +223,8 @@ class EntityTransformer(nn.Module):
         logits = logits.masked_fill(~mask, -1e9)
         # 保险：某一行出现 NaN / inf（数值溢出）时，这一行退回到合法动作里均匀选，不让整个训练崩掉
         bad = ~torch.isfinite(logits).all(-1)
-        if bad.any():
+        self.last_bad = int(bad.sum())             # 训练程序据此判断出没出问题（不能悄悄掩盖）
+        if self.last_bad:
             logits = torch.where(bad.unsqueeze(-1), torch.zeros_like(logits).masked_fill(~mask, -1e9), logits)
         pooled = h.sum(1) / present.sum(1, keepdim=True).clamp(min=1)
         z = g + pooled

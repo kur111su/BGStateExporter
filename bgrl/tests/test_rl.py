@@ -80,6 +80,27 @@ def main() -> int:
     assert torch.isfinite(lg).all() and torch.isfinite(vv).all() and torch.isfinite(pp).all()
     a2, _, _ = small.act(big, c, mk)
     print("大数值输入没有 NaN")
+    # 健康检查和回退：参数被弄成 NaN 后能发现并回到上一次健康的状态
+    import tempfile
+    from rl.ppo import Config, Trainer
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(run_dir=d, device="cpu", games_bot=2, games_league=1, steps_per_iter=8, d=32, layers=1, heads=2,
+                     dc=16, snapshot_every=0, eval_every=0, save_every=0, threads=1, minibatch=64, micro_batch=32)
+        tr = Trainer(cfg)
+        tr.train(1)
+        tr.mark_good()
+        lr0 = tr.opt.param_groups[0]["lr"]
+        with torch.no_grad():
+            next(tr.model.parameters()).fill_(float("nan"))
+        prob = tr.health({})
+        assert prob, "没发现 NaN 参数"
+        tr.rollback(prob)
+        assert all(torch.isfinite(p).all() for p in tr.model.parameters())
+        assert abs(tr.opt.param_groups[0]["lr"] - lr0 / 2) < 1e-12
+        tr.train(1)
+        assert not tr.health({})
+        tr.log_f.close()
+    print("健康检查和回退通过")
     print("TEST OK")
     return 0
 
