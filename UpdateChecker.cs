@@ -148,7 +148,12 @@ namespace BGStateExporter
 					Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
 					"HearthstoneDeckTracker", "Plugins", "BGStateExporter");
 				Directory.CreateDirectory(target);
-				File.Copy(dll, Path.Combine(target, "BGStateExporter.dll"), true);
+				var dest = Path.Combine(target, "BGStateExporter.dll");
+				File.Copy(dll, dest, true);
+				// HDT 启动时只在“源文件比它自己目录里的副本新”（按修改时间）时才复制插件。
+				// 解压出来的文件带的是压缩包里的时间（CI 编译时间，而且按 UTC 记、被当成本地时间读），
+				// 常常比旧副本还“旧”，结果 HDT 一直加载旧版本（v0.9.2 就没更新上）。这里把时间改成现在。
+				File.SetLastWriteTimeUtc(dest, DateTime.UtcNow);
 				UpdateReady = true;
 				Error = null;
 				Log.Info($"[BGStateExporter] 新版本 {tag} 已下载，重启 HDT 后生效");
