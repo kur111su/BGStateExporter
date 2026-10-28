@@ -10,5 +10,5 @@ cd /d "%~dp0"
 .venv\Scripts\python -c "import orjson" 2>nul || .venv\Scripts\python -m pip install -q orjson 2>nul
 set "INIT="
 if not exist runs\v3\latest.pt if exist runs\v2\latest.pt set "INIT=--init runs\v2\latest.pt"
-.venv\Scripts\python -X utf8 bg.py train --run runs\v3 --resume %INIT% --iters 100000 --threads %NUMBER_OF_PROCESSORS% --boost-frac 0.75 --ent-coef 0.01 %*
+.venv\Scripts\python -X utf8 bg.py train --run runs\v3 --resume %INIT% --iters 100000 --threads %NUMBER_OF_PROCESSORS% --boost-frac 0.75 %*
 pause

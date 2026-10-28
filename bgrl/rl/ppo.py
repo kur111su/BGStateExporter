@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import is_noop
-from .calibrate import BotBooster, ramp
+from .calibrate import AdaptiveStrength, BotBooster, ramp
 
 
 @dataclass
@@ -82,7 +82,12 @@ class Config:
     boost_frac: float = 0.0        # 多少比例的机器人局加强
     boost_from_turn: int = 7       # 从第几回合开始（前 6 回合机器人和真人差不多）
     boost_every: int = 2           # 每几回合加强一次（每次要整局存档读档，约 7 毫秒）
-    boost_ramp_iters: int = 200    # 加强幅度从 30% 爬到 100% 用多少轮
+    boost_ramp_iters: int = 200    # 不自适应时：加强幅度从 30% 爬到 100% 用多少轮
+    # 自适应（默认）：按学习者在加强局的平均名次调幅度，见 rl/calibrate.py 的 AdaptiveStrength
+    boost_adapt: bool = True
+    boost_start: float = 0.4       # 自适应的起点（接着旧检查点练、检查点里没有记录时也用它）
+    boost_target_place: float = 3.75   # 加强局的目标平均名次（8 人局随便打 = 4.5）
+    boost_step: float = 0.02       # 每次调多少
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -237,6 +242,11 @@ class Trainer:
         self.booster = (BotBooster(load_real_profile(), cfg.boost_frac, cfg.boost_from_turn, seed=cfg.seed,
                                    every=cfg.boost_every) if cfg.boost_frac > 0 and cfg.games_bot else None)
         self.t_boost = 0.0
+        self.adapt = (AdaptiveStrength(start=cfg.boost_start, target=cfg.boost_target_place, step=cfg.boost_step)
+                      if self.booster is not None and cfg.boost_adapt else None)
+        if self.booster is not None:
+            self.booster.strength = self.adapt.strength if self.adapt else ramp(0, 0, cfg.boost_ramp_iters)
+        self.boost_places: list[int] = []              # 这一轮打完的加强局名次（日志用）
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -352,10 +362,15 @@ class Trainer:
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             self.stats.append((name, int(info["placement"][i])))
                             self.finished += 1
+                            if name == "bot" and self.booster is not None and self.booster.finish(int(i)):
+                                self.boost_places.append(int(info["placement"][i]))
+                                if self.adapt is not None:
+                                    self.adapt.add(int(info["placement"][i]))
                 self.obs[name] = env.observe()
                 if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/calibrate.py）
                     tc = time.time()
-                    self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
+                    if self.adapt is None:
+                        self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
                     if self.booster.boost(env, self.obs[name]["features"]):
                         self.obs[name] = env.observe()
                     self.t_boost += time.time() - tc
@@ -554,7 +569,8 @@ class Trainer:
 
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
-                    "league": self.league.to_json(), "model_kwargs": self.mkw}, self.run / "latest.pt")
+                    "league": self.league.to_json(), "model_kwargs": self.mkw,
+                    "boost": self.adapt.to_json() if self.adapt is not None else None}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -564,6 +580,9 @@ class Trainer:
         self.opt.load_state_dict(ck["opt"])
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
+        if self.adapt is not None:
+            self.adapt.load_json(ck.get("boost"))
+            self.booster.strength = self.adapt.strength
 
     def start_stage(self):
         """新阶段：以当前策略为锚，前 anchor_iters 轮加 KL 约束。"""
@@ -616,6 +635,13 @@ class Trainer:
             if self.booster is not None:
                 rec.update(self.booster.take_stats(), t_boost=round(self.t_boost, 1),
                            boost_strength=round(self.booster.strength, 2))
+                if self.boost_places:                  # 这一轮的加强局 / 普通机器人局分开看
+                    rec["place_boost"] = round(float(np.mean(self.boost_places)), 3)
+                    rec["boost_games"] = len(self.boost_places)
+                self.boost_places = []
+                if self.adapt is not None:
+                    self.booster.strength = self.adapt.update()
+                    rec["boost_place_avg"] = self.adapt.mean()
                 self.t_boost = 0.0
             if cfg.snapshot_every and self.iter % cfg.snapshot_every == 0:
                 m = self.snapshot()

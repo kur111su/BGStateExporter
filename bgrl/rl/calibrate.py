@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import deque
 
 import numpy as np
 
@@ -129,10 +130,60 @@ class BotBooster:
                 changed = True
         return changed
 
+    def finish(self, g: int):
+        """对局 g 打完了：返回这局有没有加强（True / False；没到加强回合就结束了返回 None），并清掉这局的计划。"""
+        cur = self.plan.pop(g, None)
+        self.last_turn.pop(g, None)
+        return None if cur is None else cur[1] is not None
+
     def take_stats(self) -> dict:
         out = {"boosts": self.n_boosts, "boost_added_k": round(self.added / 1000, 1)}
         self.n_boosts, self.added = 0, 0.0
         return out
+
+
+class AdaptiveStrength:
+    """按学习者在加强局里的名次自动调加强幅度（第二阶段的课程）。
+
+    v3 前 250 轮用固定爬坡：第 200 轮到 100% 后学习者在加强局里平均 4.5 名左右（8 人局随便打也是 4.5），
+    名次基本由哪个机器人被放得更大决定，奖励里几乎没有信息，熵一路涨、无效操作变多。
+    改成：最近 window 局加强局的平均名次好于 target - band 就加一点强度，差于 target + band 就减一点，
+    让学习者一直处在“努力能赢”的难度。strength 本身就是进度：爬到 1.0 = 能和真人画像强度的机器人打平。"""
+
+    def __init__(self, start: float = 0.4, target: float = 3.75, band: float = 0.25, step: float = 0.02,
+                 lo: float = 0.15, hi: float = 1.0, window: int = 200, min_games: int = 60):
+        self.strength = start
+        self.target, self.band, self.step, self.lo, self.hi = target, band, step, lo, hi
+        self.places: deque = deque(maxlen=window)
+        self.min_games = min_games
+        self.new = 0                                     # 上次调整后新打完的加强局
+
+    def add(self, place: int):
+        self.places.append(int(place))
+        self.new += 1
+
+    def mean(self):
+        return round(float(np.mean(self.places)), 3) if self.places else None
+
+    def update(self) -> float:
+        """每轮调用一次；新结果不够 min_games 局不动（避免同一批结果反复调）。"""
+        if self.new < self.min_games or len(self.places) < self.min_games:
+            return self.strength
+        m = float(np.mean(self.places))
+        if m < self.target - self.band:
+            self.strength = min(self.hi, self.strength + self.step)
+        elif m > self.target + self.band:
+            self.strength = max(self.lo, self.strength - self.step)
+        self.new = 0
+        return self.strength
+
+    def to_json(self) -> dict:
+        return {"strength": self.strength, "places": list(self.places)}
+
+    def load_json(self, d: dict | None):
+        if d:
+            self.strength = float(d.get("strength", self.strength))
+            self.places.extend(int(x) for x in d.get("places") or [])
 
 
 def ramp(it: int, start_it: int, ramp_iters: int, lo: float = 0.3) -> float:
