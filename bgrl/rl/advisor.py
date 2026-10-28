@@ -165,46 +165,87 @@ class Advisor:
         pdist = F.softmax(pl[0], -1).cpu().numpy()
         return probs, float(v[0]), pdist, m
 
+    @staticmethod
+    def _sig(g) -> str:
+        """局面签名（不含站位顺序和冻结状态）：用来发现“做了等于没做”的动作和来回绕圈。"""
+        me = json.loads(g.view(0))["me"]
+        key = lambda lst: sorted((x.get("id"), x.get("atk"), x.get("hp"), bool(x.get("golden"))) for x in lst or [])  # noqa: E731
+        return json.dumps([me.get("gold"), me.get("tier"), key(me.get("board")), key(me.get("hand")), key(me.get("shop")),
+                           bool(me.get("pending"))], sort_keys=True, default=str)
+
     def plan(self, g) -> dict:
-        """g = 已重建的 TavernGym 局面（0 号座位 = 你）。不会改动 g。"""
+        """g = 已重建的 TavernGym 局面（0 号座位 = 你）。不会改动 g。
+        方案只列“有实际效果”的步骤：调站位只在最后给一次最终站位，冻结只在结束前提一次；
+        做完局面没变化（或回到之前出现过的局面）的动作跳过，改选下一个概率最高的。"""
         t0 = time.time()
         probs, v, pdist, mask = self._eval(g)
         me = json.loads(g.view(0))["me"]
-        out = {"value": round(v, 3), "expectedPlace": round(float((pdist * np.arange(1, 9)).sum()), 2),
-               "valuePlace": round(value_to_place(v), 2),
+        out = {"value": round(v, 3), "valuePlace": round(value_to_place(v), 2),
+               "expectedPlace": round(value_to_place(v), 2),          # 用价值头（名次头训练标签有偏差，前期偏悲观）
+               "headPlace": round(float((pdist * np.arange(1, 9)).sum()), 2),
                "placeDist": [round(float(x), 3) for x in pdist], "steps": [], "alternatives": [], "note": ""}
-        # 第一步的备选
-        legal = np.flatnonzero(mask)
+        # 第一步的备选（不含调站位、冻结）
+        legal = [a for a in np.flatnonzero(mask) if a < A_MOVE and a != A_FREEZE]
         for a in sorted(legal, key=lambda x: -probs[x])[:self.n_alt]:
             g2 = g.copy()
             try:
                 g2.step(0, int(a))
-                _, v2, pd2, _ = self._eval(g2) if g2.needs_action(0) else (None, v, pdist, None)
+                v2 = self._eval(g2)[1] if g2.needs_action(0) else v
             except ValueError:
                 continue
             out["alternatives"].append({"action": int(a), "text": describe(me, int(a)), "type": op_type(me, int(a)),
-                                        "prob": round(float(probs[a]), 3),
-                                        "placeAfter": round(float((pd2 * np.arange(1, 9)).sum()), 2)})
-        # 贪心走完本回合
+                                        "prob": round(float(probs[a]), 3), "placeAfter": round(value_to_place(v2), 2)})
+        # 贪心走完本回合（跳过没效果的动作）
         g2 = g.copy()
+        seen = {self._sig(g2)}
+        want_freeze = False
+        moved = False
         for _ in range(self.max_steps):
             if not g2.needs_action(0):
                 break
             p, _, _, m = self._eval(g2)
-            a = int(np.argmax(np.where(m, p, -1)))
             me2 = json.loads(g2.view(0))["me"]
-            out["steps"].append({"action": a, "text": describe(me2, a), "type": op_type(me2, a), "prob": round(float(p[a]), 3)})
-            if a == A_END:
+            order = [int(x) for x in np.argsort(-np.where(m, p, -1)) if m[x]]
+            chosen = None
+            for a in order[:12]:
+                if a == A_FREEZE:
+                    want_freeze = want_freeze or p[a] > 0.2
+                    continue
+                if a >= A_MOVE:
+                    moved = True
+                    continue
+                if a == A_END:
+                    chosen = a
+                    break
+                g3 = g2.copy()
+                try:
+                    g3.step(0, a)
+                except ValueError:
+                    continue
+                sig = self._sig(g3)
+                if sig in seen:
+                    continue
+                chosen = a
                 break
-            try:
-                g2.step(0, a)
-            except ValueError as ex:
-                out["note"] = f"TavernGym 不接受这一步：{ex}"
+            if chosen is None:
+                chosen = A_END
+            if chosen == A_END:
+                if want_freeze:
+                    out["steps"].append({"action": A_FREEZE, "text": "冻结酒馆（结束前）", "type": "freeze",
+                                         "prob": round(float(p[A_FREEZE]), 3)})
+                out["steps"].append({"action": A_END, "text": "结束回合", "type": "end", "prob": round(float(p[A_END]), 3)})
                 break
-            if a == A_REFRESH:
+            out["steps"].append({"action": chosen, "text": describe(me2, chosen), "type": op_type(me2, chosen),
+                                 "prob": round(float(p[chosen]), 3)})
+            g2.step(0, chosen)
+            seen.add(self._sig(g2))
+            if chosen == A_REFRESH:
                 out["note"] = "刷新之后的步骤要看刷出了什么，刷新后会重新给方案"
                 break
         else:
             out["note"] = f"超过 {self.max_steps} 步，后面省略"
+        if moved:
+            out["note"] = (out["note"] + "；" if out["note"] else "") + "模型还想调整站位（站位以战斗前的模拟为准）"
         out["ms"] = round((time.time() - t0) * 1000)
         return out
+

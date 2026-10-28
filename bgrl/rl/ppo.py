@@ -56,6 +56,9 @@ class Config:
     minibatch: int = 4096
     micro_batch: int = 512         # 一次放进显卡的样本数（显存不够就调小；不影响结果，只影响速度）
     lr_recover_iters: int = 50     # 回退后连续这么多轮正常，学习率翻倍（最多回到 lr）
+    # 每次调站位 / 冻结扣一点点奖励：这两个动作不推进游戏，第一版模型学会了一直点（影子模式的方案里 69% 是调站位）。
+    # 30 次约等于 0.2 个名次，正常需要的一两次几乎不受影响
+    noop_penalty: float = 0.003
     epochs: int = 1
     anchor_coef: float = 0.1
     anchor_iters: int = 100
@@ -131,7 +134,7 @@ class Rollout:
         self.n = 0
         self.last = np.full(self.n_slots, -1, dtype=np.int64)
 
-    def add(self, slots, f, c, m, a, logp, v):
+    def add(self, slots, f, c, m, a, logp, v, r0=None):
         k = len(slots)
         if not k:
             return
@@ -140,7 +143,7 @@ class Rollout:
                         ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v)):
             self.parts[name].append(np.asarray(x))
         self.last[slots] = np.arange(self.n, self.n + k)
-        self.r.extend([0.0] * k)
+        self.r.extend([0.0] * k if r0 is None else [float(x) for x in r0])
         self.done.extend([False] * k)
         self.n += k
 
@@ -296,6 +299,7 @@ class Trainer:
         if self.iter % 10 == 0 or not self.active_snaps:
             self._refresh_active()
         n_dec = 0
+        self.n_noop = 0
         self.finished = 0
         t0 = time.time()
         t_env = t_net = 0.0
@@ -321,9 +325,12 @@ class Trainer:
                     k = len(idx)
                     actions[name][idx] = a[o:o + k]
                     if rid == 0:
-                        self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], a[o:o + k],
-                                         res[1][o:o + k], res[2][o:o + k])
+                        ak = a[o:o + k]
+                        noop = (ak == 2) | (ak >= 196)                # 冻结、调站位
+                        self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
+                                         res[1][o:o + k], res[2][o:o + k], r0=-cfg.noop_penalty * noop)
                         n_dec += k
+                        self.n_noop += int(noop.sum())
                     o += k
             tb = time.time()
             for name, env, off in self.envs:
@@ -577,7 +584,8 @@ class Trainer:
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
-                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"], **upd}
+                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"],
+                   "noop_frac": round(self.n_noop / max(1, n_dec), 3), **upd}
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
                 if ps:

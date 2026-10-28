@@ -70,7 +70,7 @@ def main() -> int:
             print(json.dumps(rec, ensure_ascii=False), flush=True)
             return
         keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
-                "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop", "bad_rows", "skipped")
+                "eval_place", "eval_top1", "snapshot", "snapshot_dist", "early_stop", "bad_rows", "skipped", "noop_frac")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
     tr.train(cfg.iters, on_log=show)
