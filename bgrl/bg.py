@@ -3,6 +3,7 @@
   train     训练（train.bat 用它接着 runs/v2 练；参数同 tools/train.py：--smoke、--bench、--run、--iters …）
   shadow    影子模式：插件面板显示模型建议（参数同 tools/shadow.py：--ckpt、--device …）
   replay    A5 回放检查：用你的对局记录逐步检查模拟器（参数同 tools/tg_replay.py：--last N …）
+  shadow-eval  影子模式评估：模型建议和你实际操作对得上多少（tools/shadow_eval.py）
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
@@ -23,7 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "bridge": "tg_bridge_check",
+TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
+         "bridge": "tg_bridge_check",
          "profile": "opp_profile", "bench": "tg_bench"}
 
 

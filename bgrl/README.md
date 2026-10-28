@@ -22,6 +22,7 @@
 | `train` | `tools/train.py` | `--smoke` 冒烟、`--bench --size medium` 测速、`--run 目录 --resume` 正式训练；其余参数和 `rl/ppo.py` 的 `Config` 一一对应 |
 | `shadow` | `tools/shadow.py` | 影子模式服务 |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
+| `shadow-eval` | `tools/shadow_eval.py` | 影子模式评估：按模型版本统计模型方案和你实际操作对得上多少（第一步同类 / 同一张卡 / 在方案里），结果写到 `reports\shadow_eval.json` |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
 | `profile` | `tools/opp_profile.py` | B1 对手画像：真人对局 vs 脚本机器人（`--save` 更新 `rl/real_profile.json`） |
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
@@ -33,8 +34,8 @@
 ```
 paths.py          路径和端口（runs/、reports/、默认训练目录 runs/v2、插件数据目录、8765 / 8766）
 tg/actions.py     245 个动作的编号（所有模块共用）
-tg/logs.py        读插件对局记录：统一标签名、皮肤 → 英雄、对手上次阵容、切分动作
-tg/bridge.py      插件局面 → TavernGym 局面（随从、附魔、宝石 / 法术加成、饰品和随从计数、战败状态、对手阵容）
+tg/logs.py        读插件对局记录：统一标签名、皮肤 → 英雄、切分动作；GameHistory 记对手上次阵容和已买的黑暗之赐（回放和影子模式共用）
+tg/bridge.py      插件局面 → TavernGym 局面（随从、附魔、宝石 / 法术加成、饰品和随从计数、战败状态、黑暗之赐次数、对手阵容）
 tg/replay.py      A5：执行你的动作并和记录比较（随机效果换种子、选项逐个试、动画延迟识别）
 tg/skins.json     不按 _SKIN_ 后缀命名的英雄皮肤
 rl/model.py       实体 Transformer：66 个实体 token，指针式动作头 + 价值头 + 名次头（small / medium / large）

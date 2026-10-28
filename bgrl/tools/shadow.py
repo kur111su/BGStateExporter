@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 from paths import DEFAULT_RUN, PLUGIN_PORT, REPORTS, SHADOW_PORT  # noqa: E402
 
 from tg.bridge import build_game  # noqa: E402
-from tg.logs import _key, _normalize, hero_base  # noqa: E402
+from tg.logs import GameHistory, _key, _normalize  # noqa: E402
 
 PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>模型建议（影子模式）</title>
@@ -77,7 +77,7 @@ class Shadow:
         self.advice = None
         self.model = self.advisor = None
         self.minfo = {}
-        self.seen_by_turn: dict[int, tuple] = {}
+        self.hist = GameHistory()                         # 对手上次阵容、已买的黑暗之赐（和回放共用）
         self.game_id = None
         self.last_key = None
         self.pending_key = None
@@ -140,16 +140,13 @@ class Shadow:
         turn = int(s.get("turn") or 0)
         hero = p.get("heroCardId")
         if p and (self.game_id is None or hero != self.game_id or turn < self.last_turn_seen):
-            self.seen_by_turn.clear()                     # 新的一局
+            self.hist = GameHistory()                     # 新的一局
             self.game_id = hero
             self.last_key = self.pending_key = None
             self.maybe_reload()                           # 换局时才换模型
         self.last_turn_seen = turn
+        self.hist.feed(s)
         if s.get("phase") == "combat":
-            o = s.get("opponent") or {}
-            h = o.get("heroCardId") or ""
-            if turn not in self.seen_by_turn and o.get("board") and "BaconShopBob" not in h:
-                self.seen_by_turn[turn] = (hero_base(h), sorted(o["board"], key=lambda c: c.get("position", 0)))
             self.status = f"第 {turn} 回合战斗中"
             return
         if s.get("phase") != "recruit" or not p:
@@ -170,12 +167,7 @@ class Shadow:
             self.pending_key = key
             return
         self.last_key = key
-        seen = {}
-        for t, (h, b) in sorted(self.seen_by_turn.items()):
-            if t < turn:
-                seen[h] = {"turn": t, "board": b}
-        s["_seen"] = seen
-        g, warns = build_game(s)
+        g, warns = build_game(self.hist.annotate(s))
         adv = self.advisor.plan(g)
         adv.update(turn=turn, seq=s.get("seq"), time=datetime.now().isoformat(timespec="seconds"), warnings=warns[:5])
         with self.lock:

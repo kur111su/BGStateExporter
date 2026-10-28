@@ -1,6 +1,7 @@
 """读插件的对局记录（games/*.jsonl，schema 2），整理成 TavernGym 桥接和回放校验要用的形式。
 
-  load_game(path)        → 本局所有招募阶段记录（去掉面板用的字段；标签名统一大写；补上 _heroBase、_seen）
+  load_game(path)        → 本局所有招募阶段记录（去掉面板用的字段；标签名统一大写；补上 _heroBase、_seen、_dark_gifts）
+  GameHistory            → 逐条喂记录、给招募记录补上历史（load_game 和影子模式共用）
   seen_boards(records)   → 每个回合开始战斗时看到的对手阵容 {回合: (对手英雄, 阵容)}
   recruit_snapshots(...) → 每回合取一条“局面稳定”的招募记录（A4 用）
   segment(records)       → 切成一个个动作，每个动作配上动作前、动作后的稳定局面（A5 用）
@@ -100,25 +101,58 @@ def seen_boards(records: list[dict]) -> dict[int, tuple[str, list[dict]]]:
     return out
 
 
-def load_game(path: str | os.PathLike) -> list[dict]:
-    """本局的招募阶段记录（按顺序），每条加上 _file 和 _seen（到这条为止对手最近一次的阵容）。"""
-    recs = read_records(path)
-    seen_by_turn = seen_boards(recs)
-    name = os.path.basename(str(path))
-    seen: dict[str, dict] = {}
-    out = []
-    for s in recs:
+class GameHistory:
+    """按时间顺序喂一局的插件记录（任何阶段），记下桥接要用、但单条记录里没有的历史：
+      _seen       每个对手（按英雄）最近一次交手时的阵容 {"英雄": {"turn": 回合, "board": [...]}}
+      _dark_gifts 花钱买过的黑暗之赐 {"uses": 次数, "used_turn": 本回合买过没有}：插件出现“黑暗之赐”待选项、
+                  而且前几条记录里金币刚少了至少 3（卡牌效果送的黑暗之赐不花钱，不算）
+    load_game（回放、A4）和影子模式共用这一份逻辑。"""
+
+    def __init__(self):
+        self.seen_by_turn: dict[int, tuple[str, list[dict]]] = {}
+        self.gift_turns: set[int] = set()
+        self._golds: list[tuple[int, int]] = []          # 最近几条记录的 (回合, 金币)
+        self._offer_open = False
+
+    def feed(self, s: dict) -> None:
         t = int(s.get("turn") or 0)
-        # 本回合招募阶段看到的是上一回合（及更早）战斗的阵容
-        for tt in sorted(seen_by_turn):
+        if s.get("phase") == "combat":
+            o = s.get("opponent") or {}
+            hero = o.get("heroCardId") or ""
+            if t not in self.seen_by_turn and hero and "BaconShopBob" not in hero and o.get("board"):
+                self.seen_by_turn[t] = (hero_base(hero), sorted(o["board"], key=lambda c: c.get("position", 0)))
+        gold = (s.get("player") or {}).get("gold")
+        off = s.get("offered")
+        is_gift = isinstance(off, dict) and off.get("kind") == "dark_gift"
+        if is_gift and not self._offer_open and gold is not None:
+            before = [g for tt, g in self._golds if tt == t]
+            if before and max(before) - gold >= 3:
+                self.gift_turns.add(t)
+        self._offer_open = is_gift
+        if gold is not None:
+            self._golds = (self._golds + [(t, gold)])[-4:]
+
+    def annotate(self, s: dict) -> dict:
+        t = int(s.get("turn") or 0)
+        seen: dict[str, dict] = {}
+        for tt, (h, b) in sorted(self.seen_by_turn.items()):     # 本回合招募时看到的是上一回合及更早的战斗
             if tt < t:
-                h, b = seen_by_turn[tt]
-                if seen.get(h, {}).get("turn", -1) < tt:
-                    seen[h] = {"turn": tt, "board": b}
+                seen[h] = {"turn": tt, "board": b}
+        s["_seen"] = seen
+        s["_dark_gifts"] = {"uses": sum(1 for x in self.gift_turns if x <= t), "used_turn": t in self.gift_turns}
+        return s
+
+
+def load_game(path: str | os.PathLike) -> list[dict]:
+    """本局的招募阶段记录（按顺序），每条加上 _file、_seen、_dark_gifts（见 GameHistory）。"""
+    name = os.path.basename(str(path))
+    hist = GameHistory()
+    out = []
+    for s in read_records(path):
+        hist.feed(s)
         if s.get("phase") == "recruit" and s.get("player"):
             s["_file"] = name
-            s["_seen"] = {h: v for h, v in seen.items()}
-            out.append(s)
+            out.append(hist.annotate(s))
     return out
 
 

@@ -353,6 +353,16 @@ def build_game(state: dict, seed: int = 0, config: dict | None = None) -> tuple[
     else:
         warnings.append("存档里找不到 players[0].stats")
     me["trinkets"] = held_trinkets
+    # 黑暗之赐：恢复已经用掉的次数（不恢复的话模型以为每回合都还能买）；本局没开黑暗之赐就直接用满
+    max_gifts = int(s.get("cfg", {}).get("dark_gift_uses") or 3)
+    game_tags = {str(k).upper() for k in (state.get("gameTags") or {})}
+    gifts = state.get("_dark_gifts")
+    if "dark_gift_uses" in me:
+        if game_tags and "BACON_DARK_GIFTS_ACTIVE" not in game_tags:
+            me["dark_gift_uses"] = max_gifts
+        elif isinstance(gifts, dict):
+            me["dark_gift_uses"] = min(int(gifts.get("uses") or 0), max_gifts)
+            me["dark_gift_used_turn"] = bool(gifts.get("used_turn"))
     _card_state(me, (p0.get("trinkets") or []) + (p0.get("questRewards") or []), warnings)
     if me.get("pending"):
         # 重建过程中（选英雄、给饰品等）产生的待选项不是插件局面里的；插件局面里的待选项（offered）暂不重建
