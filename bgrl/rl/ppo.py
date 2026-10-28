@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import is_noop
+from .calibrate import BotBooster, ramp
 
 
 @dataclass
@@ -76,6 +77,12 @@ class Config:
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
     turn_caps: str = "14,18,22,26,30,34,38,42,45"
     active_snapshots: int = 1      # 同一时间最多用几个快照当对手（每多一个，每步要多算一次网络；3 个时采样慢一倍）
+    # 第二阶段：按真人对局校准机器人强度（rl/calibrate.py）。v2 的模型学会了一直待在 1–2 本，对弱机器人有效、
+    # 对真人后期无效；机器人局里把机器人场面按真人画像放大，逼模型学会升本、做后期。0 = 关闭
+    boost_frac: float = 0.0        # 多少比例的机器人局加强
+    boost_from_turn: int = 7       # 从第几回合开始（前 6 回合机器人和真人差不多）
+    boost_every: int = 2           # 每几回合加强一次（每次要整局存档读档，约 7 毫秒）
+    boost_ramp_iters: int = 200    # 加强幅度从 30% 爬到 100% 用多少轮
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -227,6 +234,9 @@ class Trainer:
             self.envs.append(("league", e, off))
             off += e.n_slots
         self.n_slots = off
+        self.booster = (BotBooster(load_real_profile(), cfg.boost_frac, cfg.boost_from_turn, seed=cfg.seed,
+                                   every=cfg.boost_every) if cfg.boost_frac > 0 and cfg.games_bot else None)
+        self.t_boost = 0.0
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -343,6 +353,12 @@ class Trainer:
                             self.stats.append((name, int(info["placement"][i])))
                             self.finished += 1
                 self.obs[name] = env.observe()
+                if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/calibrate.py）
+                    tc = time.time()
+                    self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
+                    if self.booster.boost(env, self.obs[name]["features"]):
+                        self.obs[name] = env.observe()
+                    self.t_boost += time.time() - tc
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
                     for g in np.unique(np.flatnonzero(dones) // k):
@@ -461,11 +477,14 @@ class Trainer:
                                               encoding="utf-8")
         return mem
 
-    def evaluate(self, games=None, seed=999):
-        """考试：学习者（0 号座位）对 7 个脚本机器人，平均名次和第一名率。"""
+    def evaluate(self, games=None, seed=999, boosted=False):
+        """考试：学习者（0 号座位）对 7 个脚本机器人，平均名次和第一名率。
+        boosted=True：机器人按真人画像加强（全部对局、全强度），这是第二阶段主要看的成绩。"""
         from taverngym import BatchEnv
         games = games or self.cfg.eval_games
         env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads, config=self.cfg.rules())
+        booster = BotBooster(load_real_profile(), 1.0, self.cfg.boost_from_turn, seed=seed,
+                             every=self.cfg.boost_every) if boosted else None
         obs = env.observe()
         places = {}
         self.model.eval()
@@ -482,6 +501,8 @@ class Trainer:
                 if i not in places:                  # 每个对局只算第一局
                     places[int(i)] = int(info["placement"][i])
             obs = env.observe()
+            if booster is not None and booster.boost(env, obs["features"]):
+                obs = env.observe()
         ps = [p for p in places.values() if p > 0]
         return (round(float(np.mean(ps)), 3), round(float(np.mean([p == 1 for p in ps])), 3)) if ps else (None, None)
 
@@ -592,12 +613,20 @@ class Trainer:
                 if ps:
                     rec[f"place_{name}"] = round(float(np.mean(ps)), 3)
                     rec[f"top1_{name}"] = round(float(np.mean([p == 1 for p in ps])), 3)
+            if self.booster is not None:
+                rec.update(self.booster.take_stats(), t_boost=round(self.t_boost, 1),
+                           boost_strength=round(self.booster.strength, 2))
+                self.t_boost = 0.0
             if cfg.snapshot_every and self.iter % cfg.snapshot_every == 0:
                 m = self.snapshot()
                 rec["snapshot"] = m.name
                 rec["snapshot_dist"] = round(m.dist, 3)
+                pt = (m.profile or {}).get("turns") or {}
+                rec["snapshot_tier"] = "/".join(str(pt.get(str(t), {}).get("tier", "-")) for t in (5, 7, 9, 11, 13))
             if cfg.eval_every and self.iter % cfg.eval_every == 0:
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
+                if cfg.boost_frac > 0:
+                    rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 self.mark_good()

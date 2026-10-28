@@ -91,7 +91,11 @@ class Shadow:
         if self.a.ckpt:
             return Path(self.a.ckpt)
         p = Path(self.a.run) / "latest.pt"
-        return p if p.exists() else None
+        if p.exists():
+            return p
+        # 新阶段刚开始、还没存第一个检查点时：用最近更新过的其它训练目录的 latest.pt
+        others = sorted(Path(self.a.run).parent.glob("*/latest.pt"), key=lambda x: x.stat().st_mtime)
+        return others[-1] if others else None
 
     def maybe_reload(self):
         from rl.advisor import Advisor, load_model

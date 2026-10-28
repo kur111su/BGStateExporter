@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent          # bgrl/
 RUNS = ROOT / "runs"                            # 训练目录（每次训练一个子目录，含 log.jsonl、latest.pt、snapshots/）
 REPORTS = ROOT / "reports"                      # 各种报告（回放、测速、影子模式记录）
 FIXTURES = ROOT / "tests" / "fixtures"          # CI 用的局面 / 回放样本
-DEFAULT_RUN = RUNS / "v2"                       # 当前的正式训练
+DEFAULT_RUN = RUNS / "v3"                       # 当前的正式训练（第二阶段：机器人按真人强度加强；v2 是第一阶段）
 
 PLUGIN_PORT = 8765                              # 插件的网页面板和 /state.json
 SHADOW_PORT = 8766                              # 影子模式的 /advice.json

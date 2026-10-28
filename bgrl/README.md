@@ -7,8 +7,8 @@
 | 文件 | 做什么 | 结果在哪 |
 | --- | --- | --- |
 | `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 | `reports\setup.txt` |
-| `train.bat` | 训练，关掉窗口再开会接着 `runs\v2\latest.pt` 练。其它设置：`train.bat --help` | `runs\v2\log.jsonl`、`latest.pt`、`snapshots\` |
-| `shadow.bat` | 影子模式：插件面板“模型建议”一栏、http://localhost:8766/ 。训练中换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
+| `train.bat` | 训练（第二阶段 `runs\v3`：机器人按真人强度加强，从第一阶段 `runs\v2` 的模型开始），关掉窗口再开会接着练。其它设置：`train.bat --help` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
+| `shadow.bat` | 影子模式：插件面板“模型建议”一栏、http://localhost:8766/ 。训练中换局时自动换上最新模型（当前训练目录还没有模型时，用最近更新的其它训练目录的）。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 
 需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
@@ -41,6 +41,7 @@ tg/skins.json     不按 _SKIN_ 后缀命名的英雄皮肤
 rl/model.py       实体 Transformer：66 个实体 token，指针式动作头 + 价值头 + 名次头（small / medium / large）
 rl/ppo.py         PPO 训练：批量环境采样、GAE、混合精度、健康检查和自动回滚、无效操作惩罚
 rl/league.py      对手库：快照按“和真人强度画像的距离”加权；考试对手
+rl/calibrate.py   第二阶段：机器人局里把机器人场面按真人画像（rl/real_profile.json）的四分位放大，逼模型学会升本、做后期
 rl/advisor.py     影子模式的建议器：贪心走完本回合、跳过无效动作、第一步备选、预计名次
 ```
 
@@ -51,3 +52,10 @@ rl/advisor.py     影子模式的建议器：贪心走完本回合、跳过无�
 - `.github/workflows/bgrl-rl.yml`：单元测试、对手画像、冒烟训练（CPU）。
 
 样本更新：`tools/make_fixtures.py`（A4）、`tools/make_replay_fixture.py`（A5）从新的对局记录生成。
+
+## 训练阶段
+
+| 阶段 | 目录 | 对手 | 结果 |
+| --- | --- | --- | --- |
+| 第一阶段 | `runs\v2` | 脚本机器人 + 自己的旧版本 | 考试（对普通机器人）从 4.27 名到约 1.8 名；但学会了一直待在 1–2 本（第 13 回合平均 2.8 本，真人约 5.8 本），影子模式里几乎从不建议升本 |
+| 第二阶段 | `runs\v3` | 75% 的机器人局里机器人按真人强度加强（第 7 回合起每 2 回合一次，强度 200 轮内从 30% 爬到 100%）+ 自己的旧版本；熵系数 0.01 | 看日志里的 `eval_boost_place`（对加强机器人的考试）和 `snapshot_tier`（快照第 5/7/9/11/13 回合的平均等级） |

@@ -117,6 +117,7 @@ def evaluate(shadow_rows: list[dict], game_files: list[str]) -> dict:
             m["confusion"][(mine, first_t)] += 1
             m["by_kind"][mine]["n"] += 1
             m["by_kind"][mine]["type"] += first_t == mine
+            m["by_kind"][mine]["plan"] += hit
             if not hit and len(m["examples"]) < 40:
                 m["examples"].append(f"{os.path.basename(path)[:15]} 第{a.turn}回合 你：{mine} {name}；"
                                      f"模型：{' / '.join(t for _, t in steps[:4])}")
@@ -125,7 +126,8 @@ def evaluate(shadow_rows: list[dict], game_files: list[str]) -> dict:
         n = max(1, m["n"])
         out[str(it)] = {"动作数": m["n"], "第一步同类": round(m["type"] / n, 3), "第一步同一张卡": round(m["exact"] / n, 3),
                         "在模型方案里": round(m["in_plan"] / n, 3),
-                        "按你的动作": {k: {"次数": v["n"], "第一步同类": round(v["type"] / max(1, v["n"]), 3)}
+                        "按你的动作": {k: {"次数": v["n"], "第一步同类": round(v["type"] / max(1, v["n"]), 3),
+                                       "在模型方案里": round(v["plan"] / max(1, v["n"]), 3)}
                                   for k, v in sorted(m["by_kind"].items(), key=lambda kv: -kv[1]["n"])},
                         "你做的 → 模型第一步（最多的）": [f"{a} → {b}：{c}" for (a, b), c in m["confusion"].most_common(12)],
                         "没对上的例子": m["examples"]}

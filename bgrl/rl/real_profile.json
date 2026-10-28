@@ -1,119 +1,119 @@
 {
  "source": "real",
- "games": 22,
- "avgPlace": 2.77,
+ "games": 27,
+ "avgPlace": 2.96,
  "turns": {
   "1": {
-   "n": 21,
+   "n": 25,
    "boardMedian": 5,
    "boardQ1": 4,
    "boardQ3": 6,
    "tier": 1.01,
-   "hp": 43.8
+   "hp": 43.7
   },
   "2": {
-   "n": 22,
-   "boardMedian": 5.0,
+   "n": 27,
+   "boardMedian": 5,
    "boardQ1": 4,
    "boardQ3": 6,
-   "tier": 1.84,
-   "hp": 43.2
+   "tier": 1.85,
+   "hp": 43.1
   },
   "3": {
-   "n": 22,
-   "boardMedian": 11.0,
-   "boardQ1": 5,
-   "boardQ3": 14,
-   "tier": 2.04,
-   "hp": 42.2
+   "n": 27,
+   "boardMedian": 12,
+   "boardQ1": 6,
+   "boardQ3": 16,
+   "tier": 2.05,
+   "hp": 42.0
   },
   "4": {
-   "n": 22,
-   "boardMedian": 23.0,
+   "n": 27,
+   "boardMedian": 23,
    "boardQ1": 16,
    "boardQ3": 29,
-   "tier": 2.47,
-   "hp": 39.9
+   "tier": 2.51,
+   "hp": 39.7
   },
   "5": {
-   "n": 22,
-   "boardMedian": 35.0,
-   "boardQ1": 30,
+   "n": 27,
+   "boardMedian": 32,
+   "boardQ1": 23,
    "boardQ3": 57,
-   "tier": 3.14,
-   "hp": 36.7
+   "tier": 3.16,
+   "hp": 36.6
   },
   "6": {
-   "n": 22,
-   "boardMedian": 61.0,
+   "n": 27,
+   "boardMedian": 62,
    "boardQ1": 42,
-   "boardQ3": 81,
+   "boardQ3": 70,
    "tier": 3.57,
-   "hp": 33.1
+   "hp": 33.0
   },
   "7": {
-   "n": 22,
-   "boardMedian": 80.0,
+   "n": 27,
+   "boardMedian": 80,
    "boardQ1": 57,
    "boardQ3": 121,
    "tier": 4.19,
-   "hp": 30.0
+   "hp": 29.8
   },
   "8": {
-   "n": 22,
-   "boardMedian": 141.5,
-   "boardQ1": 113,
+   "n": 27,
+   "boardMedian": 142,
+   "boardQ1": 97,
    "boardQ3": 177,
    "tier": 4.82,
-   "hp": 26
+   "hp": 25.9
   },
   "9": {
-   "n": 22,
-   "boardMedian": 307.5,
+   "n": 27,
+   "boardMedian": 324,
    "boardQ1": 210,
    "boardQ3": 636,
-   "tier": 5.05,
-   "hp": 21.9
+   "tier": 5.04,
+   "hp": 21.7
   },
   "10": {
-   "n": 20,
-   "boardMedian": 555.0,
-   "boardQ1": 392,
+   "n": 23,
+   "boardMedian": 581,
+   "boardQ1": 368,
    "boardQ3": 1457,
-   "tier": 5.42,
-   "hp": 18.5
+   "tier": 5.41,
+   "hp": 18.2
   },
   "11": {
-   "n": 19,
-   "boardMedian": 1576,
+   "n": 22,
+   "boardMedian": 1485.0,
    "boardQ1": 782,
    "boardQ3": 2859,
-   "tier": 5.62,
-   "hp": 16.1
+   "tier": 5.61,
+   "hp": 15.7
   },
   "12": {
-   "n": 16,
-   "boardMedian": 1274.5,
+   "n": 18,
+   "boardMedian": 1346.0,
    "boardQ1": 909,
-   "boardQ3": 3221,
-   "tier": 5.7,
-   "hp": 15.9
+   "boardQ3": 3987,
+   "tier": 5.69,
+   "hp": 15.5
   },
   "13": {
-   "n": 13,
-   "boardMedian": 4687,
+   "n": 14,
+   "boardMedian": 5039.0,
    "boardQ1": 1951,
    "boardQ3": 10914,
-   "tier": 5.82,
-   "hp": 14.1
+   "tier": 5.84,
+   "hp": 14
   },
   "14": {
-   "n": 10,
-   "boardMedian": 10584.5,
+   "n": 11,
+   "boardMedian": 13191,
    "boardQ1": 6663,
-   "boardQ3": 18179,
+   "boardQ3": 19384,
    "tier": 5.95,
-   "hp": 12.6
+   "hp": 12.9
   },
   "15": {
    "n": 3,
@@ -121,7 +121,7 @@
    "boardQ1": 1377,
    "boardQ3": 6339,
    "tier": 6,
-   "hp": 15.4
+   "hp": 16
   }
  }
 }

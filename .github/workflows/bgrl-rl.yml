@@ -30,4 +30,6 @@ jobs:
       - name: Opponent profile (real vs bots)
         run: python -X utf8 bgrl/bg.py profile --games 24 --annotate
       - name: Tiny PPO run
-        run: python -X utf8 bgrl/bg.py train --smoke --threads 2
+        run: |
+          python -X utf8 bgrl/bg.py train --smoke --threads 2
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
