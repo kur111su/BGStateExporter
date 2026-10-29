@@ -3,6 +3,7 @@ chcp 65001 >nul
 rem TavernArena (the arena runs the open TavernGym engine; our model runs here and only actions are sent).
 rem   arena.bat check      package the current model (runs\v3\latest.pt), verify the arena contract, run the official --check
 rem   arena.bat practice   one unrated practice game (needs the Agent Key, see below)
+rem   arena.bat match      ONE rated game, --mode arena (rule bots fill empty seats), then stop
 rem   arena.bat check --ckpt runs\v3\snapshots\xxx.pt   package another model
 rem Agent Key: set ARENA_API_KEY in this window, or put it alone in bgrl\arena\key.txt (git-ignored).
 rem It is never printed, logged or put on a command line. Arena URL: bgrl\arena\url.txt overrides the default.
@@ -13,8 +14,8 @@ set "URL=https://rizling.top"
 if exist arena\url.txt set /p URL=<arena\url.txt
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=check"
-if /i not "%MODE%"=="check" if /i not "%MODE%"=="practice" (
-  echo Unknown mode "%MODE%". Use: arena.bat check  or  arena.bat practice
+if /i not "%MODE%"=="check" if /i not "%MODE%"=="practice" if /i not "%MODE%"=="match" (
+  echo Unknown mode "%MODE%". Use: arena.bat check / practice / match
   pause
   exit /b 1
 )
@@ -66,17 +67,21 @@ pause
 exit /b %RC%
 
 :practice
-rem --- needs the Agent Key ---
+rem --- practice / match: need the Agent Key ---
 if not defined ARENA_API_KEY if exist arena\key.txt set /p ARENA_API_KEY=<arena\key.txt
 if not defined ARENA_API_KEY (
   echo No Agent Key. Put it alone in bgrl\arena\key.txt, or run:  set ARENA_API_KEY=...  then arena.bat practice
   pause
   exit /b 1
 )
-echo Practice game (unrated) with model %MV% ...
-%APY% -E -s -X utf8 arena\arena_client.py --url %URL% --mode practice --policy agent:act --catalog-sha256 %CAT% --model-version %MV% > arena\results\practice_last.json
+set "QMODE=practice"
+set "OUT=arena\results\practice_last.json"
+if /i "%MODE%"=="match" set "QMODE=arena"
+if /i "%MODE%"=="match" set "OUT=arena\results\arena_last.json"
+if /i "%MODE%"=="match" (echo RATED arena game ^(one game, then stop^) with model %MV% ...) else (echo Practice game ^(unrated^) with model %MV% ...)
+%APY% -E -s -X utf8 arena\arena_client.py --url %URL% --mode %QMODE% --games 1 --policy agent:act --catalog-sha256 %CAT% --model-version %MV% > %OUT%
 set "RC=%ERRORLEVEL%"
-type arena\results\practice_last.json
-%APY% -X utf8 -c "import pathlib;p=pathlib.Path('arena/results/practice_last.json');t=p.read_text(encoding='utf-8').strip();open('arena/results/history.jsonl','a',encoding='utf-8').write(t+'\n') if t else None"
+type %OUT%
+%APY% -X utf8 -c "import pathlib,sys;p=pathlib.Path(sys.argv[1]);t=p.read_text(encoding='utf-8').strip();open('arena/results/history.jsonl','a',encoding='utf-8').write(t+'\n') if t else None" %OUT%
 pause
 exit /b %RC%
