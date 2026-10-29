@@ -4,7 +4,7 @@ name: bgrl RL checks
 
 on:
   push:
-    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/make_demos.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", "bgrl/arena/**", ".github/workflows/bgrl-rl.yml"]
+    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/make_demos.py", "bgrl/tools/pro_library.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", "bgrl/arena/**", ".github/workflows/bgrl-rl.yml"]
   workflow_dispatch:
 
 jobs:
@@ -39,3 +39,7 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py demos --fixture bgrl/tests/fixtures/replay_v3.jsonl.gz
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --bc-coef 0.05 --boost-frac 1.0 --boost-from-turn 3 --bc-weights "upgrade:3,sell:3,buy:2" --bc-train-cap 0.6 --bc-smooth 0.1 --tempo-bonus 0.03 --refresh-waste-penalty 0.015
+      - name: Pro-board library from a synthetic sample + tiny PPO run with pro boards
+        run: |
+          python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03

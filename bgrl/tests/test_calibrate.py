@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rl.calibrate import AdaptiveStrength, BotBooster, ramp, target_curve, target_for  # noqa: E402
+from rl.calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, ramp, target_curve, target_for  # noqa: E402
 
 REAL = json.loads((Path(__file__).resolve().parent.parent / "rl" / "real_profile.json").read_text(encoding="utf-8"))
 
@@ -65,6 +65,33 @@ def main() -> int:
     st = b.take_stats()
     assert checked >= 1 and st["boosts"] > 0, (checked, st)
     print("calibrate OK", st, "checked", checked)
+
+    # 换阵容：机器人场面换成库里同一回合的整板（卡牌、金色、攻血），等级不降
+    lib = {5: [{"tier": 4, "board": [["BG36_241_G", 74, 45], ["BG32_341", 20, 21]]}],
+           7: [{"tier": 5, "board": [["BG32_341", 30, 31], ["BG32_341", 32, 33], ["BG36_620", 59, 28]]}]}
+    env = taverngym.BatchEnv(8, seed=7, controlled=(0,), threads=1, config={"turn_action_caps": [14, 18, 22, 26, 30]})
+    pb = ProBoardBooster(lib, frac=1.0, start_turn=5, seed=2, every=2)
+    pb.strength = 1.0
+    seen = 0
+    for _ in range(4000):
+        o = env.observe()
+        if pb.boost(env, o["features"]):
+            o = env.observe()
+            for g in range(env.n_games):
+                game = json.loads(env.save(g))["game"]
+                for seat in range(1, 8):
+                    p = game["players"][seat]
+                    b = [(m["atk"], m["hp"]) for m in p["board"]]
+                    if b in ([(74, 45), (20, 21)], [(30, 31), (32, 33), (59, 28)]):
+                        assert p["tier"] >= (4 if len(b) == 2 else 5), p["tier"]
+                        assert game["players"][0]["board"] is not None
+                        seen += 1
+        m, r = o["action_mask"], o["ready"]
+        acts = np.array([rng.choice(np.flatnonzero(mm)) if rr and mm.any() else 0 for mm, rr in zip(m, r)], dtype=np.int64)
+        env.step(acts)
+    st2 = pb.take_stats()
+    assert seen > 0 and st2["pro_injected"] > 0 and st2["pro_failed"] == 0, (seen, st2)
+    print("pro boards OK", st2, "seen", seen)
     return 0
 
 

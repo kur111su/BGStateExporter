@@ -1,0 +1,388 @@
+{
+ "source": "Firestone 6500+ 精彩对局（他人对局，策展池，不是无偏抽样）",
+ "games": 361,
+ "min_mmr": 6500,
+ "created": "2026-10-29",
+ "turns": {
+  "1": {
+   "n": 361,
+   "tier": 1.02,
+   "tier_dist": {
+    "1": 0.981,
+    "2": 0.019,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 0.0
+   },
+   "boardQ1": 4,
+   "boardMedian": 5,
+   "boardQ3": 6,
+   "n_boards": 297,
+   "minions_bought": 0.86,
+   "minions_sold": 0.01,
+   "rerolls": 0.03,
+   "coins_wasted": 0.12
+  },
+  "2": {
+   "n": 361,
+   "tier": 1.87,
+   "tier_dist": {
+    "1": 0.133,
+    "2": 0.864,
+    "3": 0.003,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 0.0
+   },
+   "boardQ1": 4,
+   "boardMedian": 5,
+   "boardQ3": 6,
+   "n_boards": 342,
+   "minions_bought": 0.13,
+   "minions_sold": 0.01,
+   "rerolls": 0.01,
+   "coins_wasted": 0.05
+  },
+  "3": {
+   "n": 361,
+   "tier": 2.07,
+   "tier_dist": {
+    "1": 0.036,
+    "2": 0.878,
+    "3": 0.064,
+    "4": 0.022,
+    "5": 0.0,
+    "6": 0.0
+   },
+   "boardQ1": 12,
+   "boardMedian": 16,
+   "boardQ3": 21,
+   "n_boards": 331,
+   "minions_bought": 0.61,
+   "minions_sold": 0.31,
+   "rerolls": 0.13,
+   "coins_wasted": 0.01
+  },
+  "4": {
+   "n": 361,
+   "tier": 2.86,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.44,
+    "3": 0.413,
+    "4": 0.017,
+    "5": 0.108,
+    "6": 0.022
+   },
+   "boardQ1": 18,
+   "boardMedian": 25,
+   "boardQ3": 33,
+   "n_boards": 355,
+   "minions_bought": 0.57,
+   "minions_sold": 0.36,
+   "rerolls": 0.19,
+   "coins_wasted": 0.01
+  },
+  "5": {
+   "n": 361,
+   "tier": 3.74,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.022,
+    "3": 0.596,
+    "4": 0.169,
+    "5": 0.044,
+    "6": 0.169
+   },
+   "boardQ1": 31,
+   "boardMedian": 41,
+   "boardQ3": 51,
+   "n_boards": 359,
+   "minions_bought": 0.69,
+   "minions_sold": 0.37,
+   "rerolls": 0.4,
+   "coins_wasted": 0.01
+  },
+  "6": {
+   "n": 361,
+   "tier": 4.12,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.213,
+    "4": 0.598,
+    "5": 0.044,
+    "6": 0.144
+   },
+   "boardQ1": 54,
+   "boardMedian": 70,
+   "boardQ3": 87,
+   "n_boards": 359,
+   "minions_bought": 1.04,
+   "minions_sold": 1.67,
+   "rerolls": 1.32,
+   "coins_wasted": 0.04
+  },
+  "7": {
+   "n": 361,
+   "tier": 4.45,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.014,
+    "4": 0.584,
+    "5": 0.335,
+    "6": 0.066
+   },
+   "boardQ1": 84,
+   "boardMedian": 117,
+   "boardQ3": 146,
+   "n_boards": 351,
+   "minions_bought": 1.41,
+   "minions_sold": 2.8,
+   "rerolls": 2.1,
+   "coins_wasted": 0.1
+  },
+  "8": {
+   "n": 358,
+   "tier": 4.97,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.011,
+    "4": 0.207,
+    "5": 0.581,
+    "6": 0.201
+   },
+   "boardQ1": 139,
+   "boardMedian": 199,
+   "boardQ3": 258,
+   "n_boards": 339,
+   "minions_bought": 2.17,
+   "minions_sold": 5.46,
+   "rerolls": 3.7,
+   "coins_wasted": 0.11
+  },
+  "9": {
+   "n": 356,
+   "tier": 5.25,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.006,
+    "4": 0.126,
+    "5": 0.483,
+    "6": 0.385
+   },
+   "boardQ1": 267,
+   "boardMedian": 415,
+   "boardQ3": 632,
+   "n_boards": 330,
+   "minions_bought": 3.24,
+   "minions_sold": 9.04,
+   "rerolls": 5.36,
+   "coins_wasted": 0.31
+  },
+  "10": {
+   "n": 354,
+   "tier": 5.46,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.003,
+    "4": 0.082,
+    "5": 0.367,
+    "6": 0.548
+   },
+   "boardQ1": 472,
+   "boardMedian": 814,
+   "boardQ3": 1303,
+   "n_boards": 316,
+   "minions_bought": 3.39,
+   "minions_sold": 8.78,
+   "rerolls": 6.3,
+   "coins_wasted": 0.47
+  },
+  "11": {
+   "n": 353,
+   "tier": 5.55,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.003,
+    "4": 0.076,
+    "5": 0.286,
+    "6": 0.635
+   },
+   "boardQ1": 1002,
+   "boardMedian": 1779,
+   "boardQ3": 2940,
+   "n_boards": 303,
+   "minions_bought": 3.71,
+   "minions_sold": 9.34,
+   "rerolls": 7.18,
+   "coins_wasted": 0.75
+  },
+  "12": {
+   "n": 350,
+   "tier": 5.61,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.003,
+    "4": 0.077,
+    "5": 0.231,
+    "6": 0.689
+   },
+   "boardQ1": 1896,
+   "boardMedian": 3450,
+   "boardQ3": 6190,
+   "n_boards": 294,
+   "minions_bought": 3.75,
+   "minions_sold": 9.46,
+   "rerolls": 7.62,
+   "coins_wasted": 1.09
+  },
+  "13": {
+   "n": 330,
+   "tier": 5.62,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.003,
+    "4": 0.076,
+    "5": 0.224,
+    "6": 0.697
+   },
+   "boardQ1": 2989,
+   "boardMedian": 6786,
+   "boardQ3": 13395,
+   "n_boards": 297,
+   "minions_bought": 3.54,
+   "minions_sold": 9.22,
+   "rerolls": 7.93,
+   "coins_wasted": 1.01
+  },
+  "14": {
+   "n": 221,
+   "tier": 5.6,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.09,
+    "5": 0.217,
+    "6": 0.692
+   },
+   "boardQ1": 5721,
+   "boardMedian": 11306,
+   "boardQ3": 21044,
+   "n_boards": 202,
+   "minions_bought": 3.07,
+   "minions_sold": 7.6,
+   "rerolls": 7.81,
+   "coins_wasted": 1.57
+  },
+  "15": {
+   "n": 94,
+   "tier": 5.69,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.064,
+    "5": 0.181,
+    "6": 0.755
+   },
+   "boardQ1": 9377,
+   "boardMedian": 18172,
+   "boardQ3": 41114,
+   "n_boards": 81,
+   "minions_bought": 2.49,
+   "minions_sold": 6.98,
+   "rerolls": 7.16,
+   "coins_wasted": 1.12
+  },
+  "16": {
+   "n": 25,
+   "tier": 5.72,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.08,
+    "5": 0.12,
+    "6": 0.8
+   },
+   "boardQ1": 7682,
+   "boardMedian": 21572,
+   "boardQ3": 47294,
+   "n_boards": 24,
+   "minions_bought": 3.1,
+   "minions_sold": 8.05,
+   "rerolls": 7.71,
+   "coins_wasted": 0.9
+  },
+  "17": {
+   "n": 7,
+   "tier": 5.71,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.286,
+    "6": 0.714
+   },
+   "boardQ1": 50918,
+   "boardMedian": 59100,
+   "boardQ3": 70472,
+   "n_boards": 6,
+   "minions_bought": 1.5,
+   "minions_sold": 5.33,
+   "rerolls": 8,
+   "coins_wasted": 0
+  },
+  "18": {
+   "n": 2,
+   "tier": 6,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 1.0
+   },
+   "boardQ1": 105576,
+   "boardMedian": 148272,
+   "boardQ3": 190969,
+   "n_boards": 2,
+   "minions_bought": 5,
+   "minions_sold": 17,
+   "rerolls": 7,
+   "coins_wasted": 0
+  },
+  "19": {
+   "n": 1,
+   "tier": 6,
+   "tier_dist": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 1.0
+   },
+   "boardQ1": 83123,
+   "boardMedian": 83123,
+   "boardQ3": 83123,
+   "n_boards": 1,
+   "minions_bought": 0,
+   "minions_sold": 0,
+   "rerolls": 7,
+   "coins_wasted": 0
+  }
+ }
+}

@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import A_BUY, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
-from .calibrate import AdaptiveStrength, BotBooster, ramp
+from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_boards, ramp
 
 
 @dataclass
@@ -88,6 +88,12 @@ class Config:
     boost_start: float = 0.4       # 自适应的起点（接着旧检查点练、检查点里没有记录时也用它）
     boost_target_place: float = 3.75   # 加强局的目标平均名次（8 人局随便打 = 4.5）
     boost_step: float = 0.02       # 每次调多少
+    # 加强方式：scale = 放大机器人场面攻防（只是身材变大）；pro = 换成同一回合 6500+ 高分对局的真实阵容
+    # （tools/pro_library.py 生成 runs/pro_boards.json，带高本随从和它们的效果）。pro 时 strength = 每个机器人被换的概率
+    boost_kind: str = "scale"
+    pro_boards: str = ""           # 空 = runs/pro_boards.json
+    # 升本节奏奖励的目标曲线：real = 你的对局（rl/real_profile.json）；pro = 6500+ 高分对局（rl/pro_profile.json）
+    tempo_curve: str = "real"
     # 模仿你的操作（tools/make_demos.py 生成 runs/demos.npz）：每个小批另外抽 bc_batch 条示范算交叉熵，乘 bc_coef 加进损失。
     # 0 = 不模仿；有示范数据时日志照样记 human_top1 等（留出的验证局上模型和你的操作对得上多少）
     bc_coef: float = 0.0
@@ -259,8 +265,7 @@ class Trainer:
             self.envs.append(("league", e, off))
             off += e.n_slots
         self.n_slots = off
-        self.booster = (BotBooster(load_real_profile(), cfg.boost_frac, cfg.boost_from_turn, seed=cfg.seed,
-                                   every=cfg.boost_every) if cfg.boost_frac > 0 and cfg.games_bot else None)
+        self.booster = self._make_booster(cfg.boost_frac, cfg.seed) if cfg.boost_frac > 0 and cfg.games_bot else None
         self.t_boost = 0.0
         self.adapt = (AdaptiveStrength(start=cfg.boost_start, target=cfg.boost_target_place, step=cfg.boost_step)
                       if self.booster is not None and cfg.boost_adapt else None)
@@ -284,6 +289,9 @@ class Trainer:
         self.bc_w = self._bc_weights() if self.demos is not None else None
         self.bc_scale = 1.0                            # 模仿强度的倍数（见 bc_train_cap；存在检查点里）
         prof = load_real_profile().get("turns") or {}
+        pro_prof = Path(__file__).resolve().parent / "pro_profile.json"
+        if cfg.tempo_curve == "pro" and pro_prof.exists():
+            prof = json.loads(pro_prof.read_text(encoding="utf-8")).get("turns") or {}
         self.tier_curve = {int(t): float(v.get("tier") or 0) for t, v in prof.items() if (v.get("n") or 0) >= 5}
         self.tempo_t0 = None                           # 升本奖励从哪一轮开始减（存在检查点里）
         self.upg_ep = np.full(self.n_slots, -1, dtype=np.int64)    # 每个槽位：这一局升了几次本
@@ -429,6 +437,19 @@ class Trainer:
                 last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
         return batch, n_dec, time.time() - t0, t_env, t_net
+
+    def _make_booster(self, frac: float, seed: int):
+        cfg = self.cfg
+        if cfg.boost_kind == "pro":
+            from paths import RUNS
+            path = Path(cfg.pro_boards) if cfg.pro_boards else RUNS / "pro_boards.json"
+            if path.exists():
+                if not getattr(self, "_pro_lib", None):
+                    self._pro_lib = load_pro_boards(path)
+                    print(f"高分阵容库：{sum(len(v) for v in self._pro_lib.values())} 个整板（{path}）", flush=True)
+                return ProBoardBooster(self._pro_lib, frac, cfg.boost_from_turn, seed=seed, every=cfg.boost_every)
+            print(f"没有高分阵容库 {path}（先运行 bg.py prolib），改用放大攻防", flush=True)
+        return BotBooster(load_real_profile(), frac, cfg.boost_from_turn, seed=seed, every=cfg.boost_every)
 
     # ---------------- 模仿你的操作 ----------------
 
@@ -691,8 +712,9 @@ class Trainer:
         from taverngym import BatchEnv
         games = games or self.cfg.eval_games
         env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads, config=self.cfg.rules())
-        booster = BotBooster(load_real_profile(), 1.0, self.cfg.boost_from_turn, seed=seed,
-                             every=self.cfg.boost_every) if boosted else None
+        booster = self._make_booster(1.0, seed) if boosted else None
+        if booster is not None:
+            booster.strength = 1.0
         obs = env.observe()
         places = {}
         self.model.eval()
@@ -763,7 +785,7 @@ class Trainer:
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
-                    "boost": self.adapt.to_json() if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
+                    "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
                     "bc_scale": self.bc_scale}, self.run / "latest.pt")
 
     def load(self, path):
@@ -777,7 +799,11 @@ class Trainer:
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
         if self.adapt is not None:
-            self.adapt.load_json(ck.get("boost"))
+            b = ck.get("boost") or {}
+            if b.get("kind", "scale") == self.cfg.boost_kind:  # 换了加强方式：强度从头调（放大攻防的 0.88 和换阵容的 0.88 不是一回事）
+                self.adapt.load_json(b)
+            else:
+                print(f"加强方式改为 {self.cfg.boost_kind}：强度从 {self.adapt.strength} 开始重新调", flush=True)
             self.booster.strength = self.adapt.strength
 
     def start_stage(self):

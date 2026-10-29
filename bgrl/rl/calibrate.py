@@ -192,3 +192,94 @@ def ramp(it: int, start_it: int, ramp_iters: int, lo: float = 0.3) -> float:
         return 1.0
     x = (it - start_it) / ramp_iters
     return lo + (1 - lo) * min(1.0, max(0.0, x)) if not math.isnan(x) else 1.0
+
+
+# ---------------- 高分真人阵容（第二阶段 · 换阵容版） ----------------
+
+def load_pro_boards(path) -> dict:
+    """tools/pro_library.py 生成的 runs/pro_boards.json。"""
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+    return {int(t): v for t, v in (d.get("turns") or {}).items() if v}
+
+
+class ProBoardBooster(BotBooster):
+    """机器人局里，把机器人的场面直接换成同一回合 6500+ 对局里的真实阵容（卡牌、金色、攻 / 血），
+    酒馆等级提到那位玩家当时的等级（不降）。之后机器人照常用这套阵容招募、战斗。
+
+    为什么不用放大攻防（BotBooster）：放大的只是低本随从的身材，模型学会了“刷新买增益法术堆身材”
+    就能对付，竞技场里升本慢、不会用高本怪。真实阵容带着高本随从的效果（亡语、复生、开战、光环），
+    只堆身材打不过。
+
+    strength = 每个机器人座位在每次加强时被换阵容的概率（AdaptiveStrength 按学习者名次调）。
+    换阵容通过 Game.from_json + 调试命令（clear_zone / add_minion / set_player）完成，一局约 15 毫秒。"""
+
+    def __init__(self, lib: dict, frac: float = 0.75, start_turn: int = 5, seed: int = 0, every: int = 2):
+        super().__init__({"turns": {}}, frac, start_turn, seed, every)
+        self.lib = lib
+        self.turns = sorted(lib)
+        self.injected = 0
+        self.failed = 0
+
+    def _pick(self, t: int) -> dict:
+        ok = [x for x in self.turns if x <= t]
+        tt = ok[-1] if ok else self.turns[0]
+        return self.rng.choice(self.lib[tt])
+
+    def boost(self, env, features: np.ndarray, episodes=None) -> bool:
+        if self.frac <= 0 or not self.lib or self.strength <= 0:
+            return False
+        from taverngym import _core
+        turns = np.rint(features[:, 0] * 20).astype(int)
+        changed = False
+        for g in range(env.n_games):
+            t = int(turns[g])
+            if t < self.start_turn or self.last_turn.get(g) == t or (t - self.start_turn) % self.every:
+                continue
+            us = self._seat_plan(g, int(episodes[g]) if episodes is not None else env.episode_index(g))
+            self.last_turn[g] = t
+            if us is None:
+                continue
+            s = _loads(env.save(g))
+            game = s["game"]
+            if game.get("turn") != t or str(game.get("phase")) != "Recruit":
+                self.last_turn.pop(g, None)
+                continue
+            G = None
+            for seat in range(1, len(game["players"])):
+                p = game["players"][seat]
+                if not p.get("alive", True) or self.rng.random() >= self.strength:
+                    continue
+                if G is None:
+                    G = _core.Game.from_json(_dumps(game))
+                entry = self._pick(t)
+                try:
+                    G.debug(_dumps({"cmd": "clear_zone", "p": seat, "zone": "board"}))
+                except Exception:                          # noqa: BLE001
+                    self.failed += 1
+                    continue
+                for cid, atk, hp in entry["board"][:7]:
+                    gold = cid.endswith("_G")
+                    try:
+                        G.debug(_dumps({"cmd": "add_minion", "p": seat, "zone": "board",
+                                        "card": cid[:-2] if gold else cid, "golden": gold,
+                                        "atk": max(0, int(atk)), "hp": max(1, int(hp))}))
+                    except Exception:                      # noqa: BLE001
+                        self.failed += 1
+                if int(entry.get("tier") or 1) > int(p.get("tier") or 1):
+                    try:
+                        G.debug(_dumps({"cmd": "set_player", "p": seat, "tier": int(entry["tier"])}))
+                    except Exception:                      # noqa: BLE001
+                        self.failed += 1
+                self.injected += 1
+            if G is not None:
+                s["game"] = _loads(G.state_json())
+                env.load(g, _dumps(s))
+                self.n_boosts += 1
+                changed = True
+        return changed
+
+    def take_stats(self) -> dict:
+        out = {"boosts": self.n_boosts, "pro_injected": self.injected, "pro_failed": self.failed}
+        self.n_boosts, self.injected, self.failed, self.added = 0, 0, 0, 0.0
+        return out
