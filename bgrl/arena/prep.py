@@ -31,11 +31,27 @@ def canonical(x) -> bytes:
     return json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def get(origin: str, path: str):
+class Unreachable(Exception):
+    pass
+
+
+def get(origin: str, path: str, tries: int = 4):
+    """读公开接口；连不上（握手超时、断线）时等 5 / 15 / 30 秒再试，最后还不行抛 Unreachable。"""
+    import time
     req = urllib.request.Request(origin.rstrip("/") + path, headers={"Accept": "application/json",
                                                                      "User-Agent": "TavernArena-Connector/1"})
-    with urllib.request.urlopen(req, timeout=30, context=ssl.create_default_context()) as r:
-        return json.loads(r.read(2 ** 23))
+    last = None
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=ssl.create_default_context()) as r:
+                return json.loads(r.read(2 ** 23))
+        except (OSError, ValueError) as ex:             # URLError / 超时 / 连接重置都是 OSError
+            last = ex
+            if k + 1 < tries:
+                wait = (5, 15, 30)[min(k, 2)]
+                print(f"连不上 {origin}{path}（{type(ex).__name__}），{wait} 秒后重试 {k + 2}/{tries} …", flush=True)
+                time.sleep(wait)
+    raise Unreachable(f"{origin}{path}：{last}")
 
 
 def _cards(catalog) -> list[dict]:
@@ -129,4 +145,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Unreachable as ex:
+        print(f"连不上竞技场：{ex}\n这是网络问题（网站暂时不可用，或网络 / 代理拦住了），不是模型或代码的问题；"
+              f"过一会儿再运行 arena.bat check。")
+        sys.exit(2)

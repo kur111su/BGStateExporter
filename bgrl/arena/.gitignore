@@ -11,3 +11,4 @@ manifest.json
 # 竞技场官方连接器：从竞技场下载、本机保存，不进本仓库
 arena_client.py
 records/
+model_bundle.prev/

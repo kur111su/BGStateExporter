@@ -23,10 +23,17 @@ if /i "%~1"=="update" (
   %APY% -c "import os,sys; a='runs/v3/latest.pt'; b='arena/model_bundle/model.pt'; sys.exit(0 if os.path.exists(a) and (not os.path.exists(b) or os.path.getmtime(a) > os.path.getmtime(b) + 7200) else 1)"
   if not errorlevel 1 (
     echo Packaging the newer model ...
+    if exist arena\model_bundle.prev rmdir /s /q arena\model_bundle.prev
+    move arena\model_bundle arena\model_bundle.prev >nul
     .venv\Scripts\python -X utf8 arena\export.py
-    if errorlevel 1 ( echo Packaging failed. & pause & exit /b 1 )
-    %APY% -X utf8 arena\prep.py --url %URL%
-    if errorlevel 1 ( echo Contract check failed - stopping. & pause & exit /b 1 )
+    if not errorlevel 1 %APY% -X utf8 arena\prep.py --url %URL%
+    if errorlevel 1 (
+      echo Could not package or check the newer model - keeping the previous one.
+      if exist arena\model_bundle rmdir /s /q arena\model_bundle
+      move arena\model_bundle.prev arena\model_bundle >nul
+    ) else (
+      rmdir /s /q arena\model_bundle.prev
+    )
   )
 )
 for /f "usebackq delims=" %%H in (`%APY% -c "import json;print(json.load(open('arena/compat.json',encoding='utf-8'))['catalog_sha256'])"`) do set "CAT=%%H"

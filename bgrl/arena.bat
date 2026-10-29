@@ -47,11 +47,25 @@ if errorlevel 1 ( echo arena\.venv must not contain TavernGym. Delete arena\.ven
 
 if /i not "%MODE%"=="check" goto :have_bundle
 echo [1/3] Packaging the model ...
+if exist arena\model_bundle.prev rmdir /s /q arena\model_bundle.prev
+if exist arena\model_bundle move arena\model_bundle arena\model_bundle.prev >nul
 .venv\Scripts\python -X utf8 arena\export.py %2 %3
-if errorlevel 1 ( echo Packaging failed. & pause & exit /b 1 )
+if errorlevel 1 goto :restore
 echo [2/3] Checking the arena contract and card vocabulary ...
 %APY% -X utf8 arena\prep.py --url %URL%
-if errorlevel 1 ( echo Contract check failed - send me bgrl\arena\compat.json & pause & exit /b 1 )
+if errorlevel 1 goto :restore
+if exist arena\model_bundle.prev rmdir /s /q arena\model_bundle.prev
+goto :have_bundle
+
+:restore
+rem The check failed: put the previously packaged model back so arena games keep working with it.
+if exist arena\model_bundle rmdir /s /q arena\model_bundle
+if exist arena\model_bundle.prev move arena\model_bundle.prev arena\model_bundle >nul
+echo.
+echo Check failed - the previously packaged model is kept (arena games still use it).
+echo If it says the arena is unreachable, try again later. Otherwise send me this window.
+pause
+exit /b 1
 
 :have_bundle
 if not exist arena\compat.json ( echo Run arena.bat check first. & pause & exit /b 1 )
