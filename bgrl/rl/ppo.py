@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
-from tg.actions import is_noop
+from tg.actions import A_BUY, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
 from .calibrate import AdaptiveStrength, BotBooster, ramp
 
 
@@ -93,6 +93,16 @@ class Config:
     bc_coef: float = 0.0
     bc_data: str = ""              # 空 = runs/demos.npz
     bc_batch: int = 256
+    # 按类别加权（竞技场里最缺的是升本、卖怪换怪、买随从）："upgrade:3,sell:3,buy:2"；没写的类别权重 1
+    bc_weights: str = ""
+    # 升本节奏奖励（课程，逐渐减到 0）：学习者升本时，如果升之前的等级低于真人同一回合的平均等级 + 0.5，
+    # 当场加 tempo_bonus（一个名次约 0.29）。v3 在竞技场里第 9 回合平均 2.4 本（真人 5.0），77 个回合里
+    # 有 56 个回合钱够却不升；奖励在 tempo_anneal_iters 轮内线性减到 0，之后只靠名次判断升本值不值
+    tempo_bonus: float = 0.0
+    tempo_anneal_iters: int = 1500
+    # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
+    # （竞技场 5 局：296 次刷新里 232 次之后什么都没买）
+    refresh_waste_penalty: float = 0.0
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -266,6 +276,14 @@ class Trainer:
         self.anchor = None
         self.demos = self._load_demos()
         self.bc_rng = np.random.default_rng(cfg.seed + 7)
+        self.bc_w = self._bc_weights() if self.demos is not None else None
+        prof = load_real_profile().get("turns") or {}
+        self.tier_curve = {int(t): float(v.get("tier") or 0) for t, v in prof.items() if (v.get("n") or 0) >= 5}
+        self.tempo_t0 = None                           # 升本奖励从哪一轮开始减（存在检查点里）
+        self.upg_ep = np.full(self.n_slots, -1, dtype=np.int64)    # 每个槽位：这一局升了几次本
+        self.upg_n = np.zeros(self.n_slots, dtype=np.int64)
+        self.ref_idx = np.full(self.n_slots, -1, dtype=np.int64)   # 每个槽位：上一次还没买东西的刷新（本轮的步编号）
+        self.mix = defaultdict(int)
         self.anchor_until = 0
         self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
         self.log_f = open(self.run / "log.jsonl", "a", encoding="utf-8")
@@ -329,6 +347,7 @@ class Trainer:
         n_dec = 0
         self.n_noop = 0
         self.finished = 0
+        self.ref_idx[:] = -1                           # 上一轮的步编号在这一轮无效
         t0 = time.time()
         t_env = t_net = 0.0
         for _ in range(cfg.steps_per_iter):
@@ -355,8 +374,10 @@ class Trainer:
                     if rid == 0:
                         ak = a[o:o + k]
                         noop = is_noop(ak) | (ak == 7)                # 冻结、调站位、取消（打出 → 取消可以无限循环）
+                        r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64))
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
-                                         res[1][o:o + k], res[2][o:o + k], r0=-cfg.noop_penalty * noop)
+                                         res[1][o:o + k], res[2][o:o + k], r0=r0)
+                        self._after_add(off + idx, ak)
                         n_dec += k
                         self.n_noop += int(noop.sum())
                     o += k
@@ -438,11 +459,78 @@ class Trainer:
             logits = self.model(f, c, m)[0]
         return F.log_softmax(logits.float(), -1)
 
+    def _bc_weights(self):
+        from tools.make_demos import KINDS
+        w = {}
+        for part in str(self.cfg.bc_weights or "").replace(" ", "").split(","):
+            if ":" in part:
+                k, v = part.split(":", 1)
+                if k in KINDS:
+                    w[KINDS.index(k)] = float(v)
+        out = np.ones(len(self.demos["kind"]), dtype=np.float32)
+        for k, v in w.items():
+            out[self.demos["kind"] == k] = v
+        return out
+
     def bc_loss(self):
         j = self.bc_rng.choice(self.demos["train_idx"], size=min(self.cfg.bc_batch, len(self.demos["train_idx"])))
         f, c, m, cand = self._demo_tensors(j)
         lp = self._demo_logp(f, c, m).gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
-        return -torch.logsumexp(lp, 1).mean()          # 候选有几个（磁力吸附目标不确定）时，任一个都算对
+        nll = -torch.logsumexp(lp, 1)                  # 候选有几个（磁力吸附目标不确定）时，任一个都算对
+        w = torch.as_tensor(self.bc_w[j], device=nll.device)
+        return (nll * w).sum() / w.sum()
+
+    def tempo_now(self) -> float:
+        cfg = self.cfg
+        if cfg.tempo_bonus <= 0:
+            return 0.0
+        if self.tempo_t0 is None:
+            self.tempo_t0 = self.iter
+        x = (self.iter - self.tempo_t0) / max(1, cfg.tempo_anneal_iters)
+        return cfg.tempo_bonus * max(0.0, 1.0 - x)
+
+    def _tier_target(self, turn: int) -> float:
+        if not self.tier_curve:
+            return 6.0
+        t = min(max(turn, min(self.tier_curve)), max(self.tier_curve))
+        while t not in self.tier_curve and t > min(self.tier_curve):
+            t -= 1
+        return self.tier_curve.get(t, 6.0)
+
+    def _shape(self, slots, f, ak, r0):
+        """升本节奏奖励（当场加在升本这一步上）；记下刷新，供 _after_add 判断是不是无效刷新。"""
+        tb = self.tempo_now()
+        turns = np.rint(f[:, 0] * 20).astype(int)
+        for j in np.flatnonzero(ak == A_UPGRADE):
+            s = int(slots[j])
+            ep = int(self.rollout.ep[s])
+            if self.upg_ep[s] != ep:
+                self.upg_ep[s], self.upg_n[s] = ep, 0
+            if tb > 0 and 1 + self.upg_n[s] < self._tier_target(int(turns[j])) + 0.5:
+                r0[j] += tb
+                self.mix["tempo_paid"] += 1
+            self.upg_n[s] += 1
+        return r0
+
+    def _after_add(self, slots, ak):
+        """无效刷新：上一次刷新之后没买任何东西就又刷新 / 结束回合 → 给那次刷新扣分（改已经存下的奖励）。"""
+        pen = self.cfg.refresh_waste_penalty
+        for j, a in enumerate(ak):
+            s = int(slots[j])
+            a = int(a)
+            if a == A_REFRESH or a == A_END:
+                prev = self.ref_idx[s]
+                if prev >= 0:
+                    self.mix["refresh_waste"] += 1
+                    if pen > 0:
+                        self.rollout.r[prev] -= pen
+                self.ref_idx[s] = self.rollout.last[s] if a == A_REFRESH else -1
+            elif A_BUY <= a < A_SELL:
+                self.ref_idx[s] = -1
+            kind = ("end" if a == A_END else "refresh" if a == A_REFRESH else "upgrade" if a == A_UPGRADE else
+                    "buy" if A_BUY <= a < A_SELL else "sell" if A_SELL <= a < A_SELL + 7 else None)
+            if kind:
+                self.mix[kind] += 1
 
     @torch.no_grad()
     def human_eval(self) -> dict:
@@ -468,7 +556,7 @@ class Trainer:
             if tag == "":
                 out["human_nll"] = round(float(nll.mean()), 3)
                 kind = d["kind"][idx]
-                for k in ("upgrade", "end", "buy", "refresh"):
+                for k in ("upgrade", "end", "buy", "refresh", "sell"):
                     sel = kind == KINDS.index(k)
                     if sel.any():
                         out[f"human_{k}"] = round(float(hit[sel].mean()), 3)
@@ -653,7 +741,7 @@ class Trainer:
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
-                    "boost": self.adapt.to_json() if self.adapt is not None else None}, self.run / "latest.pt")
+                    "boost": self.adapt.to_json() if self.adapt is not None else None, "tempo_t0": self.tempo_t0}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -663,6 +751,7 @@ class Trainer:
         self.opt.load_state_dict(ck["opt"])
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
+        self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         if self.adapt is not None:
             self.adapt.load_json(ck.get("boost"))
             self.booster.strength = self.adapt.strength
@@ -710,6 +799,12 @@ class Trainer:
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
                    "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"],
                    "noop_frac": round(self.n_noop / max(1, n_dec), 3), **upd}
+            mx, ends = self.mix, max(1, self.mix.get("end", 0))           # 每回合平均（学习者）
+            rec.update(up_turn=round(mx["upgrade"] / ends, 3), ref_turn=round(mx["refresh"] / ends, 2),
+                       buy_turn=round(mx["buy"] / ends, 2), sell_turn=round(mx["sell"] / ends, 3),
+                       ref_waste=round(mx["refresh_waste"] / max(1, mx["refresh"]), 3),
+                       tempo_bonus=round(self.tempo_now(), 4), tempo_paid=mx["tempo_paid"])
+            self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
                 if ps:

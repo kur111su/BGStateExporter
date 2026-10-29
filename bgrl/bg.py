@@ -40,7 +40,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 
 def _test() -> int:
     rc = 0
-    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py"):
+    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")
