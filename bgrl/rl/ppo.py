@@ -354,7 +354,7 @@ class Trainer:
                     actions[name][idx] = a[o:o + k]
                     if rid == 0:
                         ak = a[o:o + k]
-                        noop = is_noop(ak)                            # 冻结、调站位
+                        noop = is_noop(ak) | (ak == 7)                # 冻结、调站位、取消（打出 → 取消可以无限循环）
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=-cfg.noop_penalty * noop)
                         n_dec += k

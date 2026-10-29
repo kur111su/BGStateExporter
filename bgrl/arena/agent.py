@@ -37,7 +37,8 @@ def _import_model():
 _model_mod = _import_model()
 EntityTransformer, Layout = _model_mod.EntityTransformer, _model_mod.Layout
 
-A_END, A_FREEZE, A_MOVE = 0, 2, 196
+A_END, A_REFRESH, A_FREEZE, A_CANCEL, A_CHOOSE, A_PLAY, A_MAGNETIZE, A_MOVE = 0, 1, 2, 7, 30, 46, 126, 196
+N_POS = 8
 KIND = [(0, "end"), (1, "refresh"), (2, "freeze"), (3, "upgrade"), (4, "hero_power"), (6, "dark_gift"), (7, "cancel"),
         (8, "buy"), (16, "sell"), (23, "activate"), (30, "choose"), (46, "play"), (126, "magnetize"), (196, "move")]
 
@@ -107,7 +108,8 @@ def act(observation, context):
     if st.get("key") != key:                       # 新回合：写上一回合的统计
         if st.get("key"):
             _log(st, st["key"][0])
-        st.update(key=key, turn=context["turn"], phase=context.get("phase"), counts=Counter(), guards=Counter(), noops=0)
+        st.update(key=key, turn=context["turn"], phase=context.get("phase"), counts=Counter(), guards=Counter(), noops=0,
+                  banned=set(), cancels=0, trigger=None, used=Counter())
     mask = np.asarray(observation["action_mask"], dtype=bool)
     left = int(context.get("action_limit", 100)) - int(context.get("actions_used", 0))
     if mask[A_END] and (left <= 2 or int(context.get("remaining_ms", 10 ** 9)) < 1500):
@@ -122,6 +124,20 @@ def act(observation, context):
             m = mask.copy()
         elif (m != mask).any():
             st["guards"]["no_more_moves"] += 1
+    # 打出 → 取消 → 再打出……的死循环（第一局练习第 9–12 回合每回合 49 次打出 + 49 次取消，直到 100 次上限）：
+    # 取消过的那张手牌本回合不再打出；本回合取消 2 次后不再取消（只能选目标，局面会往前走）；
+    # 除结束、刷新、选择以外，同一个动作编号本回合最多 6 次
+    for b in st["banned"]:
+        m[b] = False
+    if st["cancels"] >= 2:
+        m[A_CANCEL] = False
+    for b, n in st["used"].items():
+        if n >= 6 and b not in (A_END, A_REFRESH) and not (A_CHOOSE <= b < A_PLAY):
+            m[b] = False
+    if not m.any():
+        m = mask.copy()
+    elif (m != mask).any() and (st["banned"] or st["cancels"] >= 2):
+        st["guards"]["loop_block"] += 1
     f = np.array(observation["features"][:NF], dtype=np.float32)        # 复制：连接器给的数组是只读的
     c = np.asarray(observation["cards"][:NC], dtype=np.int64)
     c = REMAP[np.clip(c, 0, len(REMAP) - 1)]
@@ -132,6 +148,17 @@ def act(observation, context):
         a = int(np.flatnonzero(mask)[0])
     if a == A_FREEZE or a >= A_MOVE:
         st["noops"] += 1
+    st["used"][a] += 1
+    if a == A_CANCEL:
+        st["cancels"] += 1
+        t = st["trigger"]
+        if t is not None and A_PLAY <= t < A_MAGNETIZE:        # 取消的是打出：这张手牌的所有位置都禁掉
+            h = (t - A_PLAY) // N_POS
+            st["banned"].update(range(A_PLAY + h * N_POS, A_PLAY + (h + 1) * N_POS))
+        elif t is not None:
+            st["banned"].add(t)
+    elif not (A_CHOOSE <= a < A_PLAY):
+        st["trigger"] = a
     st["counts"][kind_of(a)] += 1
     if a == A_END:
         _log(st, context["match_id"])
