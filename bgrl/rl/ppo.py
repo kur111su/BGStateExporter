@@ -88,6 +88,11 @@ class Config:
     boost_start: float = 0.4       # 自适应的起点（接着旧检查点练、检查点里没有记录时也用它）
     boost_target_place: float = 3.75   # 加强局的目标平均名次（8 人局随便打 = 4.5）
     boost_step: float = 0.02       # 每次调多少
+    # 模仿你的操作（tools/make_demos.py 生成 runs/demos.npz）：每个小批另外抽 bc_batch 条示范算交叉熵，乘 bc_coef 加进损失。
+    # 0 = 不模仿；有示范数据时日志照样记 human_top1 等（留出的验证局上模型和你的操作对得上多少）
+    bc_coef: float = 0.0
+    bc_data: str = ""              # 空 = runs/demos.npz
+    bc_batch: int = 256
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -259,6 +264,8 @@ class Trainer:
         self.active_snaps = []
         self.iter = 0
         self.anchor = None
+        self.demos = self._load_demos()
+        self.bc_rng = np.random.default_rng(cfg.seed + 7)
         self.anchor_until = 0
         self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
         self.log_f = open(self.run / "log.jsonl", "a", encoding="utf-8")
@@ -396,6 +403,78 @@ class Trainer:
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
         return batch, n_dec, time.time() - t0, t_env, t_net
 
+    # ---------------- 模仿你的操作 ----------------
+
+    def _load_demos(self):
+        from paths import RUNS
+        path = Path(self.cfg.bc_data) if self.cfg.bc_data else RUNS / "demos.npz"
+        if not path.exists():
+            if self.cfg.bc_coef > 0:
+                print(f"没有示范数据 {path}（先运行 bg.py demos），这次不模仿", flush=True)
+            return None
+        try:
+            from tools.make_demos import load
+            d = load(path)
+        except Exception as ex:                        # noqa: BLE001
+            print(f"示范数据 {path} 读不了（{type(ex).__name__}: {ex}），这次不模仿", flush=True)
+            return None
+        if d["m"].shape[1] != self.model.L.actions or d["f"].shape[1:] != self.obs[self.envs[0][0]]["features"].shape[1:]:
+            print(f"示范数据 {path} 和当前环境的格式不一样（TavernGym 换过版本？），重新运行 bg.py demos", flush=True)
+            return None
+        d["train_idx"] = np.flatnonzero(d["split"] == 0)
+        d["val_idx"] = np.flatnonzero(d["split"] == 1)
+        print(f"示范数据：{d['meta'].get('games')} 局，训练 {len(d['train_idx'])} 条、验证 {len(d['val_idx'])} 条"
+              f"（{d['meta'].get('created')}）；模仿系数 {self.cfg.bc_coef}", flush=True)
+        return d
+
+    def _demo_tensors(self, j):
+        d = self.demos
+        t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
+        return (t(d["f"][j], torch.float32), t(d["c"][j], torch.long), t(d["m"][j], torch.bool),
+                t(d["cand"][j].astype(np.int64), torch.long))
+
+    def _demo_logp(self, f, c, m):
+        with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+            logits = self.model(f, c, m)[0]
+        return F.log_softmax(logits.float(), -1)
+
+    def bc_loss(self):
+        j = self.bc_rng.choice(self.demos["train_idx"], size=min(self.cfg.bc_batch, len(self.demos["train_idx"])))
+        f, c, m, cand = self._demo_tensors(j)
+        lp = self._demo_logp(f, c, m).gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
+        return -torch.logsumexp(lp, 1).mean()          # 候选有几个（磁力吸附目标不确定）时，任一个都算对
+
+    @torch.no_grad()
+    def human_eval(self) -> dict:
+        """留出的验证局上：模型最可能的动作是不是你做的那个（human_top1），按类别的命中率，平均交叉熵。"""
+        from tools.make_demos import KINDS
+        d = self.demos
+        self.model.eval()
+        out = {}
+        for tag, idx in (("", d["val_idx"]), ("_train", d["train_idx"][:2000])):
+            if not len(idx):
+                continue
+            hit, nll = [], []
+            for s in range(0, len(idx), self.cfg.micro_batch):
+                j = idx[s:s + self.cfg.micro_batch]
+                f, c, m, cand = self._demo_tensors(j)
+                lp = self._demo_logp(f, c, m)
+                top = lp.argmax(1, keepdim=True)
+                hit.append(((cand == top) & (cand >= 0)).any(1).cpu().numpy())
+                nll.append((-torch.logsumexp(lp.gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf")), 1))
+                           .clamp(max=20).cpu().numpy())
+            hit, nll = np.concatenate(hit), np.concatenate(nll)
+            out["human_top1" + tag] = round(float(hit.mean()), 3)
+            if tag == "":
+                out["human_nll"] = round(float(nll.mean()), 3)
+                kind = d["kind"][idx]
+                for k in ("upgrade", "end", "buy", "refresh"):
+                    sel = kind == KINDS.index(k)
+                    if sel.any():
+                        out[f"human_{k}"] = round(float(hit[sel].mean()), 3)
+        self.model.train()
+        return out
+
     # ---------------- 更新 ----------------
 
     def update(self, b):
@@ -454,6 +533,10 @@ class Trainer:
                                    ("aux", aux.item()), ("kl", kl),
                                    ("clipfrac", ((ratio - 1).abs() > cfg.clip).float().mean().item())):
                         stats[k_].append(v_)
+                if self.demos is not None and cfg.bc_coef > 0 and len(self.demos["train_idx"]):
+                    bc = self.bc_loss()
+                    self.scaler.scale(cfg.bc_coef * bc).backward()
+                    stats["bc"].append(bc.item())
                 gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
                     stats["skipped"].append(1.0)
@@ -653,6 +736,8 @@ class Trainer:
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
+                if self.demos is not None:
+                    rec.update(self.human_eval())
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 self.mark_good()

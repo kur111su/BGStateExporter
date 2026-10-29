@@ -4,7 +4,7 @@ name: bgrl RL checks
 
 on:
   push:
-    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", ".github/workflows/bgrl-rl.yml"]
+    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/make_demos.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", ".github/workflows/bgrl-rl.yml"]
   workflow_dispatch:
 
 jobs:
@@ -35,3 +35,7 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py train --smoke --threads 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
+      - name: Demos from the replay fixture + tiny PPO run with imitation
+        run: |
+          python -X utf8 bgrl/bg.py demos --fixture bgrl/tests/fixtures/replay_v3.jsonl.gz
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --bc-coef 0.05 --boost-frac 1.0 --boost-from-turn 3

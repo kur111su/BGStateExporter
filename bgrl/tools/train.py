@@ -71,7 +71,7 @@ def main() -> int:
             return
         keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
                 "eval_place", "eval_top1", "eval_boost_place", "eval_boost_top1", "snapshot", "snapshot_dist", "snapshot_tier",
-                "boost_strength", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac")
+                "bc", "human_top1", "human_upgrade", "human_end", "boost_strength", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
     tr.train(cfg.iters, on_log=show)
