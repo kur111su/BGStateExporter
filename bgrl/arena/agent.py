@@ -122,7 +122,7 @@ def act(observation, context):
             m = mask.copy()
         elif (m != mask).any():
             st["guards"]["no_more_moves"] += 1
-    f = np.asarray(observation["features"][:NF], dtype=np.float32)
+    f = np.array(observation["features"][:NF], dtype=np.float32)        # 复制：连接器给的数组是只读的
     c = np.asarray(observation["cards"][:NC], dtype=np.int64)
     c = REMAP[np.clip(c, 0, len(REMAP) - 1)]
     logits, _, _ = MODEL(torch.from_numpy(f)[None], torch.from_numpy(c)[None], torch.from_numpy(m)[None])
