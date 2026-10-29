@@ -21,8 +21,21 @@ import torch
 import torch.nn.functional as F
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
-from rl.model import EntityTransformer, Layout  # noqa: E402
+
+
+def _import_model():
+    """按文件路径导入 rl/model.py，不把 bgrl 目录加进 sys.path：bgrl 下有个 taverngym 文件夹（只放版本号），
+    加进去之后连接器会把它当成装了 TavernGym 去核对，然后出错。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bgrl_rl_model", HERE.parent / "rl" / "model.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod                   # dataclass 需要能按名字找到模块
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_model_mod = _import_model()
+EntityTransformer, Layout = _model_mod.EntityTransformer, _model_mod.Layout
 
 A_END, A_FREEZE, A_MOVE = 0, 2, 196
 KIND = [(0, "end"), (1, "refresh"), (2, "freeze"), (3, "upgrade"), (4, "hero_power"), (6, "dark_gift"), (7, "cancel"),

@@ -41,7 +41,7 @@ if errorlevel 1 (
   %APY% -m pip install -q numpy
   %APY% -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
 )
-%APY% -c "import importlib.util,sys; sys.exit(1 if importlib.util.find_spec('taverngym') else 0)"
+%APY% -I -c "import importlib.util,sys; sys.exit(1 if importlib.util.find_spec('taverngym') else 0)"
 if errorlevel 1 ( echo arena\.venv must not contain TavernGym. Delete arena\.venv and run again. & pause & exit /b 1 )
 
 if /i not "%MODE%"=="check" goto :have_bundle
