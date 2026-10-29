@@ -9,7 +9,7 @@
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
-  test      跑单元测试（tests/ 里的 test_calibrate、test_rl、test_shadow）
+  test      跑单元测试（tests/ 里的 test_calibrate、test_rl、test_shadow、test_arena）
   info      看环境：Python、torch / CUDA、TavernGym 版本、训练进度
 
 每个命令后面加 --help 看它自己的参数。
@@ -40,7 +40,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 
 def _test() -> int:
     rc = 0
-    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py"):
+    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")

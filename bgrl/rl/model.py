@@ -49,10 +49,14 @@ class Layout:
     @classmethod
     def from_taverngym(cls) -> "Layout":
         import taverngym._core as c
-        L = dict(c.layout())
+        return cls.from_dict(dict(c.layout()), c.OBS_FLOATS, c.OBS_CARDS, c.N_ACTIONS)
+
+    @classmethod
+    def from_dict(cls, L: dict, floats: int, cards: int, actions: int) -> "Layout":
+        """不装 TavernGym 时用（竞技场连接器的环境里，见 arena/agent.py）：L = taverngym.layout() 存下来的字典。"""
         return cls(L["MINION_F"], L["ITEM_F"], L["GLOBAL_F"], L["N_QUESTS"], L["QUEST_F"], L["PENDING_KINDS"],
                    L["OPP_F"], L["N_OPP"], L["N_BOARD"], L["N_HAND"], L["N_SHOP"], L["N_CHOICE"], L["N_POS"],
-                   L["N_POWERS"], c.OBS_FLOATS, c.OBS_CARDS, c.N_ACTIONS)
+                   L["N_POWERS"], int(floats), int(cards), int(actions))
 
     # 浮点切片
     def fslices(self):
