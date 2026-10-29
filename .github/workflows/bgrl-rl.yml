@@ -38,4 +38,4 @@ jobs:
       - name: Demos from the replay fixture + tiny PPO run with imitation
         run: |
           python -X utf8 bgrl/bg.py demos --fixture bgrl/tests/fixtures/replay_v3.jsonl.gz
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --bc-coef 0.05 --boost-frac 1.0 --boost-from-turn 3 --bc-weights "upgrade:3,sell:3,buy:2" --tempo-bonus 0.03 --refresh-waste-penalty 0.005
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --bc-coef 0.05 --boost-frac 1.0 --boost-from-turn 3 --bc-weights "upgrade:3,sell:3,buy:2" --bc-train-cap 0.6 --bc-smooth 0.1 --tempo-bonus 0.03 --refresh-waste-penalty 0.015

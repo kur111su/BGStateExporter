@@ -95,6 +95,11 @@ class Config:
     bc_batch: int = 256
     # 按类别加权（竞技场里最缺的是升本、卖怪换怪、买随从）："upgrade:3,sell:3,buy:2"；没写的类别权重 1
     bc_weights: str = ""
+    # 防止背下你的对局（示范只有十几局、两千来步）：每次考试看模型在训练用示范上的命中率，
+    # 高于 bc_train_cap 就把模仿强度减半，低于 cap - 0.1 再加回来（最多到 bc_coef）。0 = 不控制
+    # （第 2471–3047 轮：训练示范命中率 0.23 → 0.99，留出局只有 0.20，留出局交叉熵 3.2 → 8.2，完全是在背题）
+    bc_train_cap: float = 0.0
+    bc_smooth: float = 0.0         # 标签平滑：目标分一点给其它合法动作，避免对示范过分自信
     # 升本节奏奖励（课程，逐渐减到 0）：学习者升本时，如果升之前的等级低于真人同一回合的平均等级 + 0.5，
     # 当场加 tempo_bonus（一个名次约 0.29）。v3 在竞技场里第 9 回合平均 2.4 本（真人 5.0），77 个回合里
     # 有 56 个回合钱够却不升；奖励在 tempo_anneal_iters 轮内线性减到 0，之后只靠名次判断升本值不值
@@ -277,6 +282,7 @@ class Trainer:
         self.demos = self._load_demos()
         self.bc_rng = np.random.default_rng(cfg.seed + 7)
         self.bc_w = self._bc_weights() if self.demos is not None else None
+        self.bc_scale = 1.0                            # 模仿强度的倍数（见 bc_train_cap；存在检查点里）
         prof = load_real_profile().get("turns") or {}
         self.tier_curve = {int(t): float(v.get("tier") or 0) for t, v in prof.items() if (v.get("n") or 0) >= 5}
         self.tempo_t0 = None                           # 升本奖励从哪一轮开始减（存在检查点里）
@@ -475,10 +481,26 @@ class Trainer:
     def bc_loss(self):
         j = self.bc_rng.choice(self.demos["train_idx"], size=min(self.cfg.bc_batch, len(self.demos["train_idx"])))
         f, c, m, cand = self._demo_tensors(j)
-        lp = self._demo_logp(f, c, m).gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
+        lp_all = self._demo_logp(f, c, m)
+        lp = lp_all.gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
         nll = -torch.logsumexp(lp, 1)                  # 候选有几个（磁力吸附目标不确定）时，任一个都算对
+        eps = self.cfg.bc_smooth
+        if eps > 0:                                    # 标签平滑：合法动作上的平均对数概率
+            uni = -(lp_all.masked_fill(~m, 0).sum(-1) / m.sum(-1).clamp(min=1))
+            nll = (1 - eps) * nll + eps * uni
         w = torch.as_tensor(self.bc_w[j], device=nll.device)
         return (nll * w).sum() / w.sum()
+
+    def adjust_bc(self, he: dict) -> None:
+        """按训练示范命中率调模仿强度（考试时调用）。"""
+        cap = self.cfg.bc_train_cap
+        tr = he.get("human_top1_train")
+        if cap <= 0 or tr is None:
+            return
+        if tr > cap:
+            self.bc_scale = max(0.05, self.bc_scale * 0.5)
+        elif tr < cap - 0.1:
+            self.bc_scale = min(1.0, self.bc_scale * 1.5)
 
     def tempo_now(self) -> float:
         cfg = self.cfg
@@ -623,7 +645,7 @@ class Trainer:
                         stats[k_].append(v_)
                 if self.demos is not None and cfg.bc_coef > 0 and len(self.demos["train_idx"]):
                     bc = self.bc_loss()
-                    self.scaler.scale(cfg.bc_coef * bc).backward()
+                    self.scaler.scale(cfg.bc_coef * self.bc_scale * bc).backward()
                     stats["bc"].append(bc.item())
                 gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
@@ -741,7 +763,8 @@ class Trainer:
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
-                    "boost": self.adapt.to_json() if self.adapt is not None else None, "tempo_t0": self.tempo_t0}, self.run / "latest.pt")
+                    "boost": self.adapt.to_json() if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
+                    "bc_scale": self.bc_scale}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -752,6 +775,7 @@ class Trainer:
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
+        self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
         if self.adapt is not None:
             self.adapt.load_json(ck.get("boost"))
             self.booster.strength = self.adapt.strength
@@ -832,7 +856,9 @@ class Trainer:
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
                 if self.demos is not None:
-                    rec.update(self.human_eval())
+                    he = self.human_eval()
+                    self.adjust_bc(he)
+                    rec.update(he, bc_scale=round(self.bc_scale, 3))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 self.mark_good()
