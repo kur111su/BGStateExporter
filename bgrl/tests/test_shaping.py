@@ -25,7 +25,7 @@ def main() -> int:
     assert roll.r == [-0.01, 0.0, 0.0, -0.01, 0.0], roll.r
     assert t.mix["refresh_waste"] == 2 and t.mix["refresh"] == 3 and t.mix["buy"] == 1 and t.mix["end"] == 1
 
-    # 升本奖励：第 3 回合真人约 2.05 本 → 1 本升 2 本给奖励；第 3 回合再升（2 → 3）不给
+    # 升本奖励：第 3 回合真人约 2.05 本，门槛 2.55 → 1→2、2→3 给奖励（升之前 1、2 本），3→4 不给（升之前 3 本）
     t2 = SimpleNamespace(cfg=SimpleNamespace(tempo_bonus=0.03, tempo_anneal_iters=100), tempo_t0=None, iter=0,
                          tier_curve={1: 1.0, 3: 2.05, 9: 5.04}, upg_ep=np.full(1, -1, dtype=np.int64),
                          upg_n=np.zeros(1, dtype=np.int64), rollout=roll, mix=defaultdict(int))
@@ -36,7 +36,10 @@ def main() -> int:
     r = Trainer._shape(t2, np.array([0]), f, np.array([A_UPGRADE]), np.zeros(1))
     assert abs(r[0] - 0.03) < 1e-9, r
     r = Trainer._shape(t2, np.array([0]), f, np.array([A_UPGRADE]), np.zeros(1))
+    assert abs(r[0] - 0.03) < 1e-9, r
+    r = Trainer._shape(t2, np.array([0]), f, np.array([A_UPGRADE]), np.zeros(1))
     assert r[0] == 0.0, r
+    assert t2.mix["tempo_paid"] == 2
     t2.iter = 50
     assert abs(Trainer.tempo_now(t2) - 0.015) < 1e-9
     t2.iter = 500
