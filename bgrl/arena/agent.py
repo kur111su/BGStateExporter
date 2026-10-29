@@ -88,6 +88,7 @@ _no_taverngym()
 MODEL, META, REMAP = _load()
 NF, NC = META["floats"], META["cards"]
 LOGS = HERE / "logs"
+RECORDS = HERE / "records"          # 每一步的可见局面 + 模型的前几个选择（只在本机，arena/viewer.py 显示）
 print(f"模型 {META['model_version']} 已加载（CPU）", file=sys.stderr, flush=True)
 
 
@@ -99,6 +100,85 @@ def _log(st: dict, match_id: str):
         fh.write(json.dumps({"turn": st["turn"], "phase": st.get("phase"), "actions": dict(st["counts"]),
                              "guards": dict(st["guards"]), "model": META["model_version"],
                              "time": time.strftime("%H:%M:%S")}, ensure_ascii=False) + "\n")
+
+
+# ---------------- 对局记录（给 arena/viewer.py 看） ----------------
+
+def _me(view: dict) -> dict:
+    me = view.get("me") if isinstance(view, dict) else None
+    return me if isinstance(me, dict) else {}
+
+
+def _zone(view: dict, *keys) -> list:
+    me = _me(view)
+    for k in keys:
+        v = me.get(k)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            for kk in ("cards", "options", "minions", "items"):
+                if isinstance(v.get(kk), list):
+                    return v[kk]
+    return []
+
+
+def _nm(lst: list, i: int) -> str:
+    if 0 <= i < len(lst) and isinstance(lst[i], dict):
+        c = lst[i]
+        return str(c.get("name_zh") or c.get("name") or c.get("id") or c.get("card_id") or f"#{i}")
+    return f"#{i}"
+
+
+def describe(a: int, view: dict) -> str:
+    """动作编号 → 中文说明（卡名从 player_view 里取；取不到就只写位置）。"""
+    shop = _zone(view, "shop", "tavern", "store")
+    board = _zone(view, "board", "warband")
+    hand = _zone(view, "hand")
+    choice = _zone(view, "choices", "options", "pending", "discover", "choice")
+    fixed = {0: "结束回合", 1: "刷新", 2: "冻结", 3: "升级酒馆", 4: "英雄技能 1", 5: "英雄技能 2", 6: "黑暗之赐", 7: "取消"}
+    if a in fixed:
+        return fixed[a]
+    if a < 16:
+        return f"买 {_nm(shop, a - 8)}"
+    if a < 23:
+        return f"卖 {_nm(board, a - 16)}"
+    if a < 30:
+        return f"发动 {_nm(board, a - 23)}"
+    if a < 46:
+        return f"选 {_nm(choice, a - 30)}"
+    if a < 126:
+        h, pos = divmod(a - 46, 8)
+        return f"打出 {_nm(hand, h)} → 第 {pos + 1} 位"
+    if a < 196:
+        h, b = divmod(a - 126, 7)
+        return f"{_nm(hand, h)} 磁力吸附到 {_nm(board, b)}"
+    f_, t_ = divmod(a - 196, 7)
+    return f"把 {_nm(board, f_)} 从第 {f_ + 1} 位移到第 {t_ + 1} 位"
+
+
+def _record(context: dict, a: int, top: list, value, guard: str | None = None):
+    """追加一行到 records/<对局>.jsonl。对手部分每回合只存第一步（不变的东西不重复存）。出错不影响出牌。"""
+    try:
+        st = context["state"]
+        view = context.get("player_view") or {}
+        tk = (context.get("turn"), context.get("phase"))
+        full = st.get("rec_turn") != tk
+        st["rec_turn"] = tk
+        st["rec_n"] = st.get("rec_n", 0) + 1
+        v = view if full or not isinstance(view, dict) else {k: x for k, x in view.items() if k != "opponents"}
+        rec = {"n": st["rec_n"], "t": round(time.time(), 2), "seat": context.get("seat"), "turn": context.get("turn"),
+               "phase": context.get("phase"), "used": context.get("actions_used"), "left_ms": context.get("remaining_ms"),
+               "action": int(a), "text": describe(int(a), view), "guard": guard, "model": META["model_version"],
+               "value": None if value is None else round(float(value), 4),
+               "place": None if value is None else round(1.0 + (1.0 - float(value)) * 3.5, 2),
+               "top": [[int(x), round(float(p_), 4), describe(int(x), view)] for x, p_ in top], "view": v}
+        RECORDS.mkdir(exist_ok=True)
+        with open(RECORDS / f"{context['match_id']}.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception as ex:                        # noqa: BLE001
+        if not context["state"].get("rec_err"):
+            context["state"]["rec_err"] = True
+            print(f"对局记录写不了（不影响出牌）：{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
 
 @torch.no_grad()
@@ -115,6 +195,7 @@ def act(observation, context):
     if mask[A_END] and (left <= 2 or int(context.get("remaining_ms", 10 ** 9)) < 1500):
         st["guards"]["end_early"] += 1
         st["counts"]["end"] += 1
+        _record(context, A_END, [], None, guard="end_early")
         return A_END
     m = mask.copy()
     if st["noops"] >= 2:
@@ -141,9 +222,13 @@ def act(observation, context):
     f = np.array(observation["features"][:NF], dtype=np.float32)        # 复制：连接器给的数组是只读的
     c = np.asarray(observation["cards"][:NC], dtype=np.int64)
     c = REMAP[np.clip(c, 0, len(REMAP) - 1)]
-    logits, _, _ = MODEL(torch.from_numpy(f)[None], torch.from_numpy(c)[None], torch.from_numpy(m)[None])
+    logits, value, _ = MODEL(torch.from_numpy(f)[None], torch.from_numpy(c)[None], torch.from_numpy(m)[None])
     lg = logits[0].float().masked_fill(~torch.from_numpy(m), float("-inf"))
-    a = int(torch.argmax(F.log_softmax(lg, -1)))
+    probs = F.softmax(lg, -1)
+    a = int(torch.argmax(probs))
+    k = int(min(5, int(m.sum())))
+    pv, pi = torch.topk(probs, k)
+    top = list(zip(pi.tolist(), pv.tolist()))
     if not mask[a]:                                # 不会发生；防御一下
         a = int(np.flatnonzero(mask)[0])
     if a == A_FREEZE or a >= A_MOVE:
@@ -160,6 +245,7 @@ def act(observation, context):
     elif not (A_CHOOSE <= a < A_PLAY):
         st["trigger"] = a
     st["counts"][kind_of(a)] += 1
+    _record(context, a, top, float(value.reshape(-1)[0]))
     if a == A_END:
         _log(st, context["match_id"])
         st["counts"], st["guards"] = Counter(), Counter()

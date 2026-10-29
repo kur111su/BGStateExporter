@@ -76,10 +76,16 @@ def main() -> int:
                 else:
                     g.step(p, g.bot_action(p))
         assert steps > 20, steps
+        rec = [json.loads(x) for x in (arena / "records" / "test.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert len(rec) == steps and all(r["text"] for r in rec) and rec[0]["top"], rec[0]
+        assert agent.describe(8, {"me": {"shop": [{"name_zh": "测试"}]}}) == "买 测试"
         print(f"arena OK：{steps} 步，全部合法；日志 {sorted(p.name for p in (arena / 'logs').glob('test*'))}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         (arena / "logs" / "test.jsonl").unlink(missing_ok=True)
+        (arena / "records" / "test.jsonl").unlink(missing_ok=True)
+        if (arena / "records").exists() and not any((arena / "records").iterdir()):
+            (arena / "records").rmdir()
         if (arena / "logs").exists() and not any((arena / "logs").iterdir()):
             (arena / "logs").rmdir()
         for n in ("compat.json", "remap.npy"):
