@@ -59,7 +59,7 @@ for /f "usebackq delims=" %%V in (`%APY% -c "import json;print(json.load(open('a
 if not exist arena\results mkdir arena\results
 if /i not "%MODE%"=="check" goto :practice
 echo [3/3] Official connector --check (no queue) ...
-%APY% -X utf8 arena\arena_client.py --url %URL% --check --policy agent:act --catalog-sha256 %CAT% > arena\results\check.json
+%APY% -E -s -X utf8 arena\arena_client.py --url %URL% --check --policy agent:act --catalog-sha256 %CAT% > arena\results\check.json
 set "RC=%ERRORLEVEL%"
 type arena\results\check.json
 pause
@@ -74,7 +74,7 @@ if not defined ARENA_API_KEY (
   exit /b 1
 )
 echo Practice game (unrated) with model %MV% ...
-%APY% -X utf8 arena\arena_client.py --url %URL% --mode practice --policy agent:act --catalog-sha256 %CAT% --model-version %MV% > arena\results\practice_last.json
+%APY% -E -s -X utf8 arena\arena_client.py --url %URL% --mode practice --policy agent:act --catalog-sha256 %CAT% --model-version %MV% > arena\results\practice_last.json
 set "RC=%ERRORLEVEL%"
 type arena\results\practice_last.json
 %APY% -X utf8 -c "import pathlib;p=pathlib.Path('arena/results/practice_last.json');t=p.read_text(encoding='utf-8').strip();open('arena/results/history.jsonl','a',encoding='utf-8').write(t+'\n') if t else None"

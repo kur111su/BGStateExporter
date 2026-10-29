@@ -42,6 +42,8 @@ def main() -> int:
         (arena / "compat.json").write_text(json.dumps({"ok": True, "model_version": meta["model_version"],
                                                        "catalog_sha256": meta["catalog_sha256"]}), encoding="utf-8")
         np.save(arena / "remap.npy", np.arange(taverngym.N_CARDS, dtype=np.int64))
+        import os
+        os.environ["BGRL_ARENA_TEST"] = "1"
         import agent                                    # 只用 bundle 建模型，不读 TavernGym
         # 和训练时的模型输出一致
         g = taverngym.Game(seed=3)

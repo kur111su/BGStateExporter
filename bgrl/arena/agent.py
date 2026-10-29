@@ -70,6 +70,20 @@ def _load():
     return model, meta, remap
 
 
+def _no_taverngym():
+    """连接器发现能 import 的 taverngym 就会拿它和竞技场引擎比，所以这个环境里不能有（哪怕是个同名空文件夹）。"""
+    import importlib.util
+    import os
+    if os.environ.get("BGRL_ARENA_TEST") == "1":           # 只给 tests/test_arena.py 用（训练环境里本来就装着 TavernGym）
+        return
+    spec = importlib.util.find_spec("taverngym")
+    if spec is not None:
+        where = spec.origin or list(spec.submodule_search_locations or [])
+        raise SystemExit(f"连接器的环境里找得到一个 taverngym：{where}。它来自 PYTHONPATH 或当前目录；"
+                         f"arena.bat 用 -E -s 运行时不该出现，请把这行发给我")
+
+
+_no_taverngym()
 MODEL, META, REMAP = _load()
 NF, NC = META["floats"], META["cards"]
 LOGS = HERE / "logs"
