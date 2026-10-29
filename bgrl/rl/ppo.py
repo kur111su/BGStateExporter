@@ -111,6 +111,11 @@ class Config:
     # 有 56 个回合钱够却不升；奖励在 tempo_anneal_iters 轮内线性减到 0，之后只靠名次判断升本值不值
     tempo_bonus: float = 0.0
     tempo_anneal_iters: int = 1500
+    # 落后扣分（不减弱）：每次结束回合时，估计等级（1 + 本局升本次数）比目标曲线 - 0.5 低多少，就扣 tempo_deficit × 差值。
+    # 第 3041–3770 轮：升本奖励减到 0 以后，第 5/7/9/11/13 回合等级从 1.9/2.7/3.4/4.3/5.3 退回 1.8/2.5/3.3/3.9/4.7，
+    # 只靠名次学不会按时升本；这一项一直在，逼它跟上 6500+ 的节奏（第 5 回合 3.7 本、第 9 回合 5.3 本）
+    tempo_deficit: float = 0.0
+    bc_scale_min: float = 0.01     # 模仿强度最低降到多少（见 bc_train_cap）
     # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
     # （竞技场 5 局：296 次刷新里 232 次之后什么都没买）
     refresh_waste_penalty: float = 0.0
@@ -519,7 +524,7 @@ class Trainer:
         if cap <= 0 or tr is None:
             return
         if tr > cap:
-            self.bc_scale = max(0.05, self.bc_scale * 0.5)
+            self.bc_scale = max(self.cfg.bc_scale_min, self.bc_scale * 0.5)
         elif tr < cap - 0.1:
             self.bc_scale = min(1.0, self.bc_scale * 1.5)
 
@@ -544,6 +549,16 @@ class Trainer:
         """升本节奏奖励（当场加在升本这一步上）；记下刷新，供 _after_add 判断是不是无效刷新。"""
         tb = self.tempo_now()
         turns = np.rint(f[:, 0] * 20).astype(int)
+        dc = self.cfg.tempo_deficit
+        for j in np.flatnonzero(ak == A_END):              # 结束回合：落后于目标曲线就扣分
+            s = int(slots[j])
+            ep = int(self.rollout.ep[s])
+            tier = 1 + (int(self.upg_n[s]) if self.upg_ep[s] == ep else 0)
+            gap = max(0.0, self._tier_target(int(turns[j])) - 0.5 - tier)
+            self.mix["gap_sum"] += gap
+            self.mix["gap_n"] += 1
+            if dc > 0 and gap > 0:
+                r0[j] -= dc * gap
         for j in np.flatnonzero(ak == A_UPGRADE):
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
@@ -853,7 +868,8 @@ class Trainer:
             rec.update(up_turn=round(mx["upgrade"] / ends, 3), ref_turn=round(mx["refresh"] / ends, 2),
                        buy_turn=round(mx["buy"] / ends, 2), sell_turn=round(mx["sell"] / ends, 3),
                        ref_waste=round(mx["refresh_waste"] / max(1, mx["refresh"]), 3),
-                       tempo_bonus=round(self.tempo_now(), 4), tempo_paid=mx["tempo_paid"])
+                       tempo_bonus=round(self.tempo_now(), 4), tempo_paid=mx["tempo_paid"],
+                       tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3))
             self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]

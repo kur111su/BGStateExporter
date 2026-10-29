@@ -42,4 +42,4 @@ jobs:
       - name: Pro-board library from a synthetic sample + tiny PPO run with pro boards
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01

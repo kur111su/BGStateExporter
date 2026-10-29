@@ -26,7 +26,7 @@ def main() -> int:
     assert t.mix["refresh_waste"] == 2 and t.mix["refresh"] == 3 and t.mix["buy"] == 1 and t.mix["end"] == 1
 
     # 升本奖励：第 3 回合真人约 2.05 本，门槛 2.55 → 1→2、2→3 给奖励（升之前 1、2 本），3→4 不给（升之前 3 本）
-    t2 = SimpleNamespace(cfg=SimpleNamespace(tempo_bonus=0.03, tempo_anneal_iters=100), tempo_t0=None, iter=0,
+    t2 = SimpleNamespace(cfg=SimpleNamespace(tempo_bonus=0.03, tempo_anneal_iters=100, tempo_deficit=0.0), tempo_t0=None, iter=0,
                          tier_curve={1: 1.0, 3: 2.05, 9: 5.04}, upg_ep=np.full(1, -1, dtype=np.int64),
                          upg_n=np.zeros(1, dtype=np.int64), rollout=roll, mix=defaultdict(int))
     t2.tempo_now = lambda: Trainer.tempo_now(t2)
@@ -45,8 +45,22 @@ def main() -> int:
     t2.iter = 500
     assert Trainer.tempo_now(t2) == 0.0
     assert Trainer._tier_target(t2, 5) == 2.05 and Trainer._tier_target(t2, 99) == 5.04
+    # 落后扣分：第 9 回合目标 5.04，估计等级 1 + 已升 2 次 = 3 → 差 1.54 → 扣 0.0154；升本奖励已减到 0 也照扣
+    t4 = SimpleNamespace(cfg=SimpleNamespace(tempo_bonus=0.0, tempo_deficit=0.01), tempo_t0=None, iter=0,
+                         tier_curve={1: 1.0, 3: 2.05, 9: 5.04}, upg_ep=np.zeros(1, dtype=np.int64),
+                         upg_n=np.array([2]), rollout=roll, mix=defaultdict(int))
+    t4.tempo_now = lambda: Trainer.tempo_now(t4)
+    t4._tier_target = lambda turn: Trainer._tier_target(t4, turn)
+    roll.ep[0] = 0
+    f9 = np.zeros((1, 4), dtype=np.float32)
+    f9[0, 0] = 9 / 20
+    r = Trainer._shape(t4, np.array([0]), f9, np.array([A_END]), np.zeros(1))
+    assert abs(r[0] + 0.0154) < 1e-9, r
+    t4.upg_n[0] = 5                                         # 6 本：不落后，不扣
+    assert Trainer._shape(t4, np.array([0]), f9, np.array([A_END]), np.zeros(1))[0] == 0.0
+
     # 模仿强度：训练示范命中率高于上限减半（最低 0.05），低于上限 - 0.1 回升
-    t3 = SimpleNamespace(cfg=SimpleNamespace(bc_train_cap=0.6), bc_scale=1.0)
+    t3 = SimpleNamespace(cfg=SimpleNamespace(bc_train_cap=0.6, bc_scale_min=0.05), bc_scale=1.0)
     for tr, want in ((0.99, 0.5), (0.95, 0.25), (0.55, 0.25), (0.4, 0.375), (0.3, 0.5625)):
         Trainer.adjust_bc(t3, {"human_top1_train": tr})
         assert abs(t3.bc_scale - want) < 1e-9, (tr, t3.bc_scale, want)
