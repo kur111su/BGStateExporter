@@ -7,6 +7,7 @@
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   demos     把你的对局记录变成示范数据 runs/demos.npz（训练时模仿你的操作；tools/make_demos.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
+  prodemos  高分对局回放（Firestone 6500+ 分享包的 rawxml-sanitized）→ 高分玩家决策样本 runs/pro_demos/
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
@@ -28,7 +29,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
-         "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library",
+         "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check",
          "profile": "opp_profile", "bench": "tg_bench"}
 
@@ -41,7 +42,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 
 def _test() -> int:
     rc = 0
-    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py"):
+    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")

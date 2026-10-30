@@ -116,6 +116,12 @@ class Config:
     # 只靠名次学不会按时升本；这一项一直在，逼它跟上 6500+ 的节奏（第 5 回合 3.7 本、第 9 回合 5.3 本）
     tempo_deficit: float = 0.0
     bc_scale_min: float = 0.01     # 模仿强度最低降到多少（见 bc_train_cap）
+    # 模仿 6500+ 高分玩家（tools/make_pro_demos.py 从 Firestone 回放生成 runs/pro_demos/，约 10 万条决策）：
+    # 和“模仿你的操作”分开算，有自己的系数、按类别权重和留出局指标（pro_top1 / pro_upgrade / pro_end …）
+    pro_coef: float = 0.0
+    pro_data: str = ""             # 空 = runs/pro_demos
+    pro_weights: str = ""          # 例如 "upgrade:3,end:2"
+    pro_batch: int = 256
     # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
     # （竞技场 5 局：296 次刷新里 232 次之后什么都没买）
     refresh_waste_penalty: float = 0.0
@@ -292,6 +298,8 @@ class Trainer:
         self.demos = self._load_demos()
         self.bc_rng = np.random.default_rng(cfg.seed + 7)
         self.bc_w = self._bc_weights() if self.demos is not None else None
+        self.pro = self._load_pro()
+        self.pro_w = self._bc_weights(self.pro, cfg.pro_weights) if self.pro is not None else None
         self.bc_scale = 1.0                            # 模仿强度的倍数（见 bc_train_cap；存在检查点里）
         prof = load_real_profile().get("turns") or {}
         pro_prof = Path(__file__).resolve().parent / "pro_profile.json"
@@ -480,41 +488,70 @@ class Trainer:
               f"（{d['meta'].get('created')}）；模仿系数 {self.cfg.bc_coef}", flush=True)
         return d
 
-    def _demo_tensors(self, j):
-        d = self.demos
+    def _load_pro(self):
+        from paths import RUNS
+        path = Path(self.cfg.pro_data) if self.cfg.pro_data else RUNS / "pro_demos"
+        if not path.exists():
+            if self.cfg.pro_coef > 0:
+                print(f"没有高分决策样本 {path}（先运行 bg.py prodemos），这次不模仿高分玩家", flush=True)
+            return None
+        try:
+            from tools.make_pro_demos import load_dir
+            d = load_dir(path)
+        except Exception as ex:                        # noqa: BLE001
+            print(f"高分决策样本 {path} 读不了（{type(ex).__name__}: {ex}）", flush=True)
+            return None
+        if d is None:
+            return None
+        if d["m"].shape[1] != self.model.L.actions or d["f"].shape[1:] != self.obs[self.envs[0][0]]["features"].shape[1:]:
+            print(f"高分决策样本 {path} 和当前环境的格式不一样，重新运行 bg.py prodemos", flush=True)
+            return None
+        d["train_idx"] = np.flatnonzero(d["split"] == 0)
+        d["val_idx"] = np.flatnonzero(d["split"] == 1)
+        print(f"高分决策样本：{d['meta'].get('games')} 局，训练 {len(d['train_idx'])} 条、验证 {len(d['val_idx'])} 条；"
+              f"模仿系数 {self.cfg.pro_coef}", flush=True)
+        return d
+
+    def _demo_tensors(self, j, d=None):
+        d = self.demos if d is None else d
         t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
         return (t(d["f"][j], torch.float32), t(d["c"][j], torch.long), t(d["m"][j], torch.bool),
                 t(d["cand"][j].astype(np.int64), torch.long))
 
-    def _demo_logp(self, f, c, m):
+    def _demo_logp(self, f, c, m, compressed=False):
         with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
-            logits = self.model(f, c, m)[0]
+            logits = self.model(f, c, m, compressed=compressed)[0]
         return F.log_softmax(logits.float(), -1)
 
-    def _bc_weights(self):
+    def _bc_weights(self, d=None, spec=None):
         from tools.make_demos import KINDS
+        d = self.demos if d is None else d
+        spec = self.cfg.bc_weights if spec is None else spec
         w = {}
-        for part in str(self.cfg.bc_weights or "").replace(" ", "").split(","):
+        for part in str(spec or "").replace(" ", "").split(","):
             if ":" in part:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
-        out = np.ones(len(self.demos["kind"]), dtype=np.float32)
+        out = np.ones(len(d["kind"]), dtype=np.float32)
         for k, v in w.items():
-            out[self.demos["kind"] == k] = v
+            out[d["kind"] == k] = v
         return out
 
-    def bc_loss(self):
-        j = self.bc_rng.choice(self.demos["train_idx"], size=min(self.cfg.bc_batch, len(self.demos["train_idx"])))
-        f, c, m, cand = self._demo_tensors(j)
-        lp_all = self._demo_logp(f, c, m)
+    def bc_loss(self, d=None, wts=None, batch=None):
+        d = self.demos if d is None else d
+        wts = self.bc_w if wts is None else wts
+        batch = batch or self.cfg.bc_batch
+        j = self.bc_rng.choice(d["train_idx"], size=min(batch, len(d["train_idx"])))
+        f, c, m, cand = self._demo_tensors(j, d)
+        lp_all = self._demo_logp(f, c, m, bool(d.get("compressed")))
         lp = lp_all.gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
         nll = -torch.logsumexp(lp, 1)                  # 候选有几个（磁力吸附目标不确定）时，任一个都算对
         eps = self.cfg.bc_smooth
         if eps > 0:                                    # 标签平滑：合法动作上的平均对数概率
             uni = -(lp_all.masked_fill(~m, 0).sum(-1) / m.sum(-1).clamp(min=1))
             nll = (1 - eps) * nll + eps * uni
-        w = torch.as_tensor(self.bc_w[j], device=nll.device)
+        w = torch.as_tensor(wts[j], device=nll.device)
         return (nll * w).sum() / w.sum()
 
     def adjust_bc(self, he: dict) -> None:
@@ -591,33 +628,36 @@ class Trainer:
                 self.mix[kind] += 1
 
     @torch.no_grad()
-    def human_eval(self) -> dict:
-        """留出的验证局上：模型最可能的动作是不是你做的那个（human_top1），按类别的命中率，平均交叉熵。"""
+    def human_eval(self, d=None, prefix: str = "human") -> dict:
+        """留出的验证局上：模型最可能的动作是不是示范里的那个（{prefix}_top1），按类别的命中率，平均交叉熵。"""
         from tools.make_demos import KINDS
-        d = self.demos
+        d = self.demos if d is None else d
         self.model.eval()
         out = {}
-        for tag, idx in (("", d["val_idx"]), ("_train", d["train_idx"][:2000])):
+        val = d["val_idx"]
+        if len(val) > 6000:                            # 高分样本的验证集很大：固定抽 6000 条（每次同一批）
+            val = val[np.random.default_rng(0).permutation(len(val))[:6000]]
+        for tag, idx in (("", val), ("_train", d["train_idx"][:2000])):
             if not len(idx):
                 continue
             hit, nll = [], []
             for s in range(0, len(idx), self.cfg.micro_batch):
                 j = idx[s:s + self.cfg.micro_batch]
-                f, c, m, cand = self._demo_tensors(j)
-                lp = self._demo_logp(f, c, m)
+                f, c, m, cand = self._demo_tensors(j, d)
+                lp = self._demo_logp(f, c, m, bool(d.get("compressed")))
                 top = lp.argmax(1, keepdim=True)
                 hit.append(((cand == top) & (cand >= 0)).any(1).cpu().numpy())
                 nll.append((-torch.logsumexp(lp.gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf")), 1))
                            .clamp(max=20).cpu().numpy())
             hit, nll = np.concatenate(hit), np.concatenate(nll)
-            out["human_top1" + tag] = round(float(hit.mean()), 3)
+            out[f"{prefix}_top1" + tag] = round(float(hit.mean()), 3)
             if tag == "":
-                out["human_nll"] = round(float(nll.mean()), 3)
+                out[f"{prefix}_nll"] = round(float(nll.mean()), 3)
                 kind = d["kind"][idx]
                 for k in ("upgrade", "end", "buy", "refresh", "sell"):
                     sel = kind == KINDS.index(k)
                     if sel.any():
-                        out[f"human_{k}"] = round(float(hit[sel].mean()), 3)
+                        out[f"{prefix}_{k}"] = round(float(hit[sel].mean()), 3)
         self.model.train()
         return out
 
@@ -683,6 +723,10 @@ class Trainer:
                     bc = self.bc_loss()
                     self.scaler.scale(cfg.bc_coef * self.bc_scale * bc).backward()
                     stats["bc"].append(bc.item())
+                if self.pro is not None and cfg.pro_coef > 0 and len(self.pro["train_idx"]):
+                    pb = self.bc_loss(self.pro, self.pro_w, cfg.pro_batch)
+                    self.scaler.scale(cfg.pro_coef * pb).backward()
+                    stats["pro_bc"].append(pb.item())
                 gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
                     stats["skipped"].append(1.0)
@@ -901,6 +945,8 @@ class Trainer:
                     he = self.human_eval()
                     self.adjust_bc(he)
                     rec.update(he, bc_scale=round(self.bc_scale, 3))
+                if self.pro is not None:
+                    rec.update(self.human_eval(self.pro, "pro"))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 self.mark_good()

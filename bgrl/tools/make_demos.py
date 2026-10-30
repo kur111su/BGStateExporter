@@ -31,7 +31,8 @@ from paths import RUNS, games_dir  # noqa: E402
 from tg.actions import A_END  # noqa: E402
 
 MAX_CANDS = 8
-KINDS = ("buy", "sell", "play", "cast", "magnetize", "upgrade", "refresh", "hero_power", "move", "end")
+KINDS = ("buy", "sell", "play", "cast", "magnetize", "upgrade", "refresh", "hero_power", "move", "end",
+         "freeze", "dark_gift", "activate")          # 后三个只在高分回放里有（tools/make_pro_demos.py）；只能往后加
 
 
 def _obs(g):

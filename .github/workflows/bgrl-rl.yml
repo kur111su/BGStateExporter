@@ -4,7 +4,7 @@ name: bgrl RL checks
 
 on:
   push:
-    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/make_demos.py", "bgrl/tools/pro_library.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", "bgrl/arena/**", ".github/workflows/bgrl-rl.yml"]
+    paths: ["bgrl/rl/**", "bgrl/tg/**", "bgrl/third_party/**", "bgrl/tools/tavernbench.py", "bgrl/bg.py", "bgrl/paths.py", "bgrl/tools/train.py", "bgrl/tools/make_demos.py", "bgrl/tools/pro_library.py", "bgrl/tools/make_pro_demos.py", "bgrl/tools/opp_profile.py", "bgrl/tools/shadow.py", "bgrl/tests/**", "bgrl/arena/**", ".github/workflows/bgrl-rl.yml"]
   workflow_dispatch:
 
 jobs:
@@ -43,3 +43,8 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01
+      - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
+        run: |
+          python -X utf8 bgrl/tests/test_hsreplay.py --write-sample bgrl/runs/_replays
+          python -X utf8 bgrl/bg.py prodemos bgrl/runs/_replays --workers 1 --val-every 3
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,end:2"

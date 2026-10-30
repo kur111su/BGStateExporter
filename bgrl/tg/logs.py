@@ -143,6 +143,21 @@ class GameHistory:
         return s
 
 
+def load_records(records: list[dict], name: str) -> list[dict]:
+    """同 load_game，但记录已经在内存里（tg/hsreplay.py 从回放生成的）。"""
+    hist = GameHistory()
+    out = []
+    for s in records:
+        if not s.get("isBattlegrounds") or s.get("mode") not in (None, "solo"):
+            continue
+        s = _normalize(s)
+        hist.feed(s)
+        if s.get("phase") == "recruit" and s.get("player"):
+            s["_file"] = name
+            out.append(hist.annotate(s))
+    return out
+
+
 def load_game(path: str | os.PathLike) -> list[dict]:
     """本局的招募阶段记录（按顺序），每条加上 _file、_seen、_dark_gifts（见 GameHistory）。"""
     name = os.path.basename(str(path))
