@@ -135,6 +135,15 @@ class Config:
     # 再买 / 刷新；第 4–5 回合也是先发动、刷新，把升本拖到费用降到 1–2 块。落后扣分只在回合末按等级差扣，
     # 分不清是哪一步把升本的钱花掉的；这一项直接扣在那一步上
     upgrade_starve_penalty: float = 0.0
+    # 上面那项里“买随从”按多少倍扣（1 = 和别的花法一样，0 = 买随从不扣）。
+    # 第 4351–5054 轮（0.5）：第 2 回合升本率 4% → 51%，但买随从的钱第 5–8 回合只有高手的 1/4–1/3，阵容跟不上
+    starve_buy_weight: float = 0.5
+    # 回合末没花掉的钱：每剩 1 块扣这么多（第 2 回合起；高手几乎不剩，模型每回合剩 0.2–0.8 块）
+    unspent_gold_penalty: float = 0.0
+    # 防止背下高分示范：每次考试比较训练示范和留出局的命中率，差距大于 pro_gap_cap 就把模仿高手的强度减半，
+    # 差距小于 pro_gap_cap - 0.04 再加回来（最多到 pro_coef）。0 = 不控制。
+    # 第 4351–5054 轮（pro_coef 0.1）：训练示范命中率 0.44 → 0.70，留出局 0.45 → 0.41，交叉熵 2.0 → 2.33——在背题
+    pro_gap_cap: float = 0.0
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -311,6 +320,7 @@ class Trainer:
         self.pro = self._load_pro()
         self.pro_w = self._bc_weights(self.pro, cfg.pro_weights) if self.pro is not None else None
         self.bc_scale = 1.0                            # 模仿强度的倍数（见 bc_train_cap；存在检查点里）
+        self.pro_scale = 1.0                           # 模仿高手强度的倍数（见 pro_gap_cap；存在检查点里）
         prof = load_real_profile().get("turns") or {}
         pro_prof = Path(__file__).resolve().parent / "pro_profile.json"
         if cfg.tempo_curve == "pro" and pro_prof.exists():
@@ -580,6 +590,17 @@ class Trainer:
         elif tr < cap - 0.1:
             self.bc_scale = min(1.0, self.bc_scale * 1.5)
 
+    def adjust_pro(self, pe: dict) -> None:
+        """按训练示范和留出局命中率的差距调模仿高手的强度（考试时调用）。"""
+        cap = self.cfg.pro_gap_cap
+        tr, va = pe.get("pro_top1_train"), pe.get("pro_top1")
+        if cap <= 0 or tr is None or va is None:
+            return
+        if tr - va > cap:
+            self.pro_scale = max(self.cfg.bc_scale_min, self.pro_scale * 0.5)
+        elif tr - va < cap - 0.04:
+            self.pro_scale = min(1.0, self.pro_scale * 1.5)
+
     def tempo_now(self) -> float:
         cfg = self.cfg
         if cfg.tempo_bonus <= 0:
@@ -649,7 +670,7 @@ class Trainer:
                 self.mix["starve"] += 1
                 prev = int(self.rollout.last[s])
                 if pen > 0 and prev >= 0:
-                    self.rollout.r[prev] -= pen * (0.5 if A_BUY <= g["act"][s] < A_SELL else 1.0)
+                    self.rollout.r[prev] -= pen * (self.cfg.starve_buy_weight if A_BUY <= g["act"][s] < A_SELL else 1.0)
             if not (g["ts_turn"][s] == t and g["ep"][s] == ep):         # 新回合的第一步
                 g["ts_turn"][s], g["ts_tier"][s], g["ts_aff"][s] = t, tier, int(up > 0 and gold >= up)
             behind = tier < self._tier_target(t) - 0.5
@@ -660,6 +681,10 @@ class Trainer:
                 if t == 2:
                     self.mix["t2_n"] += 1
                     self.mix["t2_up"] += int(tier > g["ts_tier"][s])
+                if t >= 2 and gold > 0:
+                    self.mix["unspent"] += gold
+                    if self.cfg.unspent_gold_penalty > 0:
+                        r0[j] -= self.cfg.unspent_gold_penalty * gold
                 if behind and up > 0 and gold >= up:                    # 钱够升本、落后，却结束回合
                     self.mix["end_rich"] += 1
                     if pen > 0:
@@ -786,7 +811,7 @@ class Trainer:
                     stats["bc"].append(bc.item())
                 if self.pro is not None and cfg.pro_coef > 0 and len(self.pro["train_idx"]):
                     pb = self.bc_loss(self.pro, self.pro_w, cfg.pro_batch)
-                    self.scaler.scale(cfg.pro_coef * pb).backward()
+                    self.scaler.scale(cfg.pro_coef * self.pro_scale * pb).backward()
                     stats["pro_bc"].append(pb.item())
                 gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
@@ -906,7 +931,7 @@ class Trainer:
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
                     "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
-                    "bc_scale": self.bc_scale}, self.run / "latest.pt")
+                    "bc_scale": self.bc_scale, "pro_scale": self.pro_scale}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -918,6 +943,7 @@ class Trainer:
         self.league = League.from_json(ck["league"], load_real_profile())
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
+        self.pro_scale = float(ck.get("pro_scale", self.pro_scale))
         if self.adapt is not None:
             b = ck.get("boost") or {}
             if b.get("kind", "scale") == self.cfg.boost_kind:  # 换了加强方式：强度从头调（放大攻防的 0.88 和换阵容的 0.88 不是一回事）
@@ -976,7 +1002,8 @@ class Trainer:
                        tempo_bonus=round(self.tempo_now(), 4), tempo_paid=mx["tempo_paid"],
                        tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3),
                        up_afford=round(mx["aff_up"] / max(1, mx["aff_n"]), 3), up_t2=round(mx["t2_up"] / max(1, mx["t2_n"]), 3),
-                       starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3))
+                       starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
+                       unspent=round(mx["unspent"] / ends, 3))
             self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
@@ -1009,7 +1036,9 @@ class Trainer:
                     self.adjust_bc(he)
                     rec.update(he, bc_scale=round(self.bc_scale, 3))
                 if self.pro is not None:
-                    rec.update(self.human_eval(self.pro, "pro"))
+                    pe = self.human_eval(self.pro, "pro")
+                    self.adjust_pro(pe)
+                    rec.update(pe, pro_scale=round(self.pro_scale, 3))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 self.mark_good()

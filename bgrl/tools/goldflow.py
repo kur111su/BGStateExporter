@@ -220,6 +220,8 @@ def show(model: dict, pro: dict | None, upto: int = 9):
             ua = f"{r['up_afford'] * 100:.0f}%" if r.get("up_afford") is not None else "-"
             print(f"{t:>4} | {who} | {r['gold']:>4} | " + " ".join(f"{(r.get(k) or 0):>6.2f}" for k in COLS) +
                   f" | {r['income']:>4} | {r['left']:>3} | {r['tier']:>10} | {r['up'] * 100:>5.0f}% | {ua:>8}")
+    if pro:
+        print("（高手一列：回放里认不出“发动”和黑暗之赐是哪一步花的钱，都算在“其它”里）")
 
 
 def advice(model: dict, pro: dict | None) -> list[str]:

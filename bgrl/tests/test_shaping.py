@@ -62,7 +62,7 @@ def main() -> int:
     # 花掉升本的钱：第 2 回合 4 块、升本 4 块、1 本（目标 1.86 - 0.5 > 1 → 落后）
     #   发动 → 选（这一步花了 1 块：4 → 3，扣在“选”上）→ 买（3 → 0，之前就不够升本，不扣）→ 结束
     roll5 = SimpleNamespace(r=[], last=np.full(1, -1, dtype=np.int64), ep=np.zeros(1, dtype=np.int64))
-    t5 = SimpleNamespace(cfg=SimpleNamespace(upgrade_starve_penalty=0.04), tier_curve={1: 1.0, 2: 1.86, 5: 3.17},
+    t5 = SimpleNamespace(cfg=SimpleNamespace(upgrade_starve_penalty=0.04, starve_buy_weight=0.5, unspent_gold_penalty=0.0), tier_curve={1: 1.0, 2: 1.86, 5: 3.17},
                          rollout=roll5, mix=defaultdict(int))
     t5._tier_target = lambda turn: Trainer._tier_target(t5, turn)
 
@@ -91,6 +91,19 @@ def main() -> int:
     roll5.r.clear()
     step(A_END, 6, 9, 6, 2)
     assert roll5.r == [-0.04] and t5.mix["end_rich"] == 1, roll5.r
+    # 不扣买随从（starve_buy_weight 0）；剩下的钱按块扣（unspent_gold_penalty）
+    t5.cfg.starve_buy_weight, t5.cfg.unspent_gold_penalty = 0.0, 0.005
+    roll5.ep[0] = 3
+    roll5.r.clear()
+    step(A_BUY, 5, 7, 6, 2)
+    step(A_END, 5, 2, 6, 2)
+    assert roll5.r == [0.0, -0.01], roll5.r
+
+    # 模仿高手的强度：训练示范比留出局高出 pro_gap_cap 以上就减半，差距小了再加回来
+    t6 = SimpleNamespace(cfg=SimpleNamespace(pro_gap_cap=0.08, bc_scale_min=0.05), pro_scale=1.0)
+    for tr, va, want in ((0.70, 0.41, 0.5), (0.60, 0.42, 0.25), (0.47, 0.42, 0.25), (0.44, 0.43, 0.375)):
+        Trainer.adjust_pro(t6, {"pro_top1_train": tr, "pro_top1": va})
+        assert abs(t6.pro_scale - want) < 1e-9, (tr, va, t6.pro_scale)
 
     # 高分示范按类别 + 按回合加权：t2:2 第 2 回合 ×2，t3-4:1.5 第 3–4 回合 ×1.5
     from tools.make_demos import KINDS
