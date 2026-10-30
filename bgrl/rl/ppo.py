@@ -94,7 +94,7 @@ class Config:
     # 加强方式：scale = 放大机器人场面攻防（只是身材变大）；pro = 换成同一回合 6500+ 高分对局的真实阵容
     # （tools/pro_library.py 生成 runs/pro_boards.json，带高本随从和它们的效果）。pro 时 strength = 每个机器人被换的概率
     boost_kind: str = "scale"
-    pro_boards: str = ""           # 空 = runs/pro_boards.json
+    pro_boards: str = ""           # 空 = runs/pro_boards.json；几个库用分号隔开（例如加上 runs/h13_boards.json）
     # 升本节奏奖励的目标曲线：real = 你的对局（rl/real_profile.json）；pro = 6500+ 高分对局（rl/pro_profile.json）
     tempo_curve: str = "real"
     # 模仿你的操作（tools/make_demos.py 生成 runs/demos.npz）：每个小批另外抽 bc_batch 条示范算交叉熵，乘 bc_coef 加进损失。
@@ -122,7 +122,7 @@ class Config:
     # 模仿 6500+ 高分玩家（tools/make_pro_demos.py 从 Firestone 回放生成 runs/pro_demos/，约 10 万条决策）：
     # 和“模仿你的操作”分开算，有自己的系数、按类别权重和留出局指标（pro_top1 / pro_upgrade / pro_end …）
     pro_coef: float = 0.0
-    pro_data: str = ""             # 空 = runs/pro_demos
+    pro_data: str = ""             # 空 = runs/pro_demos；几个目录用分号隔开（例如 "runs/pro_demos;runs/h13_demos"）
     pro_weights: str = ""          # 例如 "upgrade:3,end:2"
     pro_batch: int = 256
     # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
@@ -475,10 +475,15 @@ class Trainer:
         cfg = self.cfg
         if cfg.boost_kind == "pro":
             from paths import RUNS
-            path = Path(cfg.pro_boards) if cfg.pro_boards else RUNS / "pro_boards.json"
-            if path.exists():
+            paths = [Path(p) for p in str(cfg.pro_boards).split(";") if p.strip()] or [RUNS / "pro_boards.json"]
+            have = [p for p in paths if p.exists()]
+            path = ";".join(str(p) for p in have) or paths[0]
+            if have:
                 if not getattr(self, "_pro_lib", None):
-                    self._pro_lib = load_pro_boards(path)
+                    self._pro_lib = {}
+                    for p in have:                     # 几个阵容库（分号隔开）合在一起
+                        for t, v in load_pro_boards(p).items():
+                            self._pro_lib.setdefault(t, []).extend(v)
                     print(f"高分阵容库：{sum(len(v) for v in self._pro_lib.values())} 个整板（{path}）", flush=True)
                 return ProBoardBooster(self._pro_lib, frac, cfg.boost_from_turn, seed=seed, every=cfg.boost_every)
             print(f"没有高分阵容库 {path}（先运行 bg.py prolib），改用放大攻防", flush=True)
@@ -510,19 +515,31 @@ class Trainer:
 
     def _load_pro(self):
         from paths import RUNS
-        path = Path(self.cfg.pro_data) if self.cfg.pro_data else RUNS / "pro_demos"
-        if not path.exists():
-            if self.cfg.pro_coef > 0:
-                print(f"没有高分决策样本 {path}（先运行 bg.py prodemos），这次不模仿高分玩家", flush=True)
+        # 可以写几个目录，用分号隔开（例如 "runs\\pro_demos;runs\\h13_demos"），合在一起用
+        paths = [Path(p) for p in str(self.cfg.pro_data).split(";") if p.strip()] or [RUNS / "pro_demos"]
+        from tools.make_pro_demos import load_dir
+        parts = []
+        for path in paths:
+            if not path.exists():
+                if self.cfg.pro_coef > 0:
+                    print(f"没有高分决策样本 {path}（先运行 bg.py prodemos / nativedemos），跳过", flush=True)
+                continue
+            try:
+                x = load_dir(path)
+            except Exception as ex:                    # noqa: BLE001
+                print(f"高分决策样本 {path} 读不了（{type(ex).__name__}: {ex}）", flush=True)
+                continue
+            if x is not None:
+                print(f"  {path}：{len(x['kind'])} 条（{x['meta'].get('source', '')}）", flush=True)
+                parts.append(x)
+        if not parts:
             return None
-        try:
-            from tools.make_pro_demos import load_dir
-            d = load_dir(path)
-        except Exception as ex:                        # noqa: BLE001
-            print(f"高分决策样本 {path} 读不了（{type(ex).__name__}: {ex}）", flush=True)
-            return None
-        if d is None:
-            return None
+        d = parts[0]
+        if len(parts) > 1:
+            d = {k: np.concatenate([p[k] for p in parts]) for k in ("f", "c", "m", "cand", "kind", "turn", "split", "mmr")}
+            d["compressed"] = True
+            d["meta"] = {"games": sum(int(p["meta"].get("games") or 0) for p in parts)}
+        path = ";".join(str(p) for p in paths)
         if d["m"].shape[1] != self.model.L.actions or d["f"].shape[1:] != self.obs[self.envs[0][0]]["features"].shape[1:]:
             print(f"高分决策样本 {path} 和当前环境的格式不一样，重新运行 bg.py prodemos", flush=True)
             return None
@@ -744,6 +761,14 @@ class Trainer:
                     sel = kind == KINDS.index(k)
                     if sel.any():
                         out[f"{prefix}_{k}"] = round(float(hit[sel].mean()), 3)
+                mm = d.get("mmr")
+                if mm is not None:                     # 几个来源合在一起时（--pro-data "a;b"）：万分以上的那部分单独看
+                    hi = mm[idx] >= 10000
+                    if hi.any() and not hi.all():
+                        out[f"{prefix}_top1_hi"] = round(float(hit[hi].mean()), 3)
+                        sel = hi & (kind == KINDS.index("upgrade"))
+                        if sel.any():
+                            out[f"{prefix}_upgrade_hi"] = round(float(hit[sel].mean()), 3)
         self.model.train()
         return out
 

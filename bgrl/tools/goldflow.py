@@ -122,6 +122,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     logs = [TurnLog() for _ in range(env.n_slots)]
     done = [False] * env.n_slots
     places = {}
+    last_cards = [None] * env.n_slots                  # 每局最后一次招募时的场面（最终阵容）
     obs = env.observe()
     for _ in range(100000):
         if all(done):
@@ -140,6 +141,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             a = a.cpu().numpy()
             for k, i in enumerate(ready):
                 fi = f[k]
+                last_cards[i] = obs["cards"][i][19:26].copy()
                 logs[i].see(int(round(fi[0] * 20)), int(round(fi[F_GOLD] * 10)), int(round(fi[F_TIER] * 6)),
                             int(round(fi[F_UPCOST] * 10)), int(a[k]))
             actions[ready] = a
@@ -151,6 +153,15 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{Path(ckpt).name}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（对脚本机器人）", flush=True)
+    import taverngym
+    finals = []
+    for i, row in enumerate(last_cards):
+        if row is None:
+            continue
+        ids = [taverngym.card_info(int(x))[0] for x in row if x > 0]
+        finals.append({"board": [x[:-2] if x.endswith("_G") else x for x in ids], "golden": sum(x.endswith("_G") for x in ids),
+                       "place": places.get(i, 0)})
+    info["finals"] = finals
     return [x.turns for x in logs], info
 
 
@@ -224,6 +235,26 @@ def show(model: dict, pro: dict | None, upto: int = 9):
         print("（高手一列：回放里认不出“发动”和黑暗之赐是哪一步花的钱，都算在“其它”里）")
 
 
+def show_comps(finals: list[dict]) -> dict | None:
+    """模型的最终阵容（场上 ≥ 5 个随从的局）和 rl/h13_profile.json（万三分段）对比。"""
+    from tools.native_demos import ZH_RACE, comp_stats
+    fb = [x for x in finals if len(x["board"]) >= 5]
+    if not fb:
+        return None
+    m = comp_stats([x["board"] for x in fb], [x["golden"] for x in fb], [])
+    hp = ROOT / "rl" / "h13_profile.json"
+    h = json.loads(hp.read_text(encoding="utf-8"))["final"] if hp.exists() else None
+    print(f"\n最终阵容（场上 ≥5 个随从的 {m['n']} 局）：金色 {m['golden']} 个" + (f"（万三 {h['golden']}）" if h else ""))
+    fmt = lambda lst: "、".join(f"{ZH_RACE.get(k, k)} {v:.0%}" for k, v in lst[:6])   # noqa: E731
+    print("  模型主种族：", fmt(m["main"]))
+    if h:
+        print("  万三主种族：", fmt(h["main"]))
+    print("  模型常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in m["cards"][:12]))
+    if h:
+        print("  万三常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in h["cards"][:12]))
+    return m
+
+
 def advice(model: dict, pro: dict | None) -> list[str]:
     """差距最大的几条，用一句话说。"""
     p = (pro or {}).get("turns") or {}
@@ -277,10 +308,11 @@ def main() -> int:
             print("  ·", x)
     if not pro:
         print("\n（rl/pro_profile.json 里还没有高手的金币流向：bg.py goldflow --pro <高分回放目录>）")
+    comps = show_comps(info.get("finals") or [])
     out = Path(a.ckpt).resolve().parent / "goldflow.json"
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-                               "turns": model}, ensure_ascii=False, indent=1), encoding="utf-8")
+                               "turns": model, "final": comps}, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0
 
