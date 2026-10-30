@@ -32,6 +32,12 @@ from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_b
 F_GOLD, F_TIER, F_UPCOST = 7, 10, 11
 
 
+def is_panic(ex: BaseException) -> bool:
+    """TavernGym 引擎（Rust）内部出错：pyo3 抛 PanicException（BaseException 的子类，except Exception 接不住）。
+    第 5413 轮：engine.rs:925 召唤随从时任务奖励改了场面，下标越界，整个训练停了。"""
+    return type(ex).__name__ == "PanicException"
+
+
 @dataclass
 class Config:
     run_dir: str = "runs/default"
@@ -348,6 +354,31 @@ class Trainer:
             self.role_names.append(name)
         return self.role_names.index(name)
 
+    def _rebuild_env(self, ei: int, ex: BaseException) -> None:
+        """引擎出错（is_panic）：这一组对局全部作废，换一个新的环境接着练。没打完的局按“结束、奖励 0”收尾。"""
+        from taverngym import BatchEnv
+        cfg = self.cfg
+        name, env, off = self.envs[ei]
+        self.env_rebuilds = getattr(self, "env_rebuilds", 0) + 1
+        self.mix["env_rebuild"] += 1
+        if self.mix["env_rebuild"] > 20:
+            raise RuntimeError(f"TavernGym 引擎一轮里出错 {self.mix['env_rebuild']} 次：{ex}")
+        print(f"第 {self.iter} 轮：TavernGym 引擎出错（{str(ex)[:200]}），{name} 环境的 {env.n_games} 局作废、重新开局",
+              flush=True)
+        for i in range(env.n_slots):
+            if self.role[off + i] == 0 and self.rollout.last[off + i] >= 0:
+                self.rollout.reward(off + i, 0.0, True, 0)
+        seed = (cfg.seed if name == "bot" else cfg.seed + 10**6) + 7919 * (self.iter + 1) + self.env_rebuilds
+        new = BatchEnv(env.n_games, seed=seed, controlled=env.controlled, threads=cfg.threads, config=cfg.rules())
+        self.envs[ei] = (name, new, off)
+        self.episode[name] = np.asarray([new.episode_index(i) for i in range(new.n_games)])
+        for g in range(new.n_games):
+            self._assign(name, new, off, g)
+        if name == "bot" and self.booster is not None:
+            self.booster.plan.clear()
+            self.booster.last_turn.clear()
+        self.obs[name] = new.observe()
+
     def _assign(self, name, env, off, g):
         k = len(env.controlled)
         self.role[off + g * k: off + (g + 1) * k] = 0
@@ -429,8 +460,14 @@ class Trainer:
                         self.n_noop += int(noop.sum())
                     o += k
             tb = time.time()
-            for name, env, off in self.envs:
-                rewards, dones, info = env.step(actions[name])
+            for ei, (name, env, off) in enumerate(self.envs):
+                try:
+                    rewards, dones, info = env.step(actions[name])
+                except BaseException as ex:                # noqa: BLE001
+                    if not is_panic(ex):
+                        raise
+                    self._rebuild_env(ei, ex)
+                    continue
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
                         self.rollout.reward(off + int(i), rewards[i], bool(dones[i]), info["placement"][i])
@@ -446,8 +483,14 @@ class Trainer:
                     tc = time.time()
                     if self.adapt is None:
                         self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
-                    if self.booster.boost(env, self.obs[name]["features"]):
-                        self.obs[name] = env.observe()
+                    try:
+                        if self.booster.boost(env, self.obs[name]["features"]):
+                            self.obs[name] = env.observe()
+                    except BaseException as ex:            # noqa: BLE001
+                        if not is_panic(ex):
+                            raise
+                        self._rebuild_env(ei, ex)
+                        continue
                     self.t_boost += time.time() - tc
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
@@ -896,7 +939,13 @@ class Trainer:
             if len(ready):
                 a, _, _ = self.learner(obs["features"][ready], obs["cards"][ready], obs["action_mask"][ready])
                 actions[ready] = a
-            _, dones, info = env.step(actions)
+            try:
+                _, dones, info = env.step(actions)
+            except BaseException as ex:                # noqa: BLE001
+                if not is_panic(ex):
+                    raise
+                print(f"考试中 TavernGym 引擎出错（{str(ex)[:120]}），按已经打完的 {len(places)} 局算", flush=True)
+                break
             for i in np.flatnonzero(dones):
                 if i not in places:                  # 每个对局只算第一局
                     places[int(i)] = int(info["placement"][i])
@@ -1029,6 +1078,8 @@ class Trainer:
                        up_afford=round(mx["aff_up"] / max(1, mx["aff_n"]), 3), up_t2=round(mx["t2_up"] / max(1, mx["t2_n"]), 3),
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3))
+            if mx.get("env_rebuild"):
+                rec["env_rebuild"] = mx["env_rebuild"]
             self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]

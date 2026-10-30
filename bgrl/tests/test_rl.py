@@ -126,8 +126,23 @@ def main() -> int:
         assert abs(tr.opt.param_groups[0]["lr"] - lr0 / 2) < 1e-12
         tr.train(1)
         assert not tr.health({})
+        # 引擎内部出错（Rust panic → PanicException）：这组对局作废、换新环境，训练接着跑
+        PanicException = type("PanicException", (BaseException,), {})
+        name, env, off = tr.envs[0]
+        real = env.step
+        calls = {"n": 0}
+
+        def boom(a):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise PanicException("index out of bounds: the len is 5 but the index is 6")
+            return real(a)
+        env.step = boom
+        tr.train(1)
+        assert getattr(tr, "env_rebuilds", 0) == 1 and tr.envs[0][1] is not env, "引擎出错后没有换环境"
+        tr.train(1)
         tr.log_f.close()
-    print("健康检查和回退通过")
+    print("健康检查和回退通过；引擎出错能换环境接着练")
     print("TEST OK")
     return 0
 

@@ -106,8 +106,10 @@ def sim_profile_batched(policy_batch, games: int = 16, seed: int = 0, config: di
     gs = [taverngym.Game(seed=seed + k, config_json=json.dumps(config) if config else None) for k in range(games)]
     last = [g.turn for g in gs]
     board, tier, hp = defaultdict(list), defaultdict(list), defaultdict(list)
+    dead: set[int] = set()
     for _ in range(max_rounds):
-        todo = [(gi, p) for gi, g in enumerate(gs) if not g.is_over() for p in range(g.num_players) if g.needs_action(p)]
+        todo = [(gi, p) for gi, g in enumerate(gs) if gi not in dead and not g.is_over()
+                for p in range(g.num_players) if g.needs_action(p)]
         if not todo:
             break
         fs, cs, ms = [], [], []
@@ -121,13 +123,17 @@ def sim_profile_batched(policy_batch, games: int = 16, seed: int = 0, config: di
             g = gs[gi]
             # 同一轮里先走的座位可能让这个座位的局面变了（例如别人的效果给了它一个待选项）：
             # 动作已经不合法就这轮先不走，下一轮按新局面重新选（第 5399 轮 "a choice is pending" 崩在这里）
-            if g.needs_action(p) and np.frombuffer(g.legal_mask(p), dtype=np.uint8)[int(a)]:
+            if gi not in dead and g.needs_action(p) and np.frombuffer(g.legal_mask(p), dtype=np.uint8)[int(a)]:
                 try:
                     g.step(p, int(a))
                 except ValueError:
                     pass
+                except BaseException as ex:            # noqa: BLE001 —— 引擎内部出错（PanicException）：这局不要了
+                    if type(ex).__name__ != "PanicException":
+                        raise
+                    dead.add(gi)
         for gi, g in enumerate(gs):
-            if g.turn != last[gi]:
+            if gi not in dead and g.turn != last[gi]:
                 st_ = json.loads(g.state_json())
                 for pl in st_["players"]:
                     if pl["alive"]:

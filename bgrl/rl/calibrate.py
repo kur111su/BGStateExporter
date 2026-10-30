@@ -245,38 +245,43 @@ class ProBoardBooster(BotBooster):
             if game.get("turn") != t or str(game.get("phase")) != "Recruit":
                 self.last_turn.pop(g, None)
                 continue
-            G = None
-            for seat in range(1, len(game["players"])):
-                p = game["players"][seat]
-                if not p.get("alive", True) or self.rng.random() >= self.strength:
-                    continue
-                if G is None:
-                    G = _core.Game.from_json(_dumps(game))
-                entry = self._pick(t)
-                try:
-                    G.debug(_dumps({"cmd": "clear_zone", "p": seat, "zone": "board"}))
-                except Exception:                          # noqa: BLE001
-                    self.failed += 1
-                    continue
-                for cid, atk, hp in entry["board"][:7]:
-                    gold = cid.endswith("_G")
+            try:                                               # 引擎内部出错（PanicException）：这局这次不换
+                G = None
+                for seat in range(1, len(game["players"])):
+                    p = game["players"][seat]
+                    if not p.get("alive", True) or self.rng.random() >= self.strength:
+                        continue
+                    if G is None:
+                        G = _core.Game.from_json(_dumps(game))
+                    entry = self._pick(t)
                     try:
-                        G.debug(_dumps({"cmd": "add_minion", "p": seat, "zone": "board",
-                                        "card": cid[:-2] if gold else cid, "golden": gold,
-                                        "atk": max(0, int(atk)), "hp": max(1, int(hp))}))
-                    except Exception:                      # noqa: BLE001
+                        G.debug(_dumps({"cmd": "clear_zone", "p": seat, "zone": "board"}))
+                    except Exception:                          # noqa: BLE001
                         self.failed += 1
-                if int(entry.get("tier") or 1) > int(p.get("tier") or 1):
-                    try:
-                        G.debug(_dumps({"cmd": "set_player", "p": seat, "tier": int(entry["tier"])}))
-                    except Exception:                      # noqa: BLE001
-                        self.failed += 1
-                self.injected += 1
-            if G is not None:
-                s["game"] = _loads(G.state_json())
-                env.load(g, _dumps(s))
-                self.n_boosts += 1
-                changed = True
+                        continue
+                    for cid, atk, hp in entry["board"][:7]:
+                        gold = cid.endswith("_G")
+                        try:
+                            G.debug(_dumps({"cmd": "add_minion", "p": seat, "zone": "board",
+                                            "card": cid[:-2] if gold else cid, "golden": gold,
+                                            "atk": max(0, int(atk)), "hp": max(1, int(hp))}))
+                        except Exception:                      # noqa: BLE001
+                            self.failed += 1
+                    if int(entry.get("tier") or 1) > int(p.get("tier") or 1):
+                        try:
+                            G.debug(_dumps({"cmd": "set_player", "p": seat, "tier": int(entry["tier"])}))
+                        except Exception:                      # noqa: BLE001
+                            self.failed += 1
+                    self.injected += 1
+                if G is not None:
+                    s["game"] = _loads(G.state_json())
+                    env.load(g, _dumps(s))
+                    self.n_boosts += 1
+                    changed = True
+            except BaseException as ex:                        # noqa: BLE001
+                if type(ex).__name__ != "PanicException":
+                    raise
+                self.failed += 1
         return changed
 
     def take_stats(self) -> dict:
