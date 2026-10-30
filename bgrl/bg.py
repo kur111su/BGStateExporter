@@ -8,6 +8,7 @@
   demos     把你的对局记录变成示范数据 runs/demos.npz（训练时模仿你的操作；tools/make_demos.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
   prodemos  高分对局回放（Firestone 6500+ 分享包的 rawxml-sanitized）→ 高分玩家决策样本 runs/pro_demos/
+  goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
@@ -30,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
          "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
-         "bridge": "tg_bridge_check",
+         "bridge": "tg_bridge_check", "goldflow": "goldflow",
          "profile": "opp_profile", "bench": "tg_bench"}
 
 

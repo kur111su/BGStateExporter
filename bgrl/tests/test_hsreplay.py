@@ -72,6 +72,16 @@ def main() -> int:
     last = [r for r in parse(redump.encode("utf-8")) if r["phase"] == "recruit"][-1]
     assert last["turn"] == 2, last["turn"]                                          # 游戏 TURN 3，不被对手的 99 覆盖
     assert [c["entityId"] for c in last["player"]["board"]] == [60], last["player"]["board"]
+    # 待选项（这里是黑暗之赐：选项卡带 4865 标签）：回放里待选期间没有 Options，要在 Choices 处记一条，
+    # 不然记录里永远看不到待选项，黑暗之赐也认不出来（之前 361 局一次都没认出来）
+    gift = XML.replace("</Game>", """<TagChange entity="2" tag="25" value="3" />
+<FullEntity id="70" cardID="BG26_146"><Tag tag="50" value="5" /><Tag tag="49" value="6" /><Tag tag="202" value="4" /><Tag tag="4865" value="80" /></FullEntity>
+<FullEntity id="71" cardID="BGS_004"><Tag tag="50" value="5" /><Tag tag="49" value="6" /><Tag tag="202" value="4" /><Tag tag="4865" value="81" /></FullEntity>
+<Choices id="1" playerID="2" source="10" type="2" min="1" max="1"><Choice index="0" entity="70" /><Choice index="1" entity="71" /></Choices>
+</Game>""")
+    gs = load_records(parse(gift.encode("utf-8")), "gift")
+    assert (gs[-1].get("offered") or {}).get("kind") == "dark_gift", gs[-1].get("offered")
+    assert gs[-1]["_dark_gifts"] == {"uses": 1, "used_turn": True}, gs[-1]["_dark_gifts"]
     print("hsreplay OK", got)
     return 0
 

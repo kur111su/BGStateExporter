@@ -59,6 +59,45 @@ def main() -> int:
     t4.upg_n[0] = 5                                         # 6 本：不落后，不扣
     assert Trainer._shape(t4, np.array([0]), f9, np.array([A_END]), np.zeros(1))[0] == 0.0
 
+    # 花掉升本的钱：第 2 回合 4 块、升本 4 块、1 本（目标 1.86 - 0.5 > 1 → 落后）
+    #   发动 → 选（这一步花了 1 块：4 → 3，扣在“选”上）→ 买（3 → 0，之前就不够升本，不扣）→ 结束
+    roll5 = SimpleNamespace(r=[], last=np.full(1, -1, dtype=np.int64), ep=np.zeros(1, dtype=np.int64))
+    t5 = SimpleNamespace(cfg=SimpleNamespace(upgrade_starve_penalty=0.04), tier_curve={1: 1.0, 2: 1.86, 5: 3.17},
+                         rollout=roll5, mix=defaultdict(int))
+    t5._tier_target = lambda turn: Trainer._tier_target(t5, turn)
+
+    def step(a, turn, gold, up, tier):
+        fx = np.zeros((1, 16), dtype=np.float32)
+        fx[0, 0], fx[0, 7], fx[0, 10], fx[0, 11] = turn / 20, gold / 10, tier / 6, up / 10
+        r = Trainer._gold_shape(t5, np.array([0]), fx, np.array([a]), np.zeros(1))
+        roll5.r.append(float(r[0]))
+        roll5.last[0] = len(roll5.r) - 1
+    for a, gold, up, tier in ((23, 4, 4, 1), (30, 4, 4, 1), (A_BUY, 3, 4, 1), (A_END, 0, 4, 1)):
+        step(a, 2, gold, up, tier)
+    assert roll5.r == [0.0, -0.04, 0.0, 0.0], roll5.r
+    assert t5.mix["starve"] == 1 and t5.mix["t2_n"] == 1 and t5.mix["t2_up"] == 0 and t5.mix["aff_n"] == 1
+    # 下一局：先升本（4 → 0，升本本身不扣）再结束 → 第 2 回合升本率 1/2
+    roll5.ep[0] = 1
+    roll5.r.clear()
+    step(A_UPGRADE, 2, 4, 4, 1)
+    step(A_END, 2, 0, 6, 2)
+    assert roll5.r == [0.0, 0.0] and t5.mix["t2_up"] == 1 and t5.mix["aff_up"] == 1 and t5.mix["starve"] == 1
+    # 第 5 回合 2 本、7 块、升本 6 块（目标 3.17 - 0.5 > 2 → 落后）：买随从（7 → 4）扣一半；剩 6 块直接结束也扣
+    roll5.ep[0] = 2
+    roll5.r.clear()
+    step(A_BUY, 5, 7, 6, 2)
+    step(A_END, 5, 4, 6, 2)
+    assert roll5.r == [-0.02, 0.0], roll5.r
+    roll5.r.clear()
+    step(A_END, 6, 9, 6, 2)
+    assert roll5.r == [-0.04] and t5.mix["end_rich"] == 1, roll5.r
+
+    # 高分示范按类别 + 按回合加权：t2:2 第 2 回合 ×2，t3-4:1.5 第 3–4 回合 ×1.5
+    from tools.make_demos import KINDS
+    d = {"kind": np.array([KINDS.index(k) for k in ("upgrade", "buy", "upgrade", "end")]), "turn": np.array([2, 3, 5, 4])}
+    w = Trainer._bc_weights(SimpleNamespace(cfg=SimpleNamespace(bc_weights=""), demos=None), d, "upgrade:3,t2:2,t3-4:1.5")
+    assert w.tolist() == [6.0, 1.5, 3.0, 1.5], w
+
     # 模仿强度：训练示范命中率高于上限减半（最低 0.05），低于上限 - 0.1 回升
     t3 = SimpleNamespace(cfg=SimpleNamespace(bc_train_cap=0.6, bc_scale_min=0.05), bc_scale=1.0)
     for tr, want in ((0.99, 0.5), (0.95, 0.25), (0.55, 0.25), (0.4, 0.375), (0.3, 0.5625)):

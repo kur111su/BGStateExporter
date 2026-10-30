@@ -28,6 +28,9 @@ from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import A_BUY, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
 from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_boards, ramp
 
+# 观察（v1）里的几个全局数：第 0 个 回合/20，第 7 个 金币/10，第 10 个 酒馆等级/6，第 11 个 升本费/10（满级 0）
+F_GOLD, F_TIER, F_UPCOST = 7, 10, 11
+
 
 @dataclass
 class Config:
@@ -125,6 +128,13 @@ class Config:
     # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
     # （竞技场 5 局：296 次刷新里 232 次之后什么都没买）
     refresh_waste_penalty: float = 0.0
+    # 花掉升本的钱：落后于目标曲线（等级 < 目标 - 0.5）时，一步操作让金币从“够升本”掉到“不够升本”（不是升本本身），
+    # 给这一步扣这么多（买随从扣一半）；结束回合时钱还够升本却没升，也扣一次。
+    # 金币流向对比（361 局 6500+ vs 竞技场 5 局）：高手第 2 回合 86% 直接升本（钱够时 87%），第 4–8 回合钱够时
+    # 51–78% 升本；模型第 2 回合 0% 升本——4 块钱先花 1 块发动“可疑的监狱守卫”（+3/+3），升本费不够了，
+    # 再买 / 刷新；第 4–5 回合也是先发动、刷新，把升本拖到费用降到 1–2 块。落后扣分只在回合末按等级差扣，
+    # 分不清是哪一步把升本的钱花掉的；这一项直接扣在那一步上
+    upgrade_starve_penalty: float = 0.0
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -527,15 +537,20 @@ class Trainer:
         from tools.make_demos import KINDS
         d = self.demos if d is None else d
         spec = self.cfg.bc_weights if spec is None else spec
-        w = {}
+        w, tw = {}, []
         for part in str(spec or "").replace(" ", "").split(","):
             if ":" in part:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
+                elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
+                    lo, _, hi = k[1:].partition("-")
+                    tw.append((int(lo), int(hi or lo), float(v)))
         out = np.ones(len(d["kind"]), dtype=np.float32)
         for k, v in w.items():
             out[d["kind"] == k] = v
+        for lo, hi, v in tw:
+            out[(d["turn"] >= lo) & (d["turn"] <= hi)] *= v
         return out
 
     def bc_loss(self, d=None, wts=None, batch=None):
@@ -605,6 +620,52 @@ class Trainer:
                 r0[j] += tb
                 self.mix["tempo_paid"] += 1
             self.upg_n[s] += 1
+        if f.shape[1] > F_UPCOST:
+            self._gold_shape(slots, f, ak, r0)
+        return r0
+
+    def _gold_shape(self, slots, f, ak, r0):
+        """金币流向（见 upgrade_starve_penalty）。观察里第 7 / 10 / 11 个数是 金币/10、等级/6、升本费/10。
+        同时统计：回合开始时钱够升本的回合里升了本的比例（第 2–8 回合，up_afford；高手约 0.68）和第 2 回合升本率（up_t2）。"""
+        pen = self.cfg.upgrade_starve_penalty
+        if not hasattr(self, "gs"):
+            n = len(self.rollout.last)
+            self.gs = {k: np.full(n, -1, dtype=np.int64) for k in ("ep", "turn", "gold", "up", "tier", "act", "ts_turn",
+                                                                  "ts_tier", "ts_aff")}
+            self.gs["behind"] = np.zeros(n, dtype=bool)
+        g = self.gs
+        turns = np.rint(f[:, 0] * 20).astype(int)
+        golds = np.rint(f[:, F_GOLD] * 10).astype(int)
+        ups = np.rint(f[:, F_UPCOST] * 10).astype(int)
+        tiers = np.rint(f[:, F_TIER] * 6).astype(int)
+        for j in range(len(ak)):
+            s, a, t = int(slots[j]), int(ak[j]), int(turns[j])
+            ep = int(self.rollout.ep[s])
+            gold, up, tier = int(golds[j]), int(ups[j]), int(tiers[j])
+            same = g["ep"][s] == ep and g["turn"][s] == t
+            # 上一步把金币从“够升本”花到“不够”（上一步不是升本、卖），而且当时落后
+            if same and g["behind"][s] and g["act"][s] != A_UPGRADE and g["up"][s] > 0 \
+                    and g["gold"][s] >= g["up"][s] > gold:
+                self.mix["starve"] += 1
+                prev = int(self.rollout.last[s])
+                if pen > 0 and prev >= 0:
+                    self.rollout.r[prev] -= pen * (0.5 if A_BUY <= g["act"][s] < A_SELL else 1.0)
+            if not (g["ts_turn"][s] == t and g["ep"][s] == ep):         # 新回合的第一步
+                g["ts_turn"][s], g["ts_tier"][s], g["ts_aff"][s] = t, tier, int(up > 0 and gold >= up)
+            behind = tier < self._tier_target(t) - 0.5
+            if a == A_END:
+                if 2 <= t <= 8 and g["ts_aff"][s] == 1:
+                    self.mix["aff_n"] += 1
+                    self.mix["aff_up"] += int(tier > g["ts_tier"][s])
+                if t == 2:
+                    self.mix["t2_n"] += 1
+                    self.mix["t2_up"] += int(tier > g["ts_tier"][s])
+                if behind and up > 0 and gold >= up:                    # 钱够升本、落后，却结束回合
+                    self.mix["end_rich"] += 1
+                    if pen > 0:
+                        r0[j] -= pen
+            g["ep"][s], g["turn"][s], g["gold"][s], g["up"][s], g["tier"][s], g["act"][s] = ep, t, gold, up, tier, a
+            g["behind"][s] = behind
         return r0
 
     def _after_add(self, slots, ak):
@@ -913,7 +974,9 @@ class Trainer:
                        buy_turn=round(mx["buy"] / ends, 2), sell_turn=round(mx["sell"] / ends, 3),
                        ref_waste=round(mx["refresh_waste"] / max(1, mx["refresh"]), 3),
                        tempo_bonus=round(self.tempo_now(), 4), tempo_paid=mx["tempo_paid"],
-                       tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3))
+                       tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3),
+                       up_afford=round(mx["aff_up"] / max(1, mx["aff_n"]), 3), up_t2=round(mx["t2_up"] / max(1, mx["t2_n"]), 3),
+                       starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3))
             self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]

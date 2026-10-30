@@ -181,6 +181,9 @@ class Replay:
         elif name == "Choices":
             if el.get("playerID") and self.main_ent is not None and int(el.get("playerID")) == self.main_ent:
                 self.offered = [int(c.get("entity")) for c in el if c.tag == "Choice"]
+                # 待选期间回放里没有 Options（选完才有），不在这里记一条的话记录里永远看不到待选项：
+                # 插件那边待选时也会记一条。黑暗之赐（GameHistory 靠“待选项 + 金币少 3”认）和发现都靠这条
+                self._snapshot()
         elif name == "ChosenEntities":
             self.offered = []
         elif name == "Options":

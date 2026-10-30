@@ -141,6 +141,11 @@ def main() -> int:
     profile, lib = build(Path(a.src), a.min_mmr)
     Path(a.boards_out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.boards_out).write_text(json.dumps(lib, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    old = Path(a.profile_out)
+    if old.exists():                                   # bg.py goldflow --pro 写的高手金币流向留着
+        gf = json.loads(old.read_text(encoding="utf-8")).get("gold_flow")
+        if gf:
+            profile["gold_flow"] = gf
     Path(a.profile_out).write_text(json.dumps(profile, ensure_ascii=False, indent=1), encoding="utf-8")
     n = sum(len(v) for v in lib["turns"].values())
     print(f"{profile['games']} 局（MMR ≥ {a.min_mmr}）→ {n} 个整板（跳过含未知卡的 {lib['skipped_unknown']} 个）→ {a.boards_out}；"
