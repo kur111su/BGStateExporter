@@ -100,7 +100,19 @@ def build(src: Path, min_mmr: int = 0):
                                              max(1, int(m.get("health") or 0) - int(m.get("damage") or 0))]
                                             for m in sorted(brd, key=lambda m: m.get("position") or 0)][:7]})
     turns = sorted(set(tier_at) | set(opp_tot))
-    profile = {"source": "Firestone 6500+ 精彩对局（他人对局，策展池，不是无偏抽样）", "games": n_games,
+    # 等级曲线优先用回放里读出来的（runs/pro_demos/tiers.json，tools/make_pro_demos.py 顺带写的）：
+    # Firestone 的 tavern_timings 有时自相矛盾（例如第 4 回合 5 本、第 7 回合 4 本），会把前期曲线抬高
+    rt = RUNS / "pro_demos" / "tiers.json"
+    tier_src = "Firestone tavern_timings"
+    if rt.exists():
+        per = json.loads(rt.read_text(encoding="utf-8"))
+        tier_at = defaultdict(list)
+        for g in per.values():
+            for t, v in g.items():
+                if int(t) >= 1 and v:
+                    tier_at[int(t)].append(int(v))
+        tier_src = f"回放（{len(per)} 局，{rt}）"
+    profile = {"source": "Firestone 6500+ 精彩对局（他人对局，策展池，不是无偏抽样）", "tier_source": tier_src, "games": n_games,
                "min_mmr": min_mmr, "created": time.strftime("%Y-%m-%d"), "turns": {}}
     for t in turns:
         row = {"n": len(tier_at[t])}

@@ -90,10 +90,14 @@ def convert_game(args):
     rng = np.random.default_rng(int(hashlib.md5(gid.encode()).hexdigest()[:8], 16))
     st = Counter()
     try:
-        acts = segment(load_records(parse(_xml(job)), gid))
+        states = load_records(parse(_xml(job)), gid)
+        acts = segment(states)
     except Exception as ex:                           # noqa: BLE001
         st[f"解析失败 {type(ex).__name__}"] += 1
         return None, st
+    tiers = {}
+    for s_ in states:                                 # 每回合招募结束时的酒馆等级（升本节奏曲线用，见 tools/pro_library.py）
+        tiers[int(s_.get("turn") or 0)] = int((s_.get("player") or {}).get("tavernTier") or 0)
     F, Cc, M, CA, K, Tn = [], [], [], [], [], []
     for i, a in enumerate(acts):
         nxt = acts[i + 1] if i + 1 < len(acts) else None
@@ -131,7 +135,7 @@ def convert_game(args):
     out = {"f": np.stack(F), "c": np.stack(Cc).astype(np.int32), "m": np.packbits(np.stack(M), axis=1),
            "cand": np.stack(CA), "kind": np.asarray(K, np.int8), "turn": np.asarray(Tn, np.int16),
            "split": np.full(n, split, np.int8), "mmr": np.full(n, _CTX["mmr"].get(gid, 0), np.int32),
-           "n_actions": len(M[0])}
+           "n_actions": len(M[0]), "tiers": tiers, "gid": gid}
     return out, st
 
 
@@ -190,6 +194,7 @@ def main() -> int:
     jobs = [(f, 1 if a.val_every and i % a.val_every == a.val_every - 1 else 0) for i, f in enumerate(files)]
     t0 = time.time()
     stats, buf, nbuf, k, total = Counter(), [], 0, 0, 0
+    tiers = {}
     meta = {"source": "Firestone 6500+ 精彩对局回放（他人对局，已脱敏）", "games": len(files),
             "created": time.strftime("%Y-%m-%d %H:%M:%S"), "keep": keep}
     if a.workers > 1:
@@ -202,6 +207,7 @@ def main() -> int:
     for i, (res, st) in enumerate(it, 1):
         stats += st
         if res is not None:
+            tiers[res.pop("gid")] = res.pop("tiers")
             buf.append(res)
             nbuf += len(res["kind"])
         if nbuf >= a.shard:
@@ -216,6 +222,7 @@ def main() -> int:
         k += 1
     meta.update(samples=total, shards=k, stats=dict(stats))
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    (out_dir / "tiers.json").write_text(json.dumps(tiers), encoding="utf-8")
     dec = sum(v for kk, v in stats.items() if kk.startswith("决策"))
     print(f"完成：{len(files)} 局，{dec} 个决策 → {total} 条样本（{k} 片）→ {out_dir}；{time.time() - t0:.0f} 秒")
     print({kk: v for kk, v in sorted(stats.items())})
