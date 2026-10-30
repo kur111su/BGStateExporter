@@ -150,6 +150,9 @@ class Config:
     # 差距小于 pro_gap_cap - 0.04 再加回来（最多到 pro_coef）。0 = 不控制。
     # 第 4351–5054 轮（pro_coef 0.1）：训练示范命中率 0.44 → 0.70，留出局 0.45 → 0.41，交叉熵 2.0 → 2.33——在背题
     pro_gap_cap: float = 0.0
+    # 模仿高手强度最低降到多少倍（不让它完全消失）：第 5400–5770 轮降到 0.01 以后，第 2 回合升本率 0.47 → 0.24–0.40、
+    # 第 5 回合等级 2.8 → 1.8–2.1，落后差距 0.18 → 0.37——升本节奏主要靠模仿撑着
+    pro_scale_min: float = 0.25
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -657,9 +660,9 @@ class Trainer:
         if cap <= 0 or tr is None or va is None:
             return
         if tr - va > cap:
-            self.pro_scale = max(self.cfg.bc_scale_min, self.pro_scale * 0.5)
+            self.pro_scale = max(self.cfg.pro_scale_min, self.pro_scale * 0.7)
         elif tr - va < cap - 0.04:
-            self.pro_scale = min(1.0, self.pro_scale * 1.5)
+            self.pro_scale = min(1.0, self.pro_scale * 1.25)
 
     def tempo_now(self) -> float:
         cfg = self.cfg
@@ -783,7 +786,12 @@ class Trainer:
         val = d["val_idx"]
         if len(val) > 6000:                            # 高分样本的验证集很大：固定抽 6000 条（每次同一批）
             val = val[np.random.default_rng(0).permutation(len(val))[:6000]]
-        for tag, idx in (("", val), ("_train", d["train_idx"][:2000])):
+        # 训练示范也随机抽一批固定的（不能取前 2000 条：几个来源拼在一起时前面全是同一个来源，
+        # 和验证集的组成不一样——第 5100–5750 轮万三数据加进来后，这个差距一直 > 0.1，模仿强度被一路减到 0.01）
+        tr_idx = d["train_idx"]
+        if len(tr_idx) > len(val):
+            tr_idx = tr_idx[np.random.default_rng(1).permutation(len(tr_idx))[:len(val)]]
+        for tag, idx in (("", val), ("_train", tr_idx)):
             if not len(idx):
                 continue
             hit, nll = [], []
@@ -1018,6 +1026,8 @@ class Trainer:
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
         self.pro_scale = float(ck.get("pro_scale", self.pro_scale))
+        if self.cfg.pro_gap_cap > 0:
+            self.pro_scale = max(self.pro_scale, self.cfg.pro_scale_min)
         if self.adapt is not None:
             b = ck.get("boost") or {}
             if b.get("kind", "scale") == self.cfg.boost_kind:  # 换了加强方式：强度从头调（放大攻防的 0.88 和换阵容的 0.88 不是一回事）

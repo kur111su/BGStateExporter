@@ -100,8 +100,9 @@ def main() -> int:
     assert roll5.r == [0.0, -0.01], roll5.r
 
     # 模仿高手的强度：训练示范比留出局高出 pro_gap_cap 以上就减半，差距小了再加回来
-    t6 = SimpleNamespace(cfg=SimpleNamespace(pro_gap_cap=0.08, bc_scale_min=0.05), pro_scale=1.0)
-    for tr, va, want in ((0.70, 0.41, 0.5), (0.60, 0.42, 0.25), (0.47, 0.42, 0.25), (0.44, 0.43, 0.375)):
+    t6 = SimpleNamespace(cfg=SimpleNamespace(pro_gap_cap=0.12, pro_scale_min=0.25), pro_scale=1.0)
+    for tr, va, want in ((0.70, 0.41, 0.7), (0.60, 0.42, 0.49), (0.60, 0.42, 0.343), (0.60, 0.42, 0.25), (0.60, 0.42, 0.25),
+                         (0.50, 0.42, 0.25), (0.46, 0.42, 0.3125)):
         Trainer.adjust_pro(t6, {"pro_top1_train": tr, "pro_top1": va})
         assert abs(t6.pro_scale - want) < 1e-9, (tr, va, t6.pro_scale)
 
