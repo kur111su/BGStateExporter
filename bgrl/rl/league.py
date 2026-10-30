@@ -119,8 +119,13 @@ def sim_profile_batched(policy_batch, games: int = 16, seed: int = 0, config: di
         acts = policy_batch(np.stack(fs), np.stack(cs), np.stack(ms))
         for (gi, p), a in zip(todo, acts):
             g = gs[gi]
-            if g.needs_action(p):
-                g.step(p, int(a))
+            # 同一轮里先走的座位可能让这个座位的局面变了（例如别人的效果给了它一个待选项）：
+            # 动作已经不合法就这轮先不走，下一轮按新局面重新选（第 5399 轮 "a choice is pending" 崩在这里）
+            if g.needs_action(p) and np.frombuffer(g.legal_mask(p), dtype=np.uint8)[int(a)]:
+                try:
+                    g.step(p, int(a))
+                except ValueError:
+                    pass
         for gi, g in enumerate(gs):
             if g.turn != last[gi]:
                 st_ = json.loads(g.state_json())
