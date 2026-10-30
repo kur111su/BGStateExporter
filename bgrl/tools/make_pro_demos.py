@@ -183,7 +183,10 @@ def main() -> int:
     if a.limit:
         files = files[:a.limit]
     if not files:
-        print(f"{src} 里没有回放（rawxml-sanitized/*.xml.zip，或分享包的 *part*.zip）")
+        where = "这个文件夹不存在" if not src.exists() else "里面没有回放"
+        print(f"{src.resolve()}：{where}。\n"
+              f"把 Firestone 分享包的 zip（firestone-bg-rawxml-sanitized-part1.zip … part4.zip，不用解压）放进这个文件夹，\n"
+              f"或者在 prodemos.bat 后面写 zip 所在的文件夹，例如：prodemos.bat D:\\Downloads\\firestone")
         return 1
     mmr = _mmr(src)
     keep = {k: float(v) for k, v in (p.split(":") for p in a.keep.split(",") if ":" in p)}
