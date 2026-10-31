@@ -30,6 +30,7 @@ from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_b
 
 # 观察（v1）里的几个全局数：第 0 个 回合/20，第 7 个 金币/10，第 10 个 酒馆等级/6，第 11 个 升本费/10（满级 0）
 F_GOLD, F_TIER, F_UPCOST = 7, 10, 11
+C_BOARD, C_SHOP = 19, 36                     # 卡牌编号里场上 / 酒馆的起点（rl/model.py 的 cslices）
 
 
 def is_panic(ex: BaseException) -> bool:
@@ -621,6 +622,8 @@ class Trainer:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
+                elif k in ("key", "eco"):                     # 买关键卡 / 经济卡的示范再乘（rl/card_value.json）
+                    tw.append((k, None, float(v)))
                 elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
                     lo, _, hi = k[1:].partition("-")
                     tw.append((int(lo), int(hi or lo), float(v)))
@@ -628,8 +631,33 @@ class Trainer:
         for k, v in w.items():
             out[d["kind"] == k] = v
         for lo, hi, v in tw:
+            if lo in ("key", "eco"):
+                sel = Trainer._bought_in(d, lo)
+                if sel is not None:
+                    out[sel] *= v
+                continue
             out[(d["turn"] >= lo) & (d["turn"] <= hi)] *= v
         return out
+
+    @staticmethod
+    def _bought_in(d, which: str):
+        """哪些示范是“买了一张关键卡 / 经济卡”（买的那格的卡牌在 rl/card_value.json 的 key / eco 里）。"""
+        from tools.make_demos import KINDS
+        cv = Path(__file__).resolve().parent / "card_value.json"
+        if not cv.exists() or "c" not in d:
+            return None
+        import taverngym
+        want = set(json.loads(cv.read_text(encoding="utf-8")).get(which, []))
+        idx = {i for i in range(1, taverngym.N_CARDS)
+               if (lambda cid: (cid[:-2] if cid.endswith("_G") else cid) in want)(taverngym.card_info(i)[0])}
+        buy = np.flatnonzero(d["kind"] == KINDS.index("buy"))
+        slot = d["cand"][buy, 0].astype(np.int64) - 8
+        ok = (slot >= 0) & (slot < 8)
+        buy, slot = buy[ok], slot[ok]
+        cards = d["c"][buy, C_SHOP + slot]
+        sel = np.zeros(len(d["kind"]), dtype=bool)
+        sel[buy[np.isin(cards, list(idx))]] = True
+        return sel
 
     def bc_loss(self, d=None, wts=None, batch=None):
         d = self.demos if d is None else d
@@ -944,6 +972,7 @@ class Trainer:
             booster.strength = 1.0
         obs = env.observe()
         places = {}
+        last_board = {}                              # 每局最后一次招募时的场面（卡牌编号）：最终阵容
         self.model.eval()
         for _ in range(30000):                       # 保险：不管怎样都会结束
             if len(places) >= games:
@@ -953,6 +982,9 @@ class Trainer:
             if len(ready):
                 a, _, _ = self.learner(obs["features"][ready], obs["cards"][ready], obs["action_mask"][ready])
                 actions[ready] = a
+                for i in ready:
+                    if int(i) not in places:
+                        last_board[int(i)] = obs["cards"][i][C_BOARD:C_BOARD + 7].copy()
             try:
                 _, dones, info = env.step(actions)
             except BaseException as ex:                # noqa: BLE001
@@ -967,7 +999,31 @@ class Trainer:
             if booster is not None and booster.boost(env, obs["features"]):
                 obs = env.observe()
         ps = [p for p in places.values() if p > 0]
+        self.last_comp = self._comp_scores([last_board[i] for i in places if i in last_board])
         return (round(float(np.mean(ps)), 3), round(float(np.mean([p == 1 for p in ps])), 3)) if ps else (None, None)
+
+    def _comp_scores(self, boards) -> dict:
+        """最终阵容的配合程度（场上 ≥ 5 个随从的局；见 tools/native_demos.board_scores）：
+        comp_coh 主种族纯度（万三 0.70）、comp_syn 高手常见搭配对数（2.07）、comp_key 关键卡张数（4.34）、comp_golden 金色随从数（1.85）。"""
+        try:
+            import taverngym
+            from tools.native_demos import board_scores, load_comp_refs
+            if not hasattr(self, "_comp_ref"):
+                self._comp_ref = (*load_comp_refs(), {c["id"]: c for c in json.loads(taverngym.catalog_json())})
+            pairs, key, det = self._comp_ref
+            rows = []
+            for b in boards:
+                ids = [taverngym.card_info(int(x))[0] for x in b if x > 0]
+                if len(ids) < 5:
+                    continue
+                sc = board_scores([x[:-2] if x.endswith("_G") else x for x in ids], det, pairs, key)
+                sc["golden"] = sum(x.endswith("_G") for x in ids)
+                rows.append(sc)
+            if not rows:
+                return {}
+            return {f"comp_{k}": round(float(np.mean([r[k] for r in rows])), 3) for k in ("coh", "syn", "key", "golden")}
+        except Exception as ex:                        # noqa: BLE001 —— 只是统计，出错不影响训练
+            return {"comp_error": type(ex).__name__}
 
     # ---------------- 主循环 ----------------
 
@@ -1123,6 +1179,7 @@ class Trainer:
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
+                    rec.update(getattr(self, "last_comp", {}) or {})
                 if self.demos is not None:
                     he = self.human_eval()
                     self.adjust_bc(he)

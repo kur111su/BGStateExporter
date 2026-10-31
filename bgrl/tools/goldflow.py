@@ -113,12 +113,31 @@ def summarize(games: list[dict], max_turn: int = 10) -> dict:
 
 # ---------------- 模型 ----------------
 
-def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str):
+def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False):
+    """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
+    runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。"""
     import torch
     from taverngym import BatchEnv
     from rl.advisor import load_model
+    from tools.cardvalue import PickStats
     model, info = load_model(ckpt, device)
     env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads)
+    booster = None
+    if boosted:
+        from rl.calibrate import ProBoardBooster, load_pro_boards
+        lib: dict = {}
+        for pth in (RUNS / "pro_boards.json", RUNS / "h13_boards.json"):
+            if pth.exists():
+                for t, v in load_pro_boards(pth).items():
+                    lib.setdefault(t, []).extend(v)
+        if lib:
+            booster = ProBoardBooster(lib, frac=1.0, start_turn=5, seed=seed, every=2)
+            booster.strength = 1.0
+            print(f"对手：高分阵容 {sum(len(v) for v in lib.values())} 个（第 5 回合起，全强度）", flush=True)
+        else:
+            print("没有 runs/pro_boards.json / runs/h13_boards.json，对手是普通脚本机器人", flush=True)
+    picks = PickStats()
+    sells: dict[str, int] = {}
     logs = [TurnLog() for _ in range(env.n_slots)]
     done = [False] * env.n_slots
     places = {}
@@ -142,6 +161,12 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             for k, i in enumerate(ready):
                 fi = f[k]
                 last_cards[i] = obs["cards"][i][19:26].copy()
+                ak = int(a[k])
+                if 8 <= ak < 16:
+                    picks.add(obs["cards"][i][36:44], ak - 8)
+                elif 16 <= ak < 23 and obs["cards"][i][19 + ak - 16] > 0:
+                    sid = picks._id(int(obs["cards"][i][19 + ak - 16]))
+                    sells[sid] = sells.get(sid, 0) + 1
                 logs[i].see(int(round(fi[0] * 20)), int(round(fi[F_GOLD] * 10)), int(round(fi[F_TIER] * 6)),
                             int(round(fi[F_UPCOST] * 10)), int(a[k]))
             actions[ready] = a
@@ -151,8 +176,11 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 done[i] = True
                 places[int(i)] = int(inf["placement"][i])
         obs = env.observe()
+        if booster is not None and booster.boost(env, obs["features"]):
+            obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{Path(ckpt).name}）：{len(places)} 局，平均名次 "
-          f"{np.mean([p for p in places.values() if p > 0]):.2f}（对脚本机器人）", flush=True)
+          f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
+    info["picks"], info["sells"] = picks, sells
     import taverngym
     finals = []
     for i, row in enumerate(last_cards):
@@ -252,7 +280,56 @@ def show_comps(finals: list[dict]) -> dict | None:
     print("  模型常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in m["cards"][:12]))
     if h:
         print("  万三常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in h["cards"][:12]))
+    # 配合程度（tools/native_demos.board_scores）
+    import taverngym
+    from tools.native_demos import board_scores, load_comp_refs
+    pairs, key = load_comp_refs()
+    det = {c["id"]: c for c in json.loads(taverngym.catalog_json())}
+    sc = [board_scores(x["board"], det, pairs, key) for x in fb]
+    m["scores"] = {k: round(float(np.mean([r[k] for r in sc])), 3) for k in ("coh", "syn", "key")}
+    hs = (h or {}).get("scores") or {}
+    print(f"  配合：主种族纯度 {m['scores']['coh']:.2f}（万三 {hs.get('coh', '-')}）、高手常见搭配 {m['scores']['syn']:.2f} 对"
+          f"（{hs.get('syn', '-')}）、关键卡 {m['scores']['key']:.2f} 张（{hs.get('key', '-')}）")
+    by_place = {}
+    for x, r in zip(fb, sc):
+        by_place.setdefault("前四" if 0 < x["place"] <= 4 else "后四", []).append(r)
+    for k, rows in sorted(by_place.items()):
+        print(f"  {k}名的局（{len(rows)}）：纯度 {np.mean([r['coh'] for r in rows]):.2f}、搭配 {np.mean([r['syn'] for r in rows]):.2f}、"
+              f"关键卡 {np.mean([r['key'] for r in rows]):.2f}")
     return m
+
+
+def show_picks(picks, sells: dict) -> dict | None:
+    """模型买卡的挑中倍率和高手比（rl/card_value.json）：高手抢着买、模型不买的卡；模型偏爱、高手基本不买的卡；经济卡。"""
+    cv = ROOT / "rl" / "card_value.json"
+    if not cv.exists() or not picks.n:
+        return None
+    ref = json.loads(cv.read_text(encoding="utf-8"))
+    hc = ref["cards"]
+    mt = picks.table(15)
+    both = [(k, mt[k]["lift"], hc[k]["lift"]) for k in mt if k in hc]
+    if not both:
+        return None
+    name = lambda k: hc[k]["name"]                          # noqa: E731
+    miss = sorted((x for x in both if x[2] >= 1.6), key=lambda x: x[1] - x[2])[:12]
+    over = sorted((x for x in both if x[2] < 0.8), key=lambda x: x[2] - x[1])[:10]
+    print(f"\n挑卡（模型买了 {picks.n} 次；倍率 = 实际买的次数 / 随便挑的期望，>1 是偏爱）")
+    print("  高手抢着买、模型买得少：" + "、".join(f"{name(k)} {m:.1f}（高手 {p:.1f}）" for k, m, p in miss))
+    print("  模型偏爱、高手很少买：" + "、".join(f"{name(k)} {m:.1f}（高手 {p:.1f}）" for k, m, p in over))
+    eco = [k for k in ref.get("eco", []) if k in mt]
+    if eco:
+        print("  经济卡：" + "、".join(f"{name(k)} {mt[k]['lift']:.1f}（高手 {hc[k]['lift']:.1f}）" for k in eco))
+    keyset = set(ref.get("key", []))
+    kb = sum(mt[k]["picked"] for k in mt if k in keyset)
+    print(f"  买的卡里关键卡占 {kb / max(1, picks.n):.0%}")
+    corr = float(np.corrcoef([x[1] for x in both], [x[2] for x in both])[0, 1]) if len(both) > 2 else None
+    if corr is not None:
+        print(f"  和高手挑卡倍率的相关系数 {corr:.2f}（1 = 完全一样的偏好）")
+    top_sold = sorted(sells.items(), key=lambda x: -x[1])[:10]
+    if top_sold:
+        print("  模型最常卖：" + "、".join(f"{(hc.get(k) or {}).get('name', k)} {v}" for k, v in top_sold))
+    return {"key_share": round(kb / max(1, picks.n), 3), "corr": round(corr, 3) if corr is not None else None,
+            "miss": [[name(k), m, p] for k, m, p in miss], "over": [[name(k), m, p] for k, m, p in over]}
 
 
 def advice(model: dict, pro: dict | None) -> list[str]:
@@ -282,6 +359,7 @@ def main() -> int:
     ap.add_argument("--sample", action="store_true", help="按概率抽动作（默认和竞技场一样取最大概率）")
     ap.add_argument("--pro", default="", help="高分回放目录：算高手那一列写进 rl/pro_profile.json（gold_flow）")
     ap.add_argument("--turns", type=int, default=9)
+    ap.add_argument("--boosted", action="store_true", help="对手换成高分对局的真实阵容（和训练考试 eval_boost_place 一样）")
     a = ap.parse_args()
     prof = json.loads(PROFILE.read_text(encoding="utf-8")) if PROFILE.exists() else {}
     if a.pro:
@@ -297,7 +375,7 @@ def main() -> int:
     if not dev:
         import torch
         dev = "cuda" if torch.cuda.is_available() else "cpu"
-    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev)
+    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted)
     model = summarize(games)
     pro = prof.get("gold_flow")
     show(model, pro, a.turns)
@@ -309,10 +387,11 @@ def main() -> int:
     if not pro:
         print("\n（rl/pro_profile.json 里还没有高手的金币流向：bg.py goldflow --pro <高分回放目录>）")
     comps = show_comps(info.get("finals") or [])
-    out = Path(a.ckpt).resolve().parent / "goldflow.json"
+    pk = show_picks(info.get("picks"), info.get("sells") or {})
+    out = Path(a.ckpt).resolve().parent / ("comptest.json" if a.boosted else "goldflow.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-                               "turns": model, "final": comps}, ensure_ascii=False, indent=1), encoding="utf-8")
+                               "boosted": a.boosted, "turns": model, "final": comps, "picks": pk}, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0
 

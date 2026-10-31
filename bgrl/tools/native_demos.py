@@ -167,6 +167,10 @@ def convert(src: Path, mmr: int, val_every: int = 10):
     profile = {"source": "他人对局（万三分段，TavernGym 观察格式）", "games": len(games), "mmr": mmr,
                "created": time.strftime("%Y-%m-%d"), "tempo": curve, "final": comp_stats(fb, gl, tl, det),
                "synergy": synergy(fb, det)}
+    pairs = {tuple(sorted((r[4], r[5]))) for r in profile["synergy"] if r[0] >= 3}
+    key = load_comp_refs()[1]
+    sc = [board_scores(ids, det, pairs, key) for ids in fb]
+    profile["final"]["scores"] = {k: round(float(np.mean([x[k] for x in sc])), 3) for k in ("coh", "syn", "key")} if sc else {}
     return data, boards, stats, len(games), profile
 
 
@@ -206,9 +210,40 @@ def synergy(boards: list[list[str]], det: dict, min_games: int = 12, top: int = 
         one.update(u)
         two.update(combinations(u, 2))
     n = len(boards)
-    out = [[round(k * n / (one[x] * one[y]), 2), k, (det.get(x) or {}).get("name_zh", x), (det.get(y) or {}).get("name_zh", y)]
+    out = [[round(k * n / (one[x] * one[y]), 2), k, (det.get(x) or {}).get("name_zh", x), (det.get(y) or {}).get("name_zh", y), x, y]
            for (x, y), k in two.items() if k >= min_games]
     return sorted(out, reverse=True)[:top]
+
+
+def board_scores(ids: list[str], det: dict, pairs: set, key: set) -> dict:
+    """一个最终阵容的配合程度：
+      coh   主种族纯度 = 最多的那个种族（全种族随从都算）的随从数 / 场上随从数
+      syn   场上两两组合里，属于高手常见搭配（synergy 里提升度 ≥ 3）的有几对
+      key   场上关键卡（rl/card_value.json 的 key）有几张"""
+    from itertools import combinations
+    races = Counter()
+    for x in ids:
+        rs = (det.get(x) or {}).get("races", [])
+        for r in ({r for r in rs if r != "ALL"} if "ALL" not in rs else set(ZH_RACE) - {"混合"}):
+            races[r] += 1
+    u = sorted(set(ids))
+    return {"coh": round(max(races.values()) / len(ids), 3) if races and ids else 0.0,
+            "syn": sum(1 for x, y in combinations(u, 2) if (x, y) in pairs),
+            "key": sum(1 for x in ids if x in key)}
+
+
+def load_comp_refs() -> tuple[set, set]:
+    """(高手常见搭配 {(id, id)}, 关键卡 {id})：rl/h13_profile.json 和 rl/card_value.json。"""
+    root = HERE.parent / "rl"
+    pairs, key = set(), set()
+    hp, cv = root / "h13_profile.json", root / "card_value.json"
+    if hp.exists():
+        for row in json.loads(hp.read_text(encoding="utf-8")).get("synergy", []):
+            if len(row) >= 6 and row[0] >= 3:
+                pairs.add(tuple(sorted((row[4], row[5]))))
+    if cv.exists():
+        key = set(json.loads(cv.read_text(encoding="utf-8")).get("key", []))
+    return pairs, key
 
 
 def merge_boards(paths: list[str]) -> dict:
