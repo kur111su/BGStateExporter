@@ -9,8 +9,6 @@ namespace BGStateExporter
 	{
 		public int Schema { get; set; } = 2;                // 2：v0.9 起加了计数器、附魔、玩家标签、待选项等完整玩家视角
 		public PluginInfo? Plugin { get; set; }
-		public LearningStatus? Learning { get; set; }
-		public List<TurnRecord>? TurnLog { get; set; }          // 本局每回合：推荐了什么 / 实际做了什么
 		public bool InGame { get; set; }
 		public bool IsBattlegrounds { get; set; }
 		public string Mode { get; set; } = "none";        // solo | duos | none
@@ -30,29 +28,6 @@ namespace BGStateExporter
 		public SimulationState? Simulation { get; set; }           // Bob's Buddy 模拟结果
 	}
 
-	public class TurnRecord
-	{
-		public int Turn { get; set; }
-		public int Tier { get; set; }                      // 回合结束时的酒馆等级
-		public string? Advice { get; set; }                // 回合开始时推荐方案的概括
-		public bool AdviceUpgrade { get; set; }
-		public string Actual { get; set; } = "";           // 实际操作的概括
-		public bool ActualUpgrade { get; set; }
-		public string Match { get; set; } = "none";        // same 一致 | partial 部分一致 | diff 不同 | none 没有建议
-	}
-
-	public class LearningStatus
-	{
-		public bool Enabled { get; set; }
-		public int GamesCollected { get; set; }            // 已记录学习样本的对局数
-		public int SamplesCollected { get; set; }
-		public int MinGames { get; set; }                  // 攒够多少局开始自动拟合
-		public int SamplesThisGame { get; set; }
-		public bool Fitting { get; set; }
-		public string? LastFitTime { get; set; }
-		public string? LastFitMessage { get; set; }
-	}
-
 	public class PluginInfo
 	{
 		public string? Version { get; set; }
@@ -70,55 +45,6 @@ namespace BGStateExporter
 		public LiveCombatSim? Live { get; set; }           // HDT 自己跑的本场（或上一场）战斗模拟
 		public MatchupState Matchups { get; set; } = new();
 		public OptimizerState Optimizer { get; set; } = new();
-		public AdvisorState Advisor { get; set; } = new();
-	}
-
-	// ---------------- 第一层：搜索建议 ----------------
-
-	public class AdvisorState
-	{
-		public string Status { get; set; } = "idle";       // idle | waiting | running | done | error
-		public int Turn { get; set; }
-		public string? Message { get; set; }               // 说明：用了哪个对手的阵容、没有阵容时怎么估值等
-		public string? TargetHeroName { get; set; }        // 用来模拟的对手
-		public int TargetBoardSeenTurn { get; set; }
-		public int PlansConsidered { get; set; }           // 枚举了多少种方案
-		public int PlansSimulated { get; set; }            // 其中多少种跑了模拟
-		public long ElapsedMs { get; set; }
-		public List<AdvisorPlan> Plans { get; set; } = new();   // 按得分从高到低，最多 3 个
-		public List<WeightInfo> Weights { get; set; } = new();  // 这次计算用的各项权重
-		public int DesiredTier { get; set; }                   // 升本节奏：这回合建议的酒馆等级
-		public double HpFactor { get; set; }                   // 血量系数（战力特征已乘上）
-		public int RunnerUps { get; set; }                     // 前三名之外还有多少个有效方案
-	}
-
-	public class AdvisorPlan
-	{
-		public int Rank { get; set; }
-		public double Score { get; set; }
-		public List<PlanStep> Steps { get; set; } = new();
-		public List<string> Reasons { get; set; } = new();
-		public SimResult? Sim { get; set; }                 // 打完这套操作后，对目标对手的模拟结果
-		public int GoldLeft { get; set; }
-		public List<int> FinalBoard { get; set; } = new();  // 结束时场面的 entityId，从左到右
-		public Dictionary<string, double> ScoreParts { get; set; } = new();   // 各项得分，方便调权重
-		public Dictionary<string, double> Features { get; set; } = new();     // 原始特征（键同 weights[].key），得分 = 权重 × 特征
-	}
-
-	public class WeightInfo
-	{
-		public string Key { get; set; } = "";
-		public string Name { get; set; } = "";
-		public double Value { get; set; }                    // 当前使用的权重
-		public double Default { get; set; }                  // 默认权重（自动学习前）
-	}
-
-	public class PlanStep
-	{
-		public string Type { get; set; } = "";              // upgrade | sell | buy | play | refresh | freeze
-		public string Text { get; set; } = "";
-		public int EntityId { get; set; }                   // 相关卡牌（没有就是 0）
-		public int Gold { get; set; }                       // 这一步之后剩余金币
 	}
 
 	public class SimResult

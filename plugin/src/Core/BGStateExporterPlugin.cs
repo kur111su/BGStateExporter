@@ -13,7 +13,8 @@ namespace BGStateExporter
 {
 	public class BGStateExporterPlugin : IPlugin
 	{
-		private const int Port = 8765;
+		private const int Port = 8765;          // /state.json、/events、/optimize（没有网页面板了）
+		private const int ShadowPort = 8766;    // bgrl 影子模式的页面：模型建议 + 这里的模拟结果
 
 		private static readonly JsonSerializerSettings JsonSettings = new()
 		{
@@ -27,7 +28,6 @@ namespace BGStateExporter
 
 		private StateServer? _server;
 		private SimManager? _sim;
-		private Learner? _learner;
 		private MenuItem? _menuItem;
 		private bool _menuNoticeShown;
 		private string _lastContent = "";
@@ -37,8 +37,8 @@ namespace BGStateExporter
 		private DateTime _lastErrorLog = DateTime.MinValue;
 
 		public string Name => "BG State Exporter";
-		public string Description => "实时导出酒馆战旗局面、Bob's Buddy 对战模拟和每回合操作建议，网页面板：http://localhost:8765/";
-		public string ButtonText => "打开网页面板";
+		public string Description => "实时导出酒馆战旗局面和对局记录、Bob's Buddy 对战模拟（本场胜率、对位胜率、站位优化）。建议来自 PPO 模型的影子模式：bgrl\\shadow.bat，页面 http://localhost:8766/";
+		public string ButtonText => "打开影子模式页面";
 		public string Author => "炉石酒馆项目";
 		public Version Version => UpdateChecker.CurrentVersion;
 
@@ -48,7 +48,7 @@ namespace BGStateExporter
 			{
 				if(_menuItem == null)
 				{
-					_menuItem = new MenuItem { Header = "战旗局面面板" };
+					_menuItem = new MenuItem { Header = "影子模式（模型建议）" };
 					_menuItem.Click += (_, _) => OpenPanel();
 				}
 				return _menuItem;
@@ -61,16 +61,6 @@ namespace BGStateExporter
 				Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
 				"HearthstoneDeckTracker", "BGStateExporter");
 			Directory.CreateDirectory(Path.Combine(_outDir, "games"));
-			AdvisorWeights.FilePath = Path.Combine(_outDir, "advisor_weights.json");
-			try
-			{
-				_learner = new Learner(_outDir);
-			}
-			catch(Exception ex)
-			{
-				Log.Error($"[BGStateExporter] 自动学习初始化失败：{ex.Message}");
-			}
-
 			try
 			{
 				_sim = new SimManager();
@@ -94,7 +84,6 @@ namespace BGStateExporter
 			_server?.Dispose();
 			_server = null;
 			_sim = null;
-			_learner = null;
 		}
 
 		public void OnButtonPress() => OpenPanel();
@@ -114,7 +103,7 @@ namespace BGStateExporter
 				if(UpdateChecker.UpdateReady && _menuItem != null && !_menuNoticeShown)
 				{
 					_menuNoticeShown = true;
-					_menuItem.Header = $"战旗局面面板（新版本 {UpdateChecker.LatestVersion} 已下载，重启 HDT 生效）";
+					_menuItem.Header = $"影子模式（新版本 {UpdateChecker.LatestVersion} 已下载，重启 HDT 生效）";
 				}
 				if(_sim != null)
 				{
@@ -132,15 +121,6 @@ namespace BGStateExporter
 							_lastErrorLog = DateTime.Now;
 							Log.Warn($"[BGStateExporter] 模拟出错：{ex.Message}");
 						}
-					}
-				}
-				if(_learner != null)
-				{
-					_learner.OnState(state, _sim?.LastRun);
-					if(state.IsBattlegrounds)
-					{
-						state.Learning = _learner.Status;
-						state.TurnLog = _learner.TurnLog;
 					}
 				}
 				var content = JsonConvert.SerializeObject(state, JsonSettings);
@@ -195,7 +175,7 @@ namespace BGStateExporter
 		{
 			try
 			{
-				Process.Start(new ProcessStartInfo($"http://localhost:{Port}/") { UseShellExecute = true });
+				Process.Start(new ProcessStartInfo($"http://localhost:{ShadowPort}/") { UseShellExecute = true });
 			}
 			catch(Exception ex)
 			{

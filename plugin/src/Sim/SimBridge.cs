@@ -182,7 +182,7 @@ namespace BGStateExporter
 			return m;
 		}
 
-		// 同一时间只跑一个模拟（每个模拟本身已经是多线程的），建议器、对位模拟、站位优化排队使用 CPU
+		// 同一时间只跑一个模拟（每个模拟本身已经是多线程的），对位模拟、站位优化排队使用 CPU
 		private static readonly System.Threading.SemaphoreSlim Gate = new(1, 1);
 
 		public static async Task<SimResult> RunAsync(Input input, int iterations, int maxTimeMs)
@@ -211,7 +211,7 @@ namespace BGStateExporter
 			r.LossLethal = Round(o.myDeathRate);
 			r.SimulationCount = (int)o.simulationCount;
 
-			// damageResults：正数 = 我方造成的伤害，负数 = 我方承受的伤害（与 HDT 面板一致）
+			// damageResults：正数 = 我方造成的伤害，负数 = 我方承受的伤害（与 HDT 悬浮窗一致）
 			var dmg = o.damageResults?.ToList() ?? new List<int>();
 			var dealt = dmg.Where(x => x > 0).ToList();
 			var taken = dmg.Where(x => x < 0).ToList();

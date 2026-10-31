@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Net;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using Hearthstone_Deck_Tracker.Utility.Logging;
@@ -11,7 +9,7 @@ namespace BGStateExporter
 {
 	/// <summary>
 	/// 本机 HTTP 服务（只监听 localhost）：
-	///   GET /            网页面板
+	///   GET /            说明（网页面板已去掉：建议看 bgrl 影子模式 http://localhost:8766/）
 	///   GET /state.json  当前局面
 	///   GET /events      Server-Sent Events，局面变化时推送
 	///   GET /optimize    请求站位优化
@@ -24,7 +22,6 @@ namespace BGStateExporter
 		private readonly List<HttpListenerResponse> _sseClients = new();
 		private readonly object _lock = new();
 		private readonly AutoResetEvent _changed = new(false);
-		private readonly byte[] _indexHtml;
 		private volatile string _currentJson = "{}";
 		private volatile bool _running;
 		private Thread? _acceptThread;
@@ -34,7 +31,6 @@ namespace BGStateExporter
 		{
 			_port = port;
 			_onOptimize = onOptimize;
-			_indexHtml = LoadIndexHtml();
 		}
 
 		public string Url => $"http://localhost:{_port}/";
@@ -56,7 +52,7 @@ namespace BGStateExporter
 			_pushThread = new Thread(PushLoop) { IsBackground = true, Name = "BGStateExporter-SSE" };
 			_acceptThread.Start();
 			_pushThread.Start();
-			Log.Info($"[BGStateExporter] 面板地址 {Url}");
+			Log.Info($"[BGStateExporter] 局面接口 {Url}state.json");
 			return true;
 		}
 
@@ -96,7 +92,7 @@ namespace BGStateExporter
 				{
 					case "":
 					case "/index.html":
-						Write(res, "text/html; charset=utf-8", _indexHtml);
+						Write(res, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(IndexHtml));
 						break;
 					case "/optimize":
 						// 站位优化：/optimize?opponent=对手PLAYER_ID（不填则用下个对手），结果出现在 state.json 的 simulation.optimizer
@@ -176,15 +172,10 @@ namespace BGStateExporter
 			res.OutputStream.Flush();
 		}
 
-		private static byte[] LoadIndexHtml()
-		{
-			using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BGStateExporter.index.html");
-			if(stream == null)
-				return Encoding.UTF8.GetBytes("<h1>index.html 没有被打包进插件</h1>");
-			using var ms = new MemoryStream();
-			stream.CopyTo(ms);
-			return ms.ToArray();
-		}
+		private const string IndexHtml = "<!doctype html><meta charset=utf-8><title>BG State Exporter</title>"
+			+ "<p>插件只导出局面和对局记录：<a href=/state.json>/state.json</a>、/events（推送）、/optimize（站位优化）。</p>"
+			+ "<p>模型建议、本场胜率、对位胜率、站位优化都在影子模式页面：运行 bgrl\\shadow.bat 后打开 "
+			+ "<a href=http://localhost:8766/>http://localhost:8766/</a>。</p>";
 
 		public void Dispose()
 		{

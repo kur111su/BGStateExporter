@@ -12,12 +12,12 @@ namespace BGStateExporter
 {
 	/// <summary>
 	/// 管理所有对战模拟：
-	///  1. 读取 HDT 自己跑的本场战斗模拟结果（Bob's Buddy 面板上的数字）
+	///  1. 读取 HDT 自己跑的本场战斗模拟结果（HDT 的 Bob's Buddy 悬浮窗上的数字）
 	///  2. 招募阶段：用你当前的场面，对每个对手“上次见到的阵容”自动模拟
 	///  3. 站位优化：按请求搜索更好的站位
 	/// Tick() 在 HDT UI 线程调用；模拟本身在后台线程跑。
 	/// </summary>
-	internal sealed partial class SimManager
+	internal sealed class SimManager
 	{
 		// 自动对位模拟
 		private const int MatchupIterations = 3000;
@@ -57,7 +57,6 @@ namespace BGStateExporter
 			Live = _live,
 			Matchups = _matchups,
 			Optimizer = _optimizer,
-			Advisor = _advisor,
 		};
 
 		/// <summary>由 HTTP 线程调用。opponentPlayerId=0 表示下个对手。</summary>
@@ -99,8 +98,6 @@ namespace BGStateExporter
 				return;
 			}
 
-			// 建议器优先：它最影响这回合怎么操作
-			TickAdvisor(game, state);
 			TickMatchups(game, state);
 			TickOptimizer(game, state);
 		}
@@ -110,10 +107,6 @@ namespace BGStateExporter
 			_live = null;
 			_matchups = new MatchupState();
 			_optimizer = new OptimizerState();
-			_advisor = new AdvisorState();
-			_lastRun = null;
-			_advisorSignature = "";
-			_advisorDirty = false;
 			_lastSignature = "";
 			_matchupDirty = false;
 			_gameId = null;
@@ -176,7 +169,7 @@ namespace BGStateExporter
 		private async Task RunMatchupsAsync(SimContext ctx, SimSide player, List<CapturedOpponent> opponents, int next, int turn)
 		{
 			var results = new List<MatchupResult>();
-			// 重新模拟期间先保留上一轮的数字，算出一个替换一个，面板不会闪空
+			// 重新模拟期间先保留上一轮的数字，算出一个替换一个，页面不会闪空
 			var previous = _matchups.Results ?? new List<MatchupResult>();
 			List<MatchupResult> Merged() => results
 				.Concat(previous.Where(old => results.All(done => done.OpponentPlayerId != old.OpponentPlayerId)))
@@ -317,7 +310,7 @@ namespace BGStateExporter
 							}
 							if(accept || evaluated % 5 == 0)
 							{
-								// 定期更新进度，面板上能看到“已试 N 种站位”
+								// 定期更新进度，影子模式页面上能看到“已试 N 种站位”
 								var progress = Next("running");
 								progress.Evaluated = evaluated;
 								progress.BestOrder = best.Select(m => m.Id).ToList();

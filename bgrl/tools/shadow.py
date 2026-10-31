@@ -1,8 +1,8 @@
-"""C1 影子模式：读插件的实时局面，算出模型给的本回合方案，显示在插件面板（v0.9.2 起）和单独的网页上。
-只显示，不操作游戏。
+"""C1 影子模式：读插件的实时局面，算出模型（PPO）给的本回合方案，显示在 http://localhost:8766/。
+只显示，不操作游戏。插件 v0.10 起去掉了自己的搜索建议器和 8765 网页面板，这一页是唯一的界面：
+  模型建议（本回合方案、预计名次、第一步备选）+ 插件的 Bob's Buddy 模拟（本场胜率、对各对手胜率、站位优化按钮）。
 
-用法：python shadow.py [--run runs/v2 | --ckpt 某个检查点.pt] [--port 8766] [--device cpu]
-  插件面板 http://localhost:8765/ 的“模型建议”一栏会自动出现；单独的网页 http://localhost:8766/ 也能看。
+用法：python shadow.py [--run runs/v3 | --ckpt 某个检查点.pt] [--port 8766] [--device cpu]
   训练还在跑时，latest.pt 每次更新后（换局时）自动换成新模型。
   每回合的方案记在 bgrl/reports/shadow/日期.jsonl，之后可以和你的实际操作对照。
 """
@@ -42,17 +42,43 @@ ol{margin:6px 0 0;padding-left:22px} li{margin:3px 0} .p{color:var(--mut);font-s
 .bl{display:flex;gap:2px}.bl span{flex:1;text-align:center;font-size:11px;color:var(--mut)}
 table{width:100%;border-collapse:collapse;font-size:14px} td{padding:3px 4px;border-top:1px solid var(--line)} td.n{text-align:right;white-space:nowrap;color:var(--mut)}
 .note{color:var(--warn);font-size:13px;margin-top:6px} .st{font-size:13px}
+button{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.next{font-weight:600}
 </style></head><body><main>
 <h1>模型建议 <span class="mut">影子模式：只看不操作，你照常打</span></h1>
 <div class="st mut" id="st">连接中…</div>
 <div id="out"></div>
+<div id="sim"></div>
 </main><script>
 const $=s=>document.querySelector(s);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 async function tick(){
  try{const r=await fetch('/advice.json',{cache:'no-store'});const d=await r.json();render(d)}catch(e){$('#st').textContent='影子服务没有响应'}
  setTimeout(tick,1000)}
+const pct=x=>x==null?'-':(x*100).toFixed(0)+'%';
+function renderSim(sm){
+ if(!sm){$('#sim').innerHTML='';return}
+ if(!sm.available){$('#sim').innerHTML=`<div class="card mut">Bob's Buddy 模拟不可用${sm.message?'：'+esc(sm.message):''}</div>`;return}
+ let h='';const lv=sm.live;
+ if(lv&&lv.hasResult)h+=`<div class="card"><b>${lv.state==='Combat'?'本场':'上一场'}战斗（第 ${lv.turn} 回合，HDT 的 Bob's Buddy）</b>
+ <div class="row"><div>胜 <span class="big">${pct(lv.winRate)}</span></div><div>平 ${pct(lv.tieRate)}</div><div>负 ${pct(lv.lossRate)}</div>
+ <div class="mut">斩杀 ${pct(lv.winLethal)} · 被斩杀 ${pct(lv.lossLethal)}</div></div></div>`;
+ const mu=sm.matchups||{};const rs=mu.results||[];
+ if(rs.length||mu.error)h+=`<div class="card"><b>对各对手胜率</b> <span class="mut">用你现在的场面打对手上次的阵容${mu.status==='running'?' · 计算中…':''}</span>
+ ${mu.error?`<div class="note">${esc(mu.error)}</div>`:''}<table>${rs.map(r=>`<tr><td class="${r.isNextOpponent?'next':''}">${esc(r.heroName||r.heroCardId||'?')}${r.isNextOpponent?'（下个对手）':''}
+ <span class="p">第 ${r.boardSeenTurn} 回合的阵容</span></td>${r.error?`<td colspan=3 class="n">${esc(r.error)}</td>`:`<td class="n">胜 ${pct(r.winRate)}</td><td class="n">平 ${pct(r.tieRate)}</td><td class="n">负 ${pct(r.lossRate)}</td>`}</tr>`).join('')}</table></div>`;
+ const op=sm.optimizer||{};
+ h+=`<div class="card"><b>站位优化</b> <button id="optb">对下个对手优化站位</button>`;
+ if(op.status==='running')h+=`<div class="mut">计算中，已试 ${op.evaluated||0} 种站位…</div>`;
+ if(op.message)h+=`<div class="${op.status==='error'?'note':'mut'}">${esc(op.message)}</div>`;
+ if(op.status==='done'&&op.best){h+=`<div>对 ${esc(op.opponentHeroName||'')}：当前 胜 ${pct(op.current&&op.current.winRate)} / 负 ${pct(op.current&&op.current.lossRate)} →
+ 建议 胜 ${pct(op.best.winRate)} / 负 ${pct(op.best.lossRate)}</div><ol>${(op.bestOrderNames||[]).map(n=>`<li>${esc(n)}</li>`).join('')}</ol>`}
+ h+=`</div>`;
+ $('#sim').innerHTML=h;
+ $('#optb').onclick=async()=>{try{const r=await fetch('/optimize',{cache:'no-store'});const j=await r.json();if(!j.accepted)alert(j.message||'没有接受')}catch(e){}};
+}
 function render(d){
+ renderSim(d.simulation);
  const m=d.model||{};
  $('#st').innerHTML=esc(d.status||'')+(m.path?` · 模型 ${esc(m.name||'')}${m.iter!=null?' 第 '+m.iter+' 轮':''}`:'');
  const a=d.advice; if(!a){$('#out').innerHTML='';return}
@@ -75,6 +101,7 @@ class Shadow:
         self.a = a
         self.status = "等待插件局面"
         self.advice = None
+        self.sim = None                                   # 插件的 Bob's Buddy 模拟结果（原样转给页面）
         self.model = self.advisor = None
         self.minfo = {}
         self.hist = GameHistory()                         # 对手上次阵容、已买的黑暗之赐（和回放共用）
@@ -133,6 +160,7 @@ class Shadow:
         if s is None:
             self.status = f"连不上插件（http://localhost:{self.a.plugin_port}/），请确认 HDT 和插件在运行"
             return
+        self.sim = s.get("simulation") if s.get("isBattlegrounds") else None
         if not s.get("inGame") or not s.get("isBattlegrounds"):
             self.status = "不在酒馆战旗对局中"
             return
@@ -196,7 +224,7 @@ class Shadow:
 
     def snapshot(self) -> dict:
         with self.lock:
-            return {"status": self.status, "advice": self.advice, "service": "bgrl-shadow", "version": 1,
+            return {"status": self.status, "advice": self.advice, "simulation": self.sim, "service": "bgrl-shadow", "version": 2,
                     "model": {k: self.minfo.get(k) for k in ("name", "iter", "path")}}
 
 
@@ -218,6 +246,15 @@ def main() -> int:
             if self.path.startswith("/advice.json"):
                 body = json.dumps(sh.snapshot(), ensure_ascii=False).encode("utf-8")
                 ctype = "application/json; charset=utf-8"
+            elif self.path.startswith("/optimize"):        # 站位优化：转给插件（结果出现在下一次的 simulation.optimizer）
+                try:
+                    q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                    with urllib.request.urlopen(f"http://localhost:{a.plugin_port}/optimize" + (f"?{q}" if q else ""),
+                                                timeout=3) as r:
+                        body = r.read()
+                except Exception as ex:                    # noqa: BLE001
+                    body = json.dumps({"accepted": False, "message": f"连不上插件：{ex}"}, ensure_ascii=False).encode("utf-8")
+                ctype = "application/json; charset=utf-8"
             elif self.path in ("/", "/index.html"):
                 body, ctype = PAGE.encode("utf-8"), "text/html; charset=utf-8"
             else:
@@ -227,7 +264,7 @@ def main() -> int:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")          # 插件面板（8765 端口）来取
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -237,8 +274,8 @@ def main() -> int:
 
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
     threading.Thread(target=sh.loop, daemon=True).start()
-    print(f"影子模式已启动：插件面板 http://localhost:{a.plugin_port}/ 会显示“模型建议”；"
-          f"单独的网页 http://localhost:{a.port}/。关掉这个窗口就停止。", flush=True)
+    print(f"影子模式已启动：打开 http://localhost:{a.port}/（模型建议 + Bob's Buddy 胜率 / 站位优化；"
+          f"局面来自插件 http://localhost:{a.plugin_port}/state.json）。关掉这个窗口就停止。", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

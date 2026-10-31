@@ -31,7 +31,7 @@ namespace BGStateExporter
 		/// <summary>新版本已下载好，重启 HDT 生效。</summary>
 		public static bool UpdateReady { get; private set; }
 
-		/// <summary>检查或下载失败的原因（显示在网页面板上）。</summary>
+		/// <summary>检查或下载失败的原因（写在 state.json 的 plugin.updateError 里）。</summary>
 		public static string? Error { get; private set; }
 
 		private static WebClient NewClient()

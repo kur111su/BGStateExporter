@@ -10,8 +10,8 @@ REPORTS = ROOT / "reports"                      # 各种报告（回放、测速
 FIXTURES = ROOT / "tests" / "fixtures"          # CI 用的局面 / 回放样本
 DEFAULT_RUN = RUNS / "v3"                       # 当前的正式训练（第二阶段：机器人按真人强度加强；v2 是第一阶段）
 
-PLUGIN_PORT = 8765                              # 插件的网页面板和 /state.json
-SHADOW_PORT = 8766                              # 影子模式的 /advice.json
+PLUGIN_PORT = 8765                              # 插件的 /state.json、/optimize（v0.10 起没有网页面板）
+SHADOW_PORT = 8766                              # 影子模式的页面和 /advice.json
 
 
 def plugin_data() -> Path:

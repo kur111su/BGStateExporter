@@ -1,6 +1,6 @@
 # bgrl：TavernGym 训练 + 影子模式
 
-在 TavernGym（MCG-NJU/AutoTavern，MIT，锁定的版本见 `taverngym/PIN.txt`）里用 PPO 训练一个实体 Transformer 策略，再把它的建议显示在插件面板上。只显示，不操作游戏。
+在 TavernGym（MCG-NJU/AutoTavern，MIT，锁定的版本见 `taverngym/PIN.txt`）里用 PPO 训练一个实体 Transformer 策略，建议完全来自这个模型：影子模式把它的本回合方案显示在 http://localhost:8766/（插件 v0.10 起不再有自己的搜索建议器和网页面板）。只显示，不操作游戏。
 
 ## 四个入口（Windows 双击）
 
@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 | `reports\setup.txt` |
 | `train.bat` | 训练（第二阶段 `runs\v3`：机器人按真人强度加强，从第一阶段 `runs\v2` 的模型开始），关掉窗口再开会接着练。其它设置：`train.bat --help` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
-| `shadow.bat` | 影子模式：插件面板“模型建议”一栏、http://localhost:8766/ 。训练中换局时自动换上最新模型（当前训练目录还没有模型时，用最近更新的其它训练目录的）。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
+| `shadow.bat` | 影子模式：http://localhost:8766/（模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮）。训练中换局时自动换上最新模型（当前训练目录还没有模型时，用最近更新的其它训练目录的）。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `tavernbench.bat` | 用 TavernBench 测当前模型（约几分钟，只用 CPU，训练开着也行）。`tavernbench.bat --ckpt runs\v2\latest.pt` 测指定模型 | `reports\tavernbench\<模型>\report.txt` |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 
@@ -37,7 +37,7 @@
 ## 模块
 
 ```
-paths.py          路径和端口（runs/、reports/、默认训练目录 runs/v2、插件数据目录、8765 / 8766）
+paths.py          路径和端口（runs/、reports/、默认训练目录 runs/v3、插件数据目录、8765 / 8766）
 tg/actions.py     245 个动作的编号（所有模块共用）
 tg/logs.py        读插件对局记录：统一标签名、皮肤 → 英雄、切分动作；GameHistory 记对手上次阵容和已买的黑暗之赐（回放和影子模式共用）
 tg/bridge.py      插件局面 → TavernGym 局面（随从、附魔、宝石 / 法术加成、饰品和随从计数、战败状态、黑暗之赐次数、对手阵容）

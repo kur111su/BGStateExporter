@@ -12,7 +12,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>BGStateExporter</AssemblyName>
     <RootNamespace>BGStateExporter</RootNamespace>
-    <Version>0.9.4</Version>
+    <Version>0.10.0</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- 默认使用与仓库同级的 HDT 目录（例如 D:\claude\HDT），可用 -p:HDTPath=... 覆盖 -->
@@ -50,9 +50,5 @@
     <Reference Include="System.Xaml" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- 网页面板打包进 DLL，由内置 HTTP 服务直接提供 -->
-    <EmbeddedResource Include="www\index.html" LogicalName="BGStateExporter.index.html" />
-  </ItemGroup>
 
 </Project>
