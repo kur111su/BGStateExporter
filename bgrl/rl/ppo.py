@@ -144,6 +144,9 @@ class Config:
     # 上面那项里“买随从”按多少倍扣（1 = 和别的花法一样，0 = 买随从不扣）。
     # 第 4351–5054 轮（0.5）：第 2 回合升本率 4% → 51%，但买随从的钱第 5–8 回合只有高手的 1/4–1/3，阵容跟不上
     starve_buy_weight: float = 0.5
+    # 从第几回合起买随从才按 starve_buy_weight 算（之前照常扣）。第 5900–6366 轮（买随从全程不扣）：第 2 回合
+    # 升本率 0.45 → 0.06–0.14——模型学会了第 2 回合买随从来躲这一项（高手第 2 回合 86% 升本、只买 0.57 块）
+    starve_buy_from_turn: int = 4
     # 回合末没花掉的钱：每剩 1 块扣这么多（第 2 回合起；高手几乎不剩，模型每回合剩 0.2–0.8 块）
     unspent_gold_penalty: float = 0.0
     # 防止背下高分示范：每次考试比较训练示范和留出局的命中率，差距大于 pro_gap_cap 就把模仿高手的强度减半，
@@ -733,7 +736,8 @@ class Trainer:
                 self.mix["starve"] += 1
                 prev = int(self.rollout.last[s])
                 if pen > 0 and prev >= 0:
-                    self.rollout.r[prev] -= pen * (self.cfg.starve_buy_weight if A_BUY <= g["act"][s] < A_SELL else 1.0)
+                    buy = A_BUY <= g["act"][s] < A_SELL and t >= self.cfg.starve_buy_from_turn
+                    self.rollout.r[prev] -= pen * (self.cfg.starve_buy_weight if buy else 1.0)
             if not (g["ts_turn"][s] == t and g["ep"][s] == ep):         # 新回合的第一步
                 g["ts_turn"][s], g["ts_tier"][s], g["ts_aff"][s] = t, tier, int(up > 0 and gold >= up)
             behind = tier < self._tier_target(t) - 0.5
