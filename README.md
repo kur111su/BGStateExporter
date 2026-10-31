@@ -70,6 +70,6 @@ HDT ──读局面──▶ 插件 ──▶ :8765/state.json、state.json、ga
 | 训练进度、模型、对手库快照 | `bgrl\runs\v3\`（`log.jsonl`、`latest.pt`、`snapshots\`） |
 | 回放报告、影子模式记录、安装日志 | `bgrl\reports\` |
 
-v0.9.4 及以前插件里的搜索建议器（`plugin/src/Advisor/`）和网页面板（`plugin/www/index.html`）已移除，需要时可从提交 8f6c1a8 之前的版本取回。
+v0.9.4 及以前插件里的搜索建议器（`plugin/src/Advisor/`）和网页面板（`plugin/www/index.html`）已移除，需要时可从提交 73fee12 取回（`git checkout 73fee12 -- plugin/src/Advisor plugin/www`）。
 
 旧的自研模拟器 `bgrl/bgsim` 和 Bob's Buddy 批量模拟接口 `bgrl/simhost` 已被 TavernGym 取代、从仓库移除；需要时可从提交 9b60201 取回（`git checkout 9b60201 -- bgrl/bgsim bgrl/simhost`）。
