@@ -113,6 +113,20 @@ def summarize(games: list[dict], max_turn: int = 10) -> dict:
 
 # ---------------- 模型 ----------------
 
+def train_rules(ckpt: str) -> dict:
+    """训练时的规则（每回合动作数上限）：读检查点旁边的 config.json，没有就用默认。"""
+    from rl.ppo import Config
+    cfg = Config()
+    cp = next((d / "config.json" for d in (Path(ckpt).resolve().parent, Path(ckpt).resolve().parent.parent)
+               if (d / "config.json").exists()), None)
+    if cp is not None:
+        try:
+            cfg.turn_caps = json.loads(cp.read_text(encoding="utf-8")).get("turn_caps", cfg.turn_caps)
+        except (OSError, ValueError):
+            pass
+    return cfg.rules()
+
+
 def model_policy(ckpt: str, device: str, greedy: bool):
     """检查点 → (选动作的函数 act(features, cards, mask) -> 动作数组, 检查点信息)。"""
     import torch
@@ -140,7 +154,9 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     from tools.cardvalue import PickStats
     print(f"读模型 {ckpt} …", flush=True)
     act, info = policy if policy is not None else model_policy(ckpt, device, greedy)
-    env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads)
+    # 和训练一样给每回合动作数设上限（turn_caps）：不设的话模型取最大概率时可能在两个动作之间来回绕
+    # （例如换位置换回来），这一局永远打不完——第 57 局卡住就是这样
+    env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads, config=train_rules(ckpt))
     booster = None
     if boosted:
         from rl.calibrate import ProBoardBooster, load_pro_boards
@@ -164,8 +180,15 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     obs = env.observe()
     t0, shown = _t.time(), 0
     print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
+    last_progress, step_no, quiet = 0, 0, 0
     for _ in range(200000):
         if all(done):
+            break
+        step_no += 1
+        if len(places) != last_progress:
+            last_progress, quiet = len(places), step_no
+        elif step_no - quiet > 20000:
+            print(f"  剩下 {games - len(places)} 局 2 万步没有进展，不等了（按已打完的 {len(places)} 局统计）", flush=True)
             break
         ready = [i for i in np.flatnonzero(obs["ready"]) if not done[i]]
         # 已经打完的槽位会自动开新局：随便给个合法动作让它走（不算数）
