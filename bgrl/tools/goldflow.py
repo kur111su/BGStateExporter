@@ -113,14 +113,33 @@ def summarize(games: list[dict], max_turn: int = 10) -> dict:
 
 # ---------------- 模型 ----------------
 
-def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False):
-    """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
-    runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。"""
+def model_policy(ckpt: str, device: str, greedy: bool):
+    """检查点 → (选动作的函数 act(features, cards, mask) -> 动作数组, 检查点信息)。"""
     import torch
-    from taverngym import BatchEnv
     from rl.advisor import load_model
-    from tools.cardvalue import PickStats
     model, info = load_model(ckpt, device)
+
+    def act(f, c, m):
+        with torch.no_grad():
+            mm = torch.as_tensor(m, device=device)
+            lg = model(torch.as_tensor(f, dtype=torch.float32, device=device),
+                       torch.as_tensor(c, dtype=torch.long, device=device), mm)[0].float()
+            lg = lg.masked_fill(~mm, float("-inf"))
+            a = lg.argmax(-1) if greedy else torch.distributions.Categorical(logits=lg).sample()
+        return a.cpu().numpy()
+    info["name"] = Path(ckpt).name
+    return act, info
+
+
+def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
+               policy=None):
+    """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
+    runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。"""
+    import time as _t
+    from taverngym import BatchEnv
+    from tools.cardvalue import PickStats
+    print(f"读模型 {ckpt} …", flush=True)
+    act, info = policy if policy is not None else model_policy(ckpt, device, greedy)
     env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads)
     booster = None
     if boosted:
@@ -143,21 +162,18 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     places = {}
     last_cards = [None] * env.n_slots                  # 每局最后一次招募时的场面（最终阵容）
     obs = env.observe()
-    for _ in range(100000):
+    t0, shown = _t.time(), 0
+    print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
+    for _ in range(200000):
         if all(done):
             break
         ready = [i for i in np.flatnonzero(obs["ready"]) if not done[i]]
-        actions = np.zeros(env.n_slots, dtype=np.int64)
+        # 已经打完的槽位会自动开新局：随便给个合法动作让它走（不算数）
+        actions = obs["action_mask"].astype(bool).argmax(1).astype(np.int64)
         if ready:
             f = obs["features"][ready]
             m = obs["action_mask"][ready].astype(bool)
-            with torch.no_grad():
-                lg = model(torch.as_tensor(f, dtype=torch.float32, device=device),
-                           torch.as_tensor(obs["cards"][ready], dtype=torch.long, device=device),
-                           torch.as_tensor(m, device=device))[0].float()
-                lg = lg.masked_fill(~torch.as_tensor(m, device=device), float("-inf"))
-                a = lg.argmax(-1) if greedy else torch.distributions.Categorical(logits=lg).sample()
-            a = a.cpu().numpy()
+            a = np.asarray(act(f, obs["cards"][ready], m))
             for k, i in enumerate(ready):
                 fi = f[k]
                 last_cards[i] = obs["cards"][i][19:26].copy()
@@ -175,10 +191,16 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             if not done[i]:
                 done[i] = True
                 places[int(i)] = int(inf["placement"][i])
+        if len(places) >= shown + 8 or (len(places) == games and shown < games):
+            shown = len(places)
+            ps = [p for p in places.values() if p > 0]
+            el = _t.time() - t0
+            print(f"  {shown}/{games} 局，平均名次 {np.mean(ps):.2f}，{el / 60:.1f} 分钟"
+                  + (f"，预计还要 {el / shown * (games - shown) / 60:.0f} 分钟" if shown < games else ""), flush=True)
         obs = env.observe()
         if booster is not None and booster.boost(env, obs["features"]):
             obs = env.observe()
-    print(f"模型 {info.get('iter')} 轮（{Path(ckpt).name}）：{len(places)} 局，平均名次 "
+    print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
     info["picks"], info["sells"] = picks, sells
     import taverngym
