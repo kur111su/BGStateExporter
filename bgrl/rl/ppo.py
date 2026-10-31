@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
-from tg.actions import A_BUY, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
+from tg.actions import A_BUY, A_DARK_GIFT, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
 from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_boards, ramp
 
 # 观察（v1）里的几个全局数：第 0 个 回合/20，第 7 个 金币/10，第 10 个 酒馆等级/6，第 11 个 升本费/10（满级 0）
@@ -150,6 +150,9 @@ class Config:
     # 从第几回合起买随从才按 starve_buy_weight 算（之前照常扣）。第 5900–6366 轮（买随从全程不扣）：第 2 回合
     # 升本率 0.45 → 0.06–0.14——模型学会了第 2 回合买随从来躲这一项（高手第 2 回合 86% 升本、只买 0.57 块）
     starve_buy_from_turn: int = 4
+    # 黑暗之赐把升本的钱花掉时按多少倍扣。阵容测试（第 7920 轮，对高分阵容 64 局）：第 5 回合 97% 买黑暗之赐、
+    # 升本率 20%（高手买黑暗之赐 22%、升本 67%），第 5 回合等级 2.56（高手 3.17）
+    starve_gift_weight: float = 1.0
     # 回合末没花掉的钱：每剩 1 块扣这么多（第 2 回合起；高手几乎不剩，模型每回合剩 0.2–0.8 块）
     unspent_gold_penalty: float = 0.0
     # 防止背下高分示范：每次考试比较训练示范和留出局的命中率，差距大于 pro_gap_cap 就把模仿高手的强度减半，
@@ -622,7 +625,7 @@ class Trainer:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
-                elif k in ("key", "eco"):                     # 买关键卡 / 经济卡的示范再乘（rl/card_value.json）
+                elif k in ("key", "eco", "tribe", "syn"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
                     tw.append((k, None, float(v)))
                 elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
                     lo, _, hi = k[1:].partition("-")
@@ -631,7 +634,7 @@ class Trainer:
         for k, v in w.items():
             out[d["kind"] == k] = v
         for lo, hi, v in tw:
-            if lo in ("key", "eco"):
+            if lo in ("key", "eco", "tribe", "syn"):
                 sel = Trainer._bought_in(d, lo)
                 if sel is not None:
                     out[sel] *= v
@@ -641,23 +644,62 @@ class Trainer:
 
     @staticmethod
     def _bought_in(d, which: str):
-        """哪些示范是“买了一张关键卡 / 经济卡”（买的那格的卡牌在 rl/card_value.json 的 key / eco 里）。"""
+        """哪些示范是“买了一张 …… 的卡”（买的那格的卡牌）：
+          key / eco  在 rl/card_value.json 的关键卡 / 经济卡里
+          tribe      是随从，而且场上已经有 ≥ 2 个和它同种族的随从（全种族算任何种族）——围绕主种族成型
+          syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动"""
         from tools.make_demos import KINDS
-        cv = Path(__file__).resolve().parent / "card_value.json"
-        if not cv.exists() or "c" not in d:
+        if "c" not in d:
             return None
         import taverngym
-        want = set(json.loads(cv.read_text(encoding="utf-8")).get(which, []))
-        idx = {i for i in range(1, taverngym.N_CARDS)
-               if (lambda cid: (cid[:-2] if cid.endswith("_G") else cid) in want)(taverngym.card_info(i)[0])}
+        root = Path(__file__).resolve().parent
+        base = {}
+        for i in range(1, taverngym.N_CARDS):
+            cid = taverngym.card_info(i)[0]
+            base[i] = cid[:-2] if cid.endswith("_G") else cid
         buy = np.flatnonzero(d["kind"] == KINDS.index("buy"))
         slot = d["cand"][buy, 0].astype(np.int64) - 8
         ok = (slot >= 0) & (slot < 8)
         buy, slot = buy[ok], slot[ok]
         cards = d["c"][buy, C_SHOP + slot]
         sel = np.zeros(len(d["kind"]), dtype=bool)
-        sel[buy[np.isin(cards, list(idx))]] = True
-        return sel
+        if which in ("key", "eco"):
+            cv = root / "card_value.json"
+            if not cv.exists():
+                return None
+            want = set(json.loads(cv.read_text(encoding="utf-8")).get(which, []))
+            idx = [i for i, b in base.items() if b in want]
+            sel[buy[np.isin(cards, idx)]] = True
+            return sel
+        det = {x["id"]: x for x in json.loads(taverngym.catalog_json())}
+        if which == "tribe":
+            races = {i: set((det.get(b) or {}).get("races", [])) for i, b in base.items()}
+            minion = {i for i, b in base.items() if (det.get(b) or {}).get("kind") == "minion"}
+            for row, x in zip(buy, cards):
+                x = int(x)
+                if x not in minion or not races.get(x):
+                    continue
+                mine = races[x]
+                n = 0
+                for y in d["c"][row, C_BOARD:C_BOARD + 7]:
+                    ry = races.get(int(y)) or set()
+                    if ry and ("ALL" in ry or "ALL" in mine or ry & mine):
+                        n += 1
+                sel[row] = n >= 2
+            return sel
+        if which == "syn":
+            hp = root / "h13_profile.json"
+            if not hp.exists():
+                return None
+            pairs = set()
+            for r in json.loads(hp.read_text(encoding="utf-8")).get("synergy", []):
+                if len(r) >= 6 and r[0] >= 3:
+                    pairs |= {(r[4], r[5]), (r[5], r[4])}
+            for row, x in zip(buy, cards):
+                bx = base.get(int(x))
+                sel[row] = any((bx, base.get(int(y))) in pairs for y in d["c"][row, C_BOARD:C_BOARD + 7] if y > 0)
+            return sel
+        return None
 
     def bc_loss(self, d=None, wts=None, batch=None):
         d = self.demos if d is None else d
@@ -767,7 +809,8 @@ class Trainer:
                 prev = int(self.rollout.last[s])
                 if pen > 0 and prev >= 0:
                     buy = A_BUY <= g["act"][s] < A_SELL and t >= self.cfg.starve_buy_from_turn
-                    self.rollout.r[prev] -= pen * (self.cfg.starve_buy_weight if buy else 1.0)
+                    w = self.cfg.starve_buy_weight if buy else self.cfg.starve_gift_weight if g["act"][s] == A_DARK_GIFT else 1.0
+                    self.rollout.r[prev] -= pen * w
             if not (g["ts_turn"][s] == t and g["ep"][s] == ep):         # 新回合的第一步
                 g["ts_turn"][s], g["ts_tier"][s], g["ts_aff"][s] = t, tier, int(up > 0 and gold >= up)
             behind = tier < self._tier_target(t) - 0.5

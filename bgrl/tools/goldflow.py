@@ -173,6 +173,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             print("没有 runs/pro_boards.json / runs/h13_boards.json，对手是普通脚本机器人", flush=True)
     picks = PickStats()
     sells: dict[str, int] = {}
+    buy_rows: list = []                                # 每次买：(当时的卡牌编号, 动作)，算“围绕种族 / 搭配”的买法
     logs = [TurnLog() for _ in range(env.n_slots)]
     done = [False] * env.n_slots
     places = {}
@@ -203,6 +204,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 ak = int(a[k])
                 if 8 <= ak < 16:
                     picks.add(obs["cards"][i][36:44], ak - 8)
+                    buy_rows.append((obs["cards"][i].copy(), ak))
                 elif 16 <= ak < 23 and obs["cards"][i][19 + ak - 16] > 0:
                     sid = picks._id(int(obs["cards"][i][19 + ak - 16]))
                     sells[sid] = sells.get(sid, 0) + 1
@@ -225,7 +227,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
-    info["picks"], info["sells"] = picks, sells
+    info["picks"], info["sells"], info["buy_rows"] = picks, sells, buy_rows
     import taverngym
     finals = []
     for i, row in enumerate(last_cards):
@@ -341,7 +343,35 @@ def show_comps(finals: list[dict]) -> dict | None:
     for k, rows in sorted(by_place.items()):
         print(f"  {k}名的局（{len(rows)}）：纯度 {np.mean([r['coh'] for r in rows]):.2f}、搭配 {np.mean([r['syn'] for r in rows]):.2f}、"
               f"关键卡 {np.mean([r['key'] for r in rows]):.2f}")
+    # 哪些卡在前四的最终阵容里比后四多（模型自己的局；局数少时只是参考）
+    top = [x for x in fb if 0 < x["place"] <= 4]
+    bot = [x for x in fb if x["place"] > 4]
+    if len(top) >= 8 and len(bot) >= 8:
+        from collections import Counter as _C
+        ct, cb = _C(c for x in top for c in set(x["board"])), _C(c for x in bot for c in set(x["board"]))
+        diff = sorted(((ct[c] / len(top) - cb[c] / len(bot), c) for c in set(ct) | set(cb) if ct[c] + cb[c] >= 6), reverse=True)
+        nm = lambda c: (det.get(c) or {}).get("name_zh", c)              # noqa: E731
+        print("  前四更常有：" + "、".join(f"{nm(c)} {ct[c] / len(top):.0%}/{cb[c] / len(bot):.0%}" for d_, c in diff[:8] if d_ > 0))
+        print("  后四更常有：" + "、".join(f"{nm(c)} {ct[c] / len(top):.0%}/{cb[c] / len(bot):.0%}" for d_, c in diff[::-1][:8] if d_ < 0))
     return m
+
+
+def buy_style(buy_rows: list) -> dict:
+    """模型的买法：买的随从和场上 ≥2 个随从同种族的比例（tribe）、和场上随从是高手常见搭配的比例（syn）、
+    买关键卡 / 经济卡的比例；和高手示范同样的算法（rl/ppo.py Trainer._bought_in）。高手：0.36 / 0.07 / 0.59 / 0.11。"""
+    if not buy_rows:
+        return {}
+    from rl.ppo import Trainer
+    from tools.make_demos import KINDS
+    n = len(buy_rows)
+    d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
+         "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
+    out = {}
+    for w in ("tribe", "syn", "key", "eco"):
+        sel = Trainer._bought_in(d, w)
+        if sel is not None:
+            out[w] = round(float(sel.mean()), 3)
+    return out
 
 
 def show_picks(picks, sells: dict) -> dict | None:
@@ -433,6 +463,12 @@ def main() -> int:
         print("\n（rl/pro_profile.json 里还没有高手的金币流向：bg.py goldflow --pro <高分回放目录>）")
     comps = show_comps(info.get("finals") or [])
     pk = show_picks(info.get("picks"), info.get("sells") or {})
+    bs = buy_style(info.get("buy_rows") or [])
+    if bs:
+        print(f"  买法：围绕种族 {bs.get('tribe', 0):.0%}（高手 36%）、和场上常见搭配 {bs.get('syn', 0):.0%}（7%）、"
+              f"关键卡 {bs.get('key', 0):.0%}（59%）、经济卡 {bs.get('eco', 0):.0%}（11%）")
+        if pk is not None:
+            pk["style"] = bs
     out = Path(a.ckpt).resolve().parent / ("comptest.json" if a.boosted else "goldflow.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
