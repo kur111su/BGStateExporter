@@ -824,8 +824,11 @@ class Trainer:
 
     def _comp_shape(self, f, c, ak, r0):
         """阵容成型奖励（comp_bonus）：第 comp_from_turn 回合起，每次结束回合按当前场面的配合程度加分：
-          q = 0.5 × 纯度超出（主种族占比从 0.5 到 0.9 线性给 0→1）+ 0.3 × 高手常见搭配对数（最多 3 对）/ 3
+          q = 0.6 × 纯度（主种族占比从 0.3 到 0.9 线性给 0→1）+ 0.2 × 高手常见搭配对数（最多 3 对）/ 3
               + 0.2 × 关键卡张数（最多 5 张）/ 5，奖励 = comp_bonus × q（每回合最多 comp_bonus）。
+        第 8661–9279 轮（旧算法：纯度从 0.5 起算、搭配占 0.3，bonus 0.03）：q 0.115 → 0.124、纯度 0.51 → 0.52，几乎没动——
+        模型的纯度在 0.5 附近，旧算法在那里几乎不给分，推不动；它玩的海盗 / 龙 / 机械没有万三常见搭配（那 40 对是野猪人、
+        亡灵、野兽……），搭配那 0.3 拿不到。阵容测试里它自己前四名的局纯度 0.55、后四名 0.47，纯度确实和名次有关。
         第 7950–8664 轮只靠模仿加权（tribe:2、syn:3、key:2）：纯度 0.50、搭配 0.01、关键卡 0.53，一点没动——
         模拟器里堆增益法术的混合阵容照样能赢，模仿的力度（0.25 × 0.1）推不动。这一项直接要求“成型”。"""
         ends = np.flatnonzero(ak == A_END)
@@ -847,7 +850,7 @@ class Trainer:
             for j in range(i + 1, 7):
                 syn += t["pair"][b[:, i], b[:, j]] & valid[:, i] & valid[:, j]
         keyn = (t["key"][b] & valid).sum(1)
-        q = 0.5 * np.clip((coh - 0.5) / 0.4, 0, 1) + 0.3 * np.minimum(syn, 3) / 3 + 0.2 * np.minimum(keyn, 5) / 5
+        q = 0.6 * np.clip((coh - 0.3) / 0.6, 0, 1) + 0.2 * np.minimum(syn, 3) / 3 + 0.2 * np.minimum(keyn, 5) / 5
         q = np.where(nmin >= 4, q, 0.0)
         r0[ends] += self.cfg.comp_bonus * q
         self.mix["comp_q_sum"] += float(q.sum())
