@@ -155,6 +155,9 @@ class Config:
     starve_gift_weight: float = 1.0
     # 回合末没花掉的钱：每剩 1 块扣这么多（第 2 回合起；高手几乎不剩，模型每回合剩 0.2–0.8 块）
     unspent_gold_penalty: float = 0.0
+    # 阵容成型奖励（见 _comp_shape）：每次结束回合按场面配合程度加 comp_bonus × q（q 在 0–1）。0 = 不用
+    comp_bonus: float = 0.0
+    comp_from_turn: int = 6
     # 防止背下高分示范：每次考试比较训练示范和留出局的命中率，差距大于 pro_gap_cap 就把模仿高手的强度减半，
     # 差距小于 pro_gap_cap - 0.04 再加回来（最多到 pro_coef）。0 = 不控制。
     # 第 4351–5054 轮（pro_coef 0.1）：训练示范命中率 0.44 → 0.70，留出局 0.45 → 0.41，交叉熵 2.0 → 2.33——在背题
@@ -464,7 +467,7 @@ class Trainer:
                     if rid == 0:
                         ak = a[o:o + k]
                         noop = is_noop(ak) | (ak == 7)                # 冻结、调站位、取消（打出 → 取消可以无限循环）
-                        r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64))
+                        r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64), c[o:o + k])
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak)
@@ -756,7 +759,7 @@ class Trainer:
             t -= 1
         return self.tier_curve.get(t, 6.0)
 
-    def _shape(self, slots, f, ak, r0):
+    def _shape(self, slots, f, ak, r0, c=None):
         """升本节奏奖励（当场加在升本这一步上）；记下刷新，供 _after_add 判断是不是无效刷新。"""
         tb = self.tempo_now()
         turns = np.rint(f[:, 0] * 20).astype(int)
@@ -781,6 +784,74 @@ class Trainer:
             self.upg_n[s] += 1
         if f.shape[1] > F_UPCOST:
             self._gold_shape(slots, f, ak, r0)
+        if c is not None and self.cfg.comp_bonus > 0:
+            self._comp_shape(f, c, ak, r0)
+        return r0
+
+    def _comp_tables(self):
+        """阵容打分用的查表（按卡牌编号）：种族位掩码（全种族 = 所有位）、是不是随从、关键卡、高手常见搭配矩阵。"""
+        if getattr(self, "_ct", None) is not None:
+            return self._ct
+        import taverngym
+        from tools.native_demos import load_comp_refs
+        pairs, key = load_comp_refs()
+        det = {x["id"]: x for x in json.loads(taverngym.catalog_json())}
+        n = taverngym.N_CARDS
+        tribes = sorted({r for x in det.values() for r in x.get("races", []) if r != "ALL"})
+        mask = np.zeros(n, dtype=np.int64)
+        minion = np.zeros(n, dtype=bool)
+        keyv = np.zeros(n, dtype=bool)
+        base = [""] * n
+        for i in range(1, n):
+            cid = taverngym.card_info(i)[0]
+            b = cid[:-2] if cid.endswith("_G") else cid
+            base[i] = b
+            x = det.get(b) or {}
+            minion[i] = x.get("kind") == "minion"
+            rs = x.get("races", [])
+            mask[i] = (1 << len(tribes)) - 1 if "ALL" in rs else sum(1 << tribes.index(r) for r in rs if r in tribes)
+            keyv[i] = b in key
+        idx: dict[str, list[int]] = {}
+        for i in range(1, n):
+            idx.setdefault(base[i], []).append(i)
+        pair = np.zeros((n, n), dtype=bool)
+        for x, y in pairs:
+            for i in idx.get(x, []):
+                for j in idx.get(y, []):
+                    pair[i, j] = pair[j, i] = True
+        self._ct = {"mask": mask, "minion": minion, "key": keyv, "pair": pair, "ntribe": len(tribes)}
+        return self._ct
+
+    def _comp_shape(self, f, c, ak, r0):
+        """阵容成型奖励（comp_bonus）：第 comp_from_turn 回合起，每次结束回合按当前场面的配合程度加分：
+          q = 0.5 × 纯度超出（主种族占比从 0.5 到 0.9 线性给 0→1）+ 0.3 × 高手常见搭配对数（最多 3 对）/ 3
+              + 0.2 × 关键卡张数（最多 5 张）/ 5，奖励 = comp_bonus × q（每回合最多 comp_bonus）。
+        第 7950–8664 轮只靠模仿加权（tribe:2、syn:3、key:2）：纯度 0.50、搭配 0.01、关键卡 0.53，一点没动——
+        模拟器里堆增益法术的混合阵容照样能赢，模仿的力度（0.25 × 0.1）推不动。这一项直接要求“成型”。"""
+        ends = np.flatnonzero(ak == A_END)
+        if not len(ends):
+            return r0
+        turns = np.rint(f[ends, 0] * 20).astype(int)
+        ends = ends[turns >= self.cfg.comp_from_turn]
+        if not len(ends):
+            return r0
+        t = self._comp_tables()
+        b = np.asarray(c[ends][:, C_BOARD:C_BOARD + 7], dtype=np.int64)
+        valid = t["minion"][b]
+        nmin = valid.sum(1)
+        masks = np.where(valid, t["mask"][b], 0)
+        counts = np.stack([((masks >> k) & 1).sum(1) for k in range(t["ntribe"])], 1)
+        coh = counts.max(1) / np.maximum(1, nmin)
+        syn = np.zeros(len(ends))
+        for i in range(7):
+            for j in range(i + 1, 7):
+                syn += t["pair"][b[:, i], b[:, j]] & valid[:, i] & valid[:, j]
+        keyn = (t["key"][b] & valid).sum(1)
+        q = 0.5 * np.clip((coh - 0.5) / 0.4, 0, 1) + 0.3 * np.minimum(syn, 3) / 3 + 0.2 * np.minimum(keyn, 5) / 5
+        q = np.where(nmin >= 4, q, 0.0)
+        r0[ends] += self.cfg.comp_bonus * q
+        self.mix["comp_q_sum"] += float(q.sum())
+        self.mix["comp_q_n"] += len(q)
         return r0
 
     def _gold_shape(self, slots, f, ak, r0):
@@ -1192,7 +1263,8 @@ class Trainer:
                        tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3),
                        up_afford=round(mx["aff_up"] / max(1, mx["aff_n"]), 3), up_t2=round(mx["t2_up"] / max(1, mx["t2_n"]), 3),
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
-                       unspent=round(mx["unspent"] / ends, 3))
+                       unspent=round(mx["unspent"] / ends, 3),
+                       comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
             if mx.get("env_rebuild"):
                 rec["env_rebuild"] = mx["env_rebuild"]
             self.mix = defaultdict(int)

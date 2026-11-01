@@ -64,6 +64,27 @@ def main(rounds: int = 600) -> int:
     dd = {"kind": np.array([KINDS.index("buy")] * 2 + [KINDS.index("end")], np.int8), "c": c,
           "cand": np.array([[8] + [-1] * 7, [9] + [-1] * 7, [0] + [-1] * 7], np.int16)}
     assert Trainer._bought_in(dd, "key").tolist() == [True, False, False]
+    # 阵容成型奖励（Trainer._comp_shape）：同种族 6 个随从的场面 > 6 个不同种族的场面
+    from collections import defaultdict
+    from types import SimpleNamespace
+    from tg.actions import A_END
+    det = {x["id"]: x for x in _json.loads(taverngym.catalog_json())}
+    by_race = defaultdict(list)
+    for i in range(1, taverngym.N_CARDS):
+        x = det.get(taverngym.card_info(i)[0]) or {}
+        rs = x.get("races", [])
+        if x.get("kind") == "minion" and len(rs) == 1 and rs[0] != "ALL":
+            by_race[rs[0]].append(i)
+    big = max(by_race, key=lambda r: len(by_race[r]))
+    mixed = [v[0] for v in list(by_race.values())[:6]]
+    cc = np.zeros((2, 124), np.int64)
+    cc[0, 19:25], cc[1, 19:25] = by_race[big][:6], mixed
+    ff = np.zeros((2, 16), np.float32)
+    ff[:, 0] = 9 / 20
+    tt = SimpleNamespace(cfg=SimpleNamespace(comp_bonus=0.02, comp_from_turn=6), mix=defaultdict(float))
+    tt._comp_tables = lambda: Trainer._comp_tables(tt)
+    rr = Trainer._comp_shape(tt, ff, cc, np.array([A_END, A_END]), np.zeros(2))
+    assert rr[0] >= 0.01 and rr[1] < 0.005, rr
     print("nativedemos OK", {KINDS[k]: int(v) for k, v in zip(*np.unique(data["kind"], return_counts=True))})
     return 0
 
