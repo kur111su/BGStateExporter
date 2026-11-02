@@ -16,6 +16,8 @@ from pathlib import Path
 
 import numpy as np
 
+from tg.obs import C_BOARD, C_SHOP
+
 MAX_CANDS = 8
 KINDS = ("buy", "sell", "play", "cast", "magnetize", "upgrade", "refresh", "hero_power", "move", "end",
          "freeze", "dark_gift", "activate")          # 后三个只在高分回放里有（tools/make_pro_demos.py）；只能往后加
@@ -88,3 +90,58 @@ def load_dir(path) -> dict | None:
     meta = Path(path) / "meta.json"
     d["meta"] = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
     return d
+
+
+# ---------------- 按买的是什么卡挑示范（--bc-weights / --pro-weights 的 key、eco、tribe、syn） ----------------
+
+def bought_in(d, which: str, root: Path | None = None):
+    """哪些示范是“买了一张 …… 的卡”（买的那格的卡牌），返回布尔数组（参照文件不在时返回 None）：
+      key / eco  在 rl/card_value.json 的关键卡 / 经济卡里
+      tribe      是随从，而且场上已经有 ≥ 2 个和它同种族的随从（全种族算任何种族）——围绕主种族成型
+      syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动"""
+    if "c" not in d:
+        return None
+    from tg.catalog import base_of_index, catalog, n_cards
+    root = Path(__file__).resolve().parent if root is None else Path(root)
+    base = {i: base_of_index(i) for i in range(1, n_cards())}
+    buy = np.flatnonzero(d["kind"] == KINDS.index("buy"))
+    slot = d["cand"][buy, 0].astype(np.int64) - 8
+    ok = (slot >= 0) & (slot < 8)
+    buy, slot = buy[ok], slot[ok]
+    cards = d["c"][buy, C_SHOP + slot]
+    sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which in ("key", "eco"):
+        cv = root / "card_value.json"
+        if not cv.exists():
+            return None
+        want = set(json.loads(cv.read_text(encoding="utf-8")).get(which, []))
+        idx = [i for i, b in base.items() if b in want]
+        sel[buy[np.isin(cards, idx)]] = True
+        return sel
+    det = catalog()
+    if which == "tribe":
+        races = {i: set((det.get(b) or {}).get("races", [])) for i, b in base.items()}
+        minion = {i for i, b in base.items() if (det.get(b) or {}).get("kind") == "minion"}
+        for row, x in zip(buy, cards):
+            x = int(x)
+            if x not in minion or not races.get(x):
+                continue
+            mine = races[x]
+            n = 0
+            for y in d["c"][row, C_BOARD:C_BOARD + 7]:
+                ry = races.get(int(y)) or set()
+                if ry and ("ALL" in ry or "ALL" in mine or ry & mine):
+                    n += 1
+            sel[row] = n >= 2
+        return sel
+    if which == "syn":
+        hp = root / "h13_profile.json"
+        if not hp.exists():
+            return None
+        from .comp import load_comp_refs
+        pairs = {q for x, y in load_comp_refs(root)[0] for q in ((x, y), (y, x))}
+        for row, x in zip(buy, cards):
+            bx = base.get(int(x))
+            sel[row] = any((bx, base.get(int(y))) in pairs for y in d["c"][row, C_BOARD:C_BOARD + 7] if y > 0)
+        return sel
+    return None

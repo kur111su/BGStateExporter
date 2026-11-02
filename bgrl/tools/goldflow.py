@@ -332,17 +332,16 @@ def show_comps(finals: list[dict]) -> dict | None:
 
 def buy_style(buy_rows: list) -> dict:
     """模型的买法：买的随从和场上 ≥2 个随从同种族的比例（tribe）、和场上随从是高手常见搭配的比例（syn）、
-    买关键卡 / 经济卡的比例；和高手示范同样的算法（rl/ppo.py Trainer._bought_in）。高手：0.36 / 0.07 / 0.59 / 0.11。"""
+    买关键卡 / 经济卡的比例；和高手示范同样的算法（rl/demos.bought_in）。高手：0.36 / 0.07 / 0.59 / 0.11。"""
     if not buy_rows:
         return {}
-    from rl.ppo import Trainer
-    from rl.demos import KINDS
+    from rl.demos import KINDS, bought_in
     n = len(buy_rows)
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
     for w in ("tribe", "syn", "key", "eco"):
-        sel = Trainer._bought_in(d, w)
+        sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
     return out

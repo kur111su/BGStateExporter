@@ -1,4 +1,4 @@
-"""训练里的奖励调整（rl/ppo.py）：无效刷新扣分、升本节奏奖励只在落后于真人等级曲线时给、逐渐减到 0。"""
+"""训练里的奖励调整（rl/shaping.py，经 rl/ppo.py 的 Trainer 调用）：无效刷新扣分、升本节奏奖励只在落后于真人等级曲线时给、逐渐减到 0。"""
 from __future__ import annotations
 
 import sys

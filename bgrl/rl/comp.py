@@ -5,7 +5,7 @@
   board_scores    一个阵容的配合程度：主种族纯度 coh、常见搭配对数 syn、关键卡张数 key
   load_comp_refs  训练和统计用的参照：rl/h13_profile.json 的搭配 + rl/card_value.json 的关键卡
 
-训练里的阵容成型奖励（rl/ppo.py Trainer._comp_shape）、goldflow / comptest 的阵容对比、
+训练里的阵容成型奖励（rl/shaping.py _comp_shape）、goldflow / comptest 的阵容对比、
 native_demos 生成万三画像都用这一份。卡牌 ID 都是去掉金色 _G 之后的。
 """
 from __future__ import annotations
