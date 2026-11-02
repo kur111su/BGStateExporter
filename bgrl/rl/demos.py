@@ -20,7 +20,8 @@ from tg.obs import C_BOARD, C_SHOP
 
 MAX_CANDS = 8
 KINDS = ("buy", "sell", "play", "cast", "magnetize", "upgrade", "refresh", "hero_power", "move", "end",
-         "freeze", "dark_gift", "activate")          # 后三个只在高分回放里有（tools/make_pro_demos.py）；只能往后加
+         "freeze", "dark_gift", "activate", "choose")
+# freeze 以后的只在高分回放里有（tools/make_pro_demos.py）；只能往后加。choose = 打出 / 发动之后的选择（选目标、发现）
 SHARD_KEYS = ("f", "c", "m", "cand", "kind", "turn", "split", "mmr")
 
 
@@ -94,7 +95,7 @@ def load_dir(path) -> dict | None:
 
 # ---------------- 打乱酒馆顺序（模仿时的数据增强） ----------------
 
-def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int = 8):
+def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int = 8, rows=None):
     """每条样本把酒馆里有东西的那几格随机换个顺序：观察里每格的浮点块（从 shop_f 开始，每格 item_f 个）、
     卡牌编号（C_SHOP 起）、合法动作里的“买第几格”、示范动作里的“买第几格”一起换。空格留在后面（和引擎一样）。
     返回新数组，不改原来的。tests/test_boardsim.py 核对：和在引擎里把酒馆列表换顺序后再 observe() 完全一样。"""
@@ -102,6 +103,8 @@ def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int 
     B = len(c)
     occ = np.asarray(c[:, C_SHOP:C_SHOP + n_shop]) > 0
     key = np.where(occ, rng.random((B, n_shop)), 2.0 + np.arange(n_shop))
+    if rows is not None:                            # 只打乱这些行（选择类示范不打乱：选项里也有酒馆随从，顺序要和酒馆一致）
+        key = np.where(np.asarray(rows, bool)[:, None], key, np.arange(n_shop) + 0.0)
     perm = np.argsort(key, 1)                       # 新第 k 格 = 原来第 perm[b, k] 格
     inv = np.argsort(perm, 1)                       # 原来第 k 格 → 新的第 inv[b, k] 格
     f = np.array(f, copy=True)
@@ -115,6 +118,14 @@ def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int 
     rows, cols = np.nonzero((cand >= A_BUY) & (cand < A_BUY + n_shop))
     cand[rows, cols] = A_BUY + inv[rows, cand[rows, cols] - A_BUY]
     return f, c, m, cand
+
+
+# ---------------- 吃法术的随从：对它施放法术有额外效果 ----------------
+
+SPELL_AMPS = {"BG36_762",      # 恶魔干扰者：对本随从施放法术，酒馆随从 +1/+2
+              "BG36_640",      # 守门融合怪：对本随从施放法术，施放乱放的茶具
+              "BG28_583",      # 地卜大师鲁古格：鲜血宝石用于本随从，再对另一个随从用一张
+              "BG36_703"}      # 暮光猎潮者：对本随从施放法术，手牌最左边的随从 +8/+8
 
 
 # ---------------- 引擎卡：放大某一类效果的随从 ----------------
@@ -149,6 +160,8 @@ def bought_in(d, which: str, root: Path | None = None):
       syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动
       simkey     在引擎实测的关键卡里（rl/sim_value.json，bg.py simcards：拿掉它胜率掉得多）
       simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）
+      spelltgt   （选择类示范）法术选的目标是“吃法术”的随从：恶魔干扰者（养酒馆）、守门融合怪（施放茶具）、
+                 地卜大师鲁古格（宝石连锁）、暮光猎潮者（手牌随从 +8/+8）
       tgtS / tgtA / tgtB  买的是 S / A / B 级目标阵容（rl/target_comps.json，bgbuddy.gg）的核心卡
       tgtfit     买的核心卡和场上 / 手里已有的核心卡属于同一套目标阵容——在往那套阵容成型
       engcard    买的是引擎卡本身（布莱恩·铜须、提图斯·瑞文戴尔）
@@ -157,6 +170,18 @@ def bought_in(d, which: str, root: Path | None = None):
                  布莱恩让战吼触发两次（南海卖艺者下回合 2 块钱、各种加攻防的战吼翻倍），打战吼随从换经济 / 换身材"""
     if "c" not in d:
         return None
+    if which == "spelltgt":
+        from tg.actions import A_CHOOSE
+        from tg.catalog import base_of_index
+        from tg.obs import C_CHOICE
+        sel = np.zeros(len(d["kind"]), dtype=bool)
+        rows = np.flatnonzero(d["kind"] == KINDS.index("choose"))
+        for r in rows:
+            for a in d["cand"][r]:
+                a = int(a)
+                if A_CHOOSE <= a < A_CHOOSE + 16 and base_of_index(int(d["c"][r, C_CHOICE + a - A_CHOOSE])) in SPELL_AMPS:
+                    sel[r] = True
+        return sel
     from tg.catalog import base_of_index, catalog, n_cards
     root = Path(__file__).resolve().parent if root is None else Path(root)
     base = {i: base_of_index(i) for i in range(1, n_cards())}

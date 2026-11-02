@@ -5,6 +5,8 @@
 → 观察编码 + 动作编号；每回合最后加一条“结束回合”。重建后这个动作不合法的跳过（8 局测试 2977 个决策里 5 个）。
 
 打出法术、打出随从、调站位太多（一局几百次），按比例抽一部分（--keep），升本、结束回合、买、卖全留。
+打出 / 施法 / 技能 / 发动之后要选目标或发现的，另外做一条“选择”示范（kind = choose，全留）：每个选项在引擎里
+试一遍，和回放里的结果比出高手选的是哪个——宝石给谁、法术打谁、发现拿哪张（--no-choose 不做）。
 每 10 局留 1 局做验证（不参与训练），日志里的 pro_top1 / pro_upgrade / pro_end 就是在这些局上算的。
 
 观察存成 soft_log 之后的 float16（和训练采样一样，模型用 compressed=True 读），分片写成 runs/pro_demos/part_XXX.npz。
@@ -38,8 +40,8 @@ KEEP_DEFAULT = "cast:0.35,play:0.35,move:0.35,activate:0.5,refresh:0.7"
 _CTX: dict = {}
 
 
-def _init(mmr_by_game: dict, keep: dict):
-    _CTX.update(mmr=mmr_by_game, keep=keep)
+def _init(mmr_by_game: dict, keep: dict, choose: bool = True):
+    _CTX.update(mmr=mmr_by_game, keep=keep, choose=choose)
 
 
 def _jobs(src: Path) -> list[tuple[str, str]]:
@@ -72,6 +74,32 @@ def _xml(job: tuple[str, str]) -> bytes:
         return z2.read(next(n for n in z2.namelist() if n.endswith(".xml")))
 
 
+CHOOSERS = ("play", "cast", "hero_power", "activate")      # 这些动作之后可能要选目标 / 发现
+
+
+def _choice_sample(g, action: int, act):
+    """打出 / 施法 / 技能 / 发动之后要是停在待选项上（选目标、发现），把高手选的那个读出来，做成一条“选择”示范：
+    每个选项都在引擎里试一遍，和回放里这一步之后的局面比，最接近的就是他选的（几个一样接近时都算对）。
+    全都一样接近（例如对谁用都一样）不要——看不出选了哪个。"""
+    from tg.actions import A_CHOOSE
+    from tg.replay import best_choice, visible_log
+    g2 = g.copy()
+    try:
+        g2.step(0, int(action))
+    except ValueError:
+        return None
+    m2 = np.frombuffer(g2.legal_mask(0), dtype=np.uint8).astype(bool)
+    legal = [x for x in range(A_CHOOSE, A_CHOOSE + 16) if m2[x]]
+    if len(legal) < 2:
+        return None
+    reals = [visible_log(x) for x in (act.afters or [act.after])]
+    idx, score = best_choice(g2, reals, act.kind not in ("refresh", "upgrade"))
+    cands = [A_CHOOSE + i for i in idx if m2[A_CHOOSE + i]]
+    if not cands or len(cands) >= len(legal):
+        return None
+    return g2, m2, cands, "choose"
+
+
 def convert_game(args):
     """一局 → (样本数组字典, 统计)。回放 → 插件格式记录（tg/hsreplay.py）→ 切动作（tg/logs.segment，和你的对局一样）
     → 每个动作前的局面在 TavernGym 里重建 → 观察 + 动作编号（不合法的跳过）。每回合最后加一条“结束回合”。"""
@@ -101,7 +129,9 @@ def convert_game(args):
             todo.append(((a.afters or [a.after])[-1], "end", None))
         for state, kind, act in todo:
             st[f"决策 {kind}"] += 1
-            if rng.random() >= _CTX["keep"].get(kind, 1.0):
+            keep_main = rng.random() < _CTX["keep"].get(kind, 1.0)
+            want_choose = _CTX.get("choose", True) and kind in CHOOSERS
+            if not keep_main and not want_choose:
                 continue
             try:
                 g, _ = build_game(state, seed=i)
@@ -114,16 +144,23 @@ def convert_game(args):
             if not cands:
                 st[f"不合法 {kind}"] += 1
                 continue
-            f, c = g.observe(0)
-            F.append(soft_log_np(np.frombuffer(f, "<f4")).astype(np.float16))
-            Cc.append(np.frombuffer(c, "<i4").copy())
-            M.append(m)
-            row = np.full(MAX_CANDS, -1, np.int16)
-            row[:len(cands)] = cands
-            CA.append(row)
-            K.append(KINDS.index(kind))
-            Tn.append(int(a.turn or 0))
-            st[f"样本 {kind}"] += 1
+            rows = [(g, m, cands, kind)] if keep_main else []
+            if want_choose:
+                ch = _choice_sample(g, cands[0], act)
+                if ch is not None:
+                    rows.append(ch)
+                    st["决策 choose"] += 1
+            for gg, mm, cc_, kk in rows:
+                f, c = gg.observe(0)
+                F.append(soft_log_np(np.frombuffer(f, "<f4")).astype(np.float16))
+                Cc.append(np.frombuffer(c, "<i4").copy())
+                M.append(mm)
+                row = np.full(MAX_CANDS, -1, np.int16)
+                row[:len(cc_)] = cc_[:MAX_CANDS]
+                CA.append(row)
+                K.append(KINDS.index(kk))
+                Tn.append(int(a.turn or 0))
+                st[f"样本 {kk}"] += 1
     if not K:
         return None, st
     n = len(K)
@@ -169,6 +206,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--val-every", type=int, default=10)
     ap.add_argument("--keep", default=KEEP_DEFAULT, help="各类动作保留的比例")
+    ap.add_argument("--no-choose", action="store_true", help="不做“选择”示范（选目标、发现）")
     ap.add_argument("--shard", type=int, default=4000)
     a = ap.parse_args()
     src = Path(a.src)
@@ -192,10 +230,10 @@ def main() -> int:
             "created": time.strftime("%Y-%m-%d %H:%M:%S"), "keep": keep}
     if a.workers > 1:
         from multiprocessing import Pool
-        pool = Pool(a.workers, initializer=_init, initargs=(mmr, keep))
+        pool = Pool(a.workers, initializer=_init, initargs=(mmr, keep, not a.no_choose))
         it = pool.imap(convert_game, jobs, chunksize=1)
     else:
-        _init(mmr, keep)
+        _init(mmr, keep, not a.no_choose)
         it = map(convert_game, jobs)
     for i, (res, st) in enumerate(it, 1):
         stats += st

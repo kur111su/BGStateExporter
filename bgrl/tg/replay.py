@@ -163,6 +163,26 @@ def _weight(d: list[str]) -> int:
     return sum(3 if x.startswith("待选") else 1 for x in d)
 
 
+def best_choice(g, reals: list[dict], shop: bool = True) -> tuple[list[int], int]:
+    """g 停在一个待选项上（选目标 / 发现 ……）：每个选项都试一遍（之后的待选项也按最接近的走），
+    返回 (和记录一样接近的选项下标们, 差异数)。没有待选项返回 ([], -1)。用来从高手回放里读出“选了哪个”。"""
+    pend = _pending(g)
+    if not pend:
+        return [], -1
+    scores = []
+    for i in range(min(len(pend.get("options") or []), 16)):
+        g2 = g.copy()
+        try:
+            g2.step(0, A_CHOOSE + i)
+        except ValueError:
+            continue
+        scores.append((_resolve(g2, reals, shop, 1)[0], i))
+    if not scores:
+        return [], -1
+    best = min(s for s, _ in scores)
+    return [i for s, i in scores if s == best], best
+
+
 def _resolve(g, reals: list[dict], shop: bool, depth: int = 0) -> tuple:
     """动作之后的待选项：“先不选”（记录可能停在选择之前）和每个选项都试，返回最接近记录的
     (差异数, 差异, 预测局面, 候选下标, 局面)。"""

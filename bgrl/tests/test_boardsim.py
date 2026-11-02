@@ -257,6 +257,30 @@ def check_targets():
     return got
 
 
+def check_choose():
+    """选择类示范：spelltgt 认出“宝石 / 法术打给恶魔干扰者这类吃法术的随从”；打乱酒馆时选择类的行不动。"""
+    from rl.demos import KINDS, bought_in, permute_shop
+    from tg.actions import A_BUY, A_CHOOSE
+    from tg.catalog import card_id, n_cards
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    c = np.zeros((2, 124), np.int32)
+    c[:, 44], c[:, 45] = idx["BG26_135"], idx["BG36_762"]               # 选项：南海卖艺者、恶魔干扰者
+    c[:, 36:39] = [idx["BG26_135"], idx["BG36_762"], idx["BG20_100"]]
+    d = {"kind": np.array([KINDS.index("choose")] * 2, np.int8), "c": c,
+         "cand": np.array([[A_CHOOSE + 1] + [-1] * 7, [A_CHOOSE] + [-1] * 7], np.int16)}
+    assert bought_in(d, "spelltgt").tolist() == [True, False]
+    f = np.zeros((2, 3227), np.float32)
+    m = np.zeros((2, 245), bool)
+    m[:, A_BUY:A_BUY + 3] = True
+
+    class R:
+        def random(self, shape):
+            return np.tile(np.linspace(0.9, 0.1, shape[1]), (shape[0], 1))
+    _, c2, _, _ = permute_shop(f, c, m, d["cand"], R(), 685, 40, 8, rows=np.array([True, False]))
+    assert c2[0, 36:39].tolist() == c[0, 36:39][::-1].tolist() and c2[1, 36:39].tolist() == c[1, 36:39].tolist()
+    return True
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -264,6 +288,7 @@ def main() -> int:
     ec = check_econ()
     dr = check_drift()
     tg = check_targets()
+    check_choose()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

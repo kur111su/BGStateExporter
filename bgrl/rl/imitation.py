@@ -88,7 +88,7 @@ class ImitationMixin:
         f, c, m, cand = d["f"][j], d["c"][j], d["m"][j], d["cand"][j]
         if shuffle:
             f, c, m, cand = permute_shop(f, c, m, cand, self.bc_rng, self.model.L.fslices()["shop"][0], self.model.L.IF,
-                                         self.model.L.NS)
+                                         self.model.L.NS, rows=d["kind"][j] != KINDS.index("choose"))
         t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
         return (t(f, torch.float32), t(c, torch.long), t(m, torch.bool), t(cand.astype(np.int64), torch.long))
 
@@ -106,7 +106,7 @@ class ImitationMixin:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
-                elif k in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
+                elif k in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "spelltgt"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
                     tw.append((k, None, float(v)))
                 elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
                     lo, _, hi = k[1:].partition("-")
@@ -115,7 +115,7 @@ class ImitationMixin:
         for k, v in w.items():
             out[d["kind"] == k] = v
         for lo, hi, v in tw:
-            if lo in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit"):
+            if lo in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "spelltgt"):
                 sel = bought_in(d, lo)
                 if sel is not None:
                     out[sel] *= v
@@ -194,7 +194,7 @@ class ImitationMixin:
             if tag == "":
                 out[f"{prefix}_nll"] = round(float(nll.mean()), 3)
                 kind = d["kind"][idx]
-                for k in ("upgrade", "end", "buy", "refresh", "sell"):
+                for k in ("upgrade", "end", "buy", "refresh", "sell", "choose"):
                     sel = kind == KINDS.index(k)
                     if sel.any():
                         out[f"{prefix}_{k}"] = round(float(hit[sel].mean()), 3)
