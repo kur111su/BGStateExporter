@@ -30,6 +30,9 @@ from tg.actions import A_MAGNETIZE, A_PLAY, A_UPGRADE, action_family  # noqa: E4
 from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
 from tg.obs import C_BOARD, C_HAND, N_BOARD as NB, board_stats, tier as obs_tier  # noqa: E402
 from tg.supermask import super_mask  # noqa: E402
+# 阵容统计在 rl/comp.py，示范格式在 rl/demos.py；这里的旧名字保留（goldflow / 测试 / 旧脚本在用）
+from rl.comp import ZH_RACE, board_scores, comp_stats, load_comp_refs, synergy  # noqa: E402,F401
+from rl.demos import KINDS, MAX_CANDS, reset_dir, soft_log_np, write_shard  # noqa: E402
 
 SHARD = 4000
 
@@ -47,8 +50,6 @@ def kind_of(a: int, hand_card_kind: str = "") -> str | None:
 
 def convert(src: Path, mmr: int, val_every: int = 10):
     import taverngym
-    from tools.make_demos import KINDS, MAX_CANDS
-    from tools.make_pro_demos import soft_log_np        # 不需要 torch
     z = np.load(src, allow_pickle=False)
     f = z["features"].astype(np.float32)
     c = z["cards"].astype(np.int64)
@@ -150,85 +151,10 @@ def convert(src: Path, mmr: int, val_every: int = 10):
     return data, boards, stats, len(games), profile
 
 
-ZH_RACE = {"QUILBOAR": "野猪人", "UNDEAD": "亡灵", "BEAST": "野兽", "MURLOC": "鱼人", "DEMON": "恶魔", "MECHANICAL": "机械",
-           "ELEMENTAL": "元素", "PIRATE": "海盗", "DRAGON": "龙", "NAGA": "纳迦", "ABERRATION": "畸变", "混合": "混合"}
-
-
-def _catalog():
-    return catalog()
-
-
-def comp_stats(boards: list[list[str]], goldens: list[int], tiers: list[int], det: dict | None = None) -> dict:
-    """最终阵容汇总：boards = 每局最后的场面（卡牌 ID，金色已去掉 _G）。主种族：同一种族（含全种族）≥ 4 个。"""
-    det = det or _catalog()
-    main, cards = Counter(), Counter()
-    for ids in boards:
-        for x in set(ids):
-            cards[x] += 1
-        rc = Counter(r for x in ids for r in (det.get(x) or {}).get("races", []) if r != "ALL")
-        allr = sum(1 for x in ids if "ALL" in (det.get(x) or {}).get("races", []))
-        top = rc.most_common(1)
-        main[top[0][0] if top and top[0][1] + allr >= 4 else "混合"] += 1
-    n = max(1, len(boards))
-    return {"n": len(boards), "tier": round(float(np.mean(tiers)), 2) if tiers else None,
-            "golden": round(float(np.mean(goldens)), 2) if goldens else None,
-            "main": [[k, round(v / n, 3)] for k, v in main.most_common()],
-            "cards": [[x, (det.get(x) or {}).get("name_zh", x), round(v / n, 3)] for x, v in cards.most_common(40)]}
-
-
-def synergy(boards: list[list[str]], det: dict, min_games: int = 12, top: int = 40) -> list:
-    """经常一起上场的两张卡（提升度 = 一起出现的局数 / 各自独立时的期望）。"""
-    from itertools import combinations
-    one, two = Counter(), Counter()
-    for ids in boards:
-        u = sorted(set(ids))
-        one.update(u)
-        two.update(combinations(u, 2))
-    n = len(boards)
-    out = [[round(k * n / (one[x] * one[y]), 2), k, (det.get(x) or {}).get("name_zh", x), (det.get(y) or {}).get("name_zh", y), x, y]
-           for (x, y), k in two.items() if k >= min_games]
-    return sorted(out, reverse=True)[:top]
-
-
-def board_scores(ids: list[str], det: dict, pairs: set, key: set) -> dict:
-    """一个最终阵容的配合程度：
-      coh   主种族纯度 = 最多的那个种族（全种族随从都算）的随从数 / 场上随从数
-      syn   场上两两组合里，属于高手常见搭配（synergy 里提升度 ≥ 3）的有几对
-      key   场上关键卡（rl/card_value.json 的 key）有几张"""
-    from itertools import combinations
-    races = Counter()
-    for x in ids:
-        rs = (det.get(x) or {}).get("races", [])
-        for r in ({r for r in rs if r != "ALL"} if "ALL" not in rs else set(ZH_RACE) - {"混合"}):
-            races[r] += 1
-    u = sorted(set(ids))
-    return {"coh": round(max(races.values()) / len(ids), 3) if races and ids else 0.0,
-            "syn": sum(1 for x, y in combinations(u, 2) if (x, y) in pairs),
-            "key": sum(1 for x in ids if x in key)}
-
-
-def load_comp_refs() -> tuple[set, set]:
-    """(高手常见搭配 {(id, id)}, 关键卡 {id})：rl/h13_profile.json 和 rl/card_value.json。"""
-    root = HERE.parent / "rl"
-    pairs, key = set(), set()
-    hp, cv = root / "h13_profile.json", root / "card_value.json"
-    if hp.exists():
-        for row in json.loads(hp.read_text(encoding="utf-8")).get("synergy", []):
-            if len(row) >= 6 and row[0] >= 3:
-                pairs.add(tuple(sorted((row[4], row[5]))))
-    if cv.exists():
-        key = set(json.loads(cv.read_text(encoding="utf-8")).get("key", []))
-    return pairs, key
-
-
 def merge_boards(paths: list[str]) -> dict:
     """几个阵容库合在一起（训练时 --pro-boards "a;b" 用）。"""
-    out: dict[int, list] = defaultdict(list)
-    from rl.calibrate import load_pro_boards
-    for p in paths:
-        for t, v in load_pro_boards(p).items():
-            out[t] += v
-    return dict(out)
+    from rl.calibrate import merge_pro_boards
+    return merge_pro_boards(paths)
 
 
 def main() -> int:
@@ -243,18 +169,13 @@ def main() -> int:
     t0 = time.time()
     data, boards, stats, n_games, profile = convert(Path(a.src), a.mmr, a.val_every)
     Path(a.profile).write_text(json.dumps(profile, ensure_ascii=False, indent=1), encoding="utf-8")
-    out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("part_*.npz"):
-        old.unlink()
+    out = reset_dir(Path(a.out))
     n = len(data["kind"])
     meta = {"source": f"{Path(a.src).name}（他人对局，TavernGym 观察格式）", "games": n_games, "mmr": a.mmr,
             "created": time.strftime("%Y-%m-%d %H:%M:%S"), "samples": n, "stats": dict(stats)}
     k = 0
     for s in range(0, n, SHARD):
-        part = {key: v[s:s + SHARD] for key, v in data.items()}
-        np.savez_compressed(out / f"part_{k:03d}.npz", **part, n_actions=np.int32(245), compressed=np.int8(1),
-                            meta=np.array(json.dumps(meta, ensure_ascii=False)))
+        write_shard(out, k, {key: v[s:s + SHARD] for key, v in data.items()}, 245, meta)
         k += 1
     meta["shards"] = k
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")

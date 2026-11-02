@@ -29,12 +29,8 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import RUNS  # noqa: E402
-
-def soft_log_np(x: np.ndarray) -> np.ndarray:
-    """和 rl/model.py 的 soft_log_np 一样（这里不导入 rl.model：转换不需要 torch）。"""
-    a = np.abs(x)
-    return np.where(a <= 1, x, np.sign(x) * (1 + np.log(np.maximum(a, 1)))).astype(np.float32)
-
+# 示范格式在 rl/demos.py；load_dir / soft_log_np 的旧名字保留（tools.make_pro_demos.load_dir）
+from rl.demos import KINDS, MAX_CANDS, SHARD_KEYS, load_dir, reset_dir, soft_log_np, write_shard  # noqa: E402,F401
 
 KEEP_DEFAULT = "cast:0.35,play:0.35,move:0.35,activate:0.5,refresh:0.7"
 
@@ -84,7 +80,6 @@ def convert_game(args):
     from tg.hsreplay import parse
     from tg.logs import load_records, segment
     from tg.replay import translate
-    from tools.make_demos import KINDS, MAX_CANDS
     from tg.actions import A_END
     gid = Path(job[1] or job[0]).name.split(".")[0]
     rng = np.random.default_rng(int(hashlib.md5(gid.encode()).hexdigest()[:8], 16))
@@ -162,10 +157,8 @@ def _mmr(src: Path) -> dict:
 
 
 def _write(out_dir: Path, k: int, parts: list[dict], meta: dict):
-    cat = {key: np.concatenate([p[key] for p in parts]) for key in ("f", "c", "m", "cand", "kind", "turn", "split", "mmr")}
-    np.savez_compressed(out_dir / f"part_{k:03d}.npz", **cat, n_actions=np.int32(parts[0]["n_actions"]),
-                        compressed=np.int8(1), meta=np.array(json.dumps(meta, ensure_ascii=False)))
-    return len(cat["kind"])
+    cat = {key: np.concatenate([p[key] for p in parts]) for key in SHARD_KEYS}
+    return write_shard(out_dir, k, cat, parts[0]["n_actions"], meta)
 
 
 def main() -> int:
@@ -190,10 +183,7 @@ def main() -> int:
         return 1
     mmr = _mmr(src)
     keep = {k: float(v) for k, v in (p.split(":") for p in a.keep.split(",") if ":" in p)}
-    out_dir = Path(a.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("part_*.npz"):
-        old.unlink()
+    out_dir = reset_dir(Path(a.out))
     jobs = [(f, 1 if a.val_every and i % a.val_every == a.val_every - 1 else 0) for i, f in enumerate(files)]
     t0 = time.time()
     stats, buf, nbuf, k, total = Counter(), [], 0, 0, 0
@@ -230,21 +220,6 @@ def main() -> int:
     print(f"完成：{len(files)} 局，{dec} 个决策 → {total} 条样本（{k} 片）→ {out_dir}；{time.time() - t0:.0f} 秒")
     print({kk: v for kk, v in sorted(stats.items())})
     return 0
-
-
-def load_dir(path) -> dict | None:
-    """训练用：读 runs/pro_demos/ 里所有分片，拼成和 tools/make_demos.load 一样的字典（多一个 compressed=True）。"""
-    files = sorted(Path(path).glob("part_*.npz"))
-    if not files:
-        return None
-    parts = [np.load(f, allow_pickle=False) for f in files]
-    d = {k: np.concatenate([p[k] for p in parts]) for k in ("f", "c", "m", "cand", "kind", "turn", "split", "mmr")}
-    n_act = int(parts[0]["n_actions"])
-    d["m"] = np.unpackbits(d["m"], axis=1)[:, :n_act].astype(bool)
-    d["compressed"] = True
-    meta = Path(path) / "meta.json"
-    d["meta"] = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
-    return d
 
 
 if __name__ == "__main__":

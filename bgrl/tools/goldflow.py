@@ -139,12 +139,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads, config=train_rules(ckpt))
     booster = None
     if boosted:
-        from rl.calibrate import ProBoardBooster, load_pro_boards
-        lib: dict = {}
-        for pth in (RUNS / "pro_boards.json", RUNS / "h13_boards.json"):
-            if pth.exists():
-                for t, v in load_pro_boards(pth).items():
-                    lib.setdefault(t, []).extend(v)
+        from rl.calibrate import ProBoardBooster, merge_pro_boards
+        lib = merge_pro_boards(p for p in (RUNS / "pro_boards.json", RUNS / "h13_boards.json") if p.exists())
         if lib:
             booster = ProBoardBooster(lib, frac=1.0, start_turn=5, seed=seed, every=2)
             booster.strength = 1.0
@@ -291,7 +287,7 @@ def show(model: dict, pro: dict | None, upto: int = 9):
 
 def show_comps(finals: list[dict]) -> dict | None:
     """模型的最终阵容（场上 ≥ 5 个随从的局）和 rl/h13_profile.json（万三分段）对比。"""
-    from tools.native_demos import ZH_RACE, comp_stats
+    from rl.comp import ZH_RACE, comp_stats
     fb = [x for x in finals if len(x["board"]) >= 5]
     if not fb:
         return None
@@ -306,8 +302,8 @@ def show_comps(finals: list[dict]) -> dict | None:
     print("  模型常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in m["cards"][:12]))
     if h:
         print("  万三常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in h["cards"][:12]))
-    # 配合程度（tools/native_demos.board_scores）
-    from tools.native_demos import board_scores, load_comp_refs
+    # 配合程度（rl/comp.board_scores）
+    from rl.comp import board_scores, load_comp_refs
     pairs, key = load_comp_refs()
     det = catalog()
     sc = [board_scores(x["board"], det, pairs, key) for x in fb]
@@ -340,7 +336,7 @@ def buy_style(buy_rows: list) -> dict:
     if not buy_rows:
         return {}
     from rl.ppo import Trainer
-    from tools.make_demos import KINDS
+    from rl.demos import KINDS
     n = len(buy_rows)
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}

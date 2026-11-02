@@ -38,7 +38,7 @@ def main(rounds: int = 600) -> int:
 
     # tools/native_demos.py：把这些局面当成“别人的对局”转一遍（动作都是合法的，应该全部保留）
     import tempfile
-    from tools.make_demos import KINDS
+    from rl.demos import KINDS
     from tools.native_demos import convert
     A = np.array([int(rng.choice(np.flatnonzero(m))) for m in M[:400]])
     turn = np.rint(F[:400, 0] * 20).astype(np.int16) * 2 - 1

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import json
 import os
 import sys
 import time
@@ -29,10 +28,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import RUNS, games_dir  # noqa: E402
 from tg.actions import A_END  # noqa: E402
-
-MAX_CANDS = 8
-KINDS = ("buy", "sell", "play", "cast", "magnetize", "upgrade", "refresh", "hero_power", "move", "end",
-         "freeze", "dark_gift", "activate")          # 后三个只在高分回放里有（tools/make_pro_demos.py）；只能往后加
+# 示范格式（类别、读写）在 rl/demos.py；这里的旧名字保留（tools.make_demos.KINDS / load / save）
+from rl.demos import KINDS, MAX_CANDS, load, save  # noqa: E402,F401
 
 
 def _obs(g):
@@ -78,32 +75,6 @@ def _game_files(paths):
     for p in paths:
         files += sorted(glob.glob(os.path.join(p, "*.jsonl"))) if os.path.isdir(p) else [p]
     return [f for f in files if schema_of(f) == 2]
-
-
-def save(rows, out: Path, meta: dict):
-    n = len(rows)
-    cand = np.full((n, MAX_CANDS), -1, dtype=np.int16)
-    for i, r in enumerate(rows):
-        cand[i, :len(r[3])] = r[3]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp.npz")
-    np.savez_compressed(tmp, f=np.stack([r[0] for r in rows]).astype(np.float32),
-                        c=np.stack([r[1] for r in rows]).astype(np.int32),
-                        m=np.packbits(np.stack([r[2] for r in rows]), axis=1), cand=cand,
-                        kind=np.array([KINDS.index(r[4]) for r in rows], dtype=np.int8),
-                        turn=np.array([r[5] for r in rows], dtype=np.int16),
-                        split=np.array([r[6] for r in rows], dtype=np.int8),
-                        n_actions=np.int32(len(rows[0][2])), meta=np.array(json.dumps(meta, ensure_ascii=False)))
-    os.replace(tmp, out)
-
-
-def load(path) -> dict:
-    """训练用：返回各数组（m 已解包成 bool）。"""
-    z = np.load(path, allow_pickle=False)
-    d = {k: z[k] for k in z.files}
-    d["m"] = np.unpackbits(d["m"], axis=1)[:, :int(d["n_actions"])].astype(bool)
-    d["meta"] = json.loads(str(d["meta"]))
-    return d
 
 
 def main() -> int:

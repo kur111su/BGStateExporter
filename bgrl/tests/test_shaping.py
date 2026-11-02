@@ -121,7 +121,7 @@ def main() -> int:
         assert abs(t6.pro_scale - want) < 1e-9, (tr, va, t6.pro_scale)
 
     # 高分示范按类别 + 按回合加权：t2:2 第 2 回合 ×2，t3-4:1.5 第 3–4 回合 ×1.5
-    from tools.make_demos import KINDS
+    from rl.demos import KINDS
     d = {"kind": np.array([KINDS.index(k) for k in ("upgrade", "buy", "upgrade", "end")]), "turn": np.array([2, 3, 5, 4])}
     w = Trainer._bc_weights(SimpleNamespace(cfg=SimpleNamespace(bc_weights=""), demos=None), d, "upgrade:3,t2:2,t3-4:1.5")
     assert w.tolist() == [6.0, 1.5, 3.0, 1.5], w

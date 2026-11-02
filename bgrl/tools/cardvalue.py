@@ -62,8 +62,7 @@ class PickStats:
 
 def from_demos(dirs: list[Path]) -> tuple[PickStats, PickStats]:
     """(6500+ 回放, 万分以上) 两份。"""
-    from tools.make_demos import KINDS
-    from tools.make_pro_demos import load_dir
+    from rl.demos import KINDS, load_dir
     lo, hi = PickStats(), PickStats()
     kb = KINDS.index("buy")
     for d in dirs:

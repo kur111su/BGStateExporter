@@ -205,6 +205,15 @@ def load_pro_boards(path) -> dict:
     return {int(t): v for t, v in (d.get("turns") or {}).items() if v}
 
 
+def merge_pro_boards(paths) -> dict:
+    """几个阵容库合在一起（训练 --pro-boards "a;b"、goldflow / comptest 用）：{回合: [阵容…]}，按给的顺序接起来。"""
+    out: dict = {}
+    for p in paths:
+        for t, v in load_pro_boards(p).items():
+            out.setdefault(t, []).extend(v)
+    return out
+
+
 class ProBoardBooster(BotBooster):
     """机器人局里，把机器人的场面直接换成同一回合 6500+ 对局里的真实阵容（卡牌、金色、攻 / 血），
     酒馆等级提到那位玩家当时的等级（不降）。之后机器人照常用这套阵容招募、战斗。

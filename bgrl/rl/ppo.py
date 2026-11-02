@@ -28,7 +28,9 @@ from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import A_BUY, A_DARK_GIFT, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
 from tg.actions import is_panic  # noqa: F401 —— 引擎内部出错（第 5413 轮 engine.rs:925 召唤后下标越界，整个训练停了）
 from tg.obs import C_BOARD, C_SHOP, F_GOLD, F_TIER, F_UPCOST  # noqa: F401
-from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_boards, ramp
+from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, merge_pro_boards, ramp
+from .comp import board_scores, load_comp_refs
+from .demos import KINDS, load as load_demos, load_dir
 
 
 @dataclass
@@ -532,10 +534,7 @@ class Trainer:
             path = ";".join(str(p) for p in have) or paths[0]
             if have:
                 if not getattr(self, "_pro_lib", None):
-                    self._pro_lib = {}
-                    for p in have:                     # 几个阵容库（分号隔开）合在一起
-                        for t, v in load_pro_boards(p).items():
-                            self._pro_lib.setdefault(t, []).extend(v)
+                    self._pro_lib = merge_pro_boards(have)     # 几个阵容库（分号隔开）合在一起
                     print(f"高分阵容库：{sum(len(v) for v in self._pro_lib.values())} 个整板（{path}）", flush=True)
                 return ProBoardBooster(self._pro_lib, frac, cfg.boost_from_turn, seed=seed, every=cfg.boost_every)
             print(f"没有高分阵容库 {path}（先运行 bg.py prolib），改用放大攻防", flush=True)
@@ -551,8 +550,7 @@ class Trainer:
                 print(f"没有示范数据 {path}（先运行 bg.py demos），这次不模仿", flush=True)
             return None
         try:
-            from tools.make_demos import load
-            d = load(path)
+            d = load_demos(path)
         except Exception as ex:                        # noqa: BLE001
             print(f"示范数据 {path} 读不了（{type(ex).__name__}: {ex}），这次不模仿", flush=True)
             return None
@@ -569,7 +567,6 @@ class Trainer:
         from paths import RUNS
         # 可以写几个目录，用分号隔开（例如 "runs\\pro_demos;runs\\h13_demos"），合在一起用
         paths = [Path(p) for p in str(self.cfg.pro_data).split(";") if p.strip()] or [RUNS / "pro_demos"]
-        from tools.make_pro_demos import load_dir
         parts = []
         for path in paths:
             if not path.exists():
@@ -613,7 +610,6 @@ class Trainer:
         return F.log_softmax(logits.float(), -1)
 
     def _bc_weights(self, d=None, spec=None):
-        from tools.make_demos import KINDS
         d = self.demos if d is None else d
         spec = self.cfg.bc_weights if spec is None else spec
         w, tw = {}, []
@@ -645,7 +641,6 @@ class Trainer:
           key / eco  在 rl/card_value.json 的关键卡 / 经济卡里
           tribe      是随从，而且场上已经有 ≥ 2 个和它同种族的随从（全种族算任何种族）——围绕主种族成型
           syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动"""
-        from tools.make_demos import KINDS
         if "c" not in d:
             return None
         from tg.catalog import base_of_index, catalog, n_cards
@@ -784,7 +779,6 @@ class Trainer:
         if getattr(self, "_ct", None) is not None:
             return self._ct
         from tg.catalog import base_of_index, catalog, n_cards
-        from tools.native_demos import load_comp_refs
         pairs, key = load_comp_refs()
         det = catalog()
         n = n_cards()
@@ -922,7 +916,6 @@ class Trainer:
     @torch.no_grad()
     def human_eval(self, d=None, prefix: str = "human") -> dict:
         """留出的验证局上：模型最可能的动作是不是示范里的那个（{prefix}_top1），按类别的命中率，平均交叉熵。"""
-        from tools.make_demos import KINDS
         d = self.demos if d is None else d
         self.model.eval()
         out = {}
@@ -1112,11 +1105,10 @@ class Trainer:
         return (round(float(np.mean(ps)), 3), round(float(np.mean([p == 1 for p in ps])), 3)) if ps else (None, None)
 
     def _comp_scores(self, boards) -> dict:
-        """最终阵容的配合程度（场上 ≥ 5 个随从的局；见 tools/native_demos.board_scores）：
+        """最终阵容的配合程度（场上 ≥ 5 个随从的局；见 rl/comp.board_scores）：
         comp_coh 主种族纯度（万三 0.70）、comp_syn 高手常见搭配对数（2.07）、comp_key 关键卡张数（4.34）、comp_golden 金色随从数（1.85）。"""
         try:
             from tg.catalog import base_id, card_id, catalog, is_golden_id
-            from tools.native_demos import board_scores, load_comp_refs
             if not hasattr(self, "_comp_ref"):
                 self._comp_ref = (*load_comp_refs(), catalog())
             pairs, key, det = self._comp_ref

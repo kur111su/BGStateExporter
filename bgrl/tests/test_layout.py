@@ -66,6 +66,22 @@ def main() -> int:
         assert cid == taverngym.card_info(i)[0]
         assert base_of_index(i) == base_id(cid) and (base_id(cid) != cid) == is_golden_id(cid)
     assert base_id("BG_X_G") == "BG_X" and base_id("BG_X") == "BG_X" and is_golden_id("BG_X_G")
+    # 示范格式里的 soft_log（不需要 torch 的那份）和模型里的一样
+    from rl.demos import soft_log_np as sl_demo
+    from rl.model import soft_log_np as sl_model
+    x = np.random.default_rng(0).normal(0, 50, 4000).astype(np.float32)
+    assert np.array_equal(sl_demo(x), sl_model(x))
+
+    # 依赖方向：tg ← rl ← tools。rl / tg 不导入 tools（tools 是命令行脚本）
+    import ast
+    root = Path(__file__).resolve().parent.parent
+    for p in sorted((root / "rl").glob("*.py")) + sorted((root / "tg").glob("*.py")):
+        for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            mods = [a.name for a in n.names] if isinstance(n, ast.Import) else \
+                [n.module or ""] if isinstance(n, ast.ImportFrom) and not n.level else []
+            assert not any(m == "tools" or m.startswith("tools.") for m in mods), f"{p.name} 导入了 tools"
+            if p.parent.name == "tg":
+                assert not any(m == "rl" or m.startswith("rl.") for m in mods), f"tg/{p.name} 导入了 rl"
     print("布局 / 动作 / 卡牌目录一致")
     return 0
 
