@@ -396,7 +396,7 @@ def buy_style(buy_rows: list) -> dict:
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
-    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine"):
+    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple"):
         sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
@@ -543,7 +543,8 @@ def main() -> int:
             {"tribe": 0.36, "syn": 0.07, "key": 0.59, "eco": 0.11}
         zh = {"tribe": "围绕种族", "syn": "和场上常见搭配", "key": "关键卡", "eco": "经济卡",
               "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配",
-              "engine": "被场上引擎卡放大（有布莱恩买战吼 / 有提图斯买亡语）"}
+              "engine": "被场上引擎卡放大（有布莱恩买战吼 / 有提图斯买亡语）", "engcard": "买引擎卡本身",
+              "triple": "凑三连（场上 / 手里已有同名）"}
         print("  买法：" + "、".join(f"{zh[w]} {bs[w]:.0%}" + (f"（高手 {ps[w]:.0%}）" if w in ps else "")
                                   for w in zh if w in bs))
         if pk is not None:

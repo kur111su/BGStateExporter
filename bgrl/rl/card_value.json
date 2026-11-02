@@ -112,7 +112,9 @@
   "eco": 0.109,
   "simkey": 0.068,
   "simsyn": 0.026,
-  "engine": 0.084
+  "engine": 0.084,
+  "engcard": 0.018,
+  "triple": 0.131
  },
  "cards": {
   "BG36_345": {

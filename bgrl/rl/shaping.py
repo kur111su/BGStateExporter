@@ -326,9 +326,12 @@ class ShapingMixin:
             g["behind"][s] = behind
         return r0
 
-    def _after_add(self, slots, ak):
-        """无效刷新：上一次刷新之后没买任何东西就又刷新 / 结束回合 → 给那次刷新扣分（改已经存下的奖励）。"""
+    def _after_add(self, slots, ak, turns=None):
+        """无效刷新：上一次刷新之后没买任何东西就又刷新 / 结束回合 → 给那次刷新扣分（改已经存下的奖励）。
+        turns 给了时只在第 refresh_waste_until 回合以前扣（后期找三连、找关键卡本来就要多刷，高手第 8–9 回合
+        刷新花 1.7–2.6 块，很多次刷完不买）。"""
         pen = self.cfg.refresh_waste_penalty
+        until = getattr(self.cfg, "refresh_waste_until", 99)
         for j, a in enumerate(ak):
             s = int(slots[j])
             a = int(a)
@@ -336,7 +339,7 @@ class ShapingMixin:
                 prev = self.ref_idx[s]
                 if prev >= 0:
                     self.mix["refresh_waste"] += 1
-                    if pen > 0:
+                    if pen > 0 and (turns is None or int(turns[j]) <= until):
                         self.rollout.r[prev] -= pen
                 self.ref_idx[s] = self.rollout.last[s] if a == A_REFRESH else -1
             elif A_BUY <= a < A_SELL:

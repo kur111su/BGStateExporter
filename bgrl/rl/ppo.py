@@ -134,6 +134,9 @@ class Config:
     # 无效刷新：刷新之后、下一次刷新或结束回合之前一个随从 / 法术都没买，就给那次刷新扣这么多
     # （竞技场 5 局：296 次刷新里 232 次之后什么都没买）
     refresh_waste_penalty: float = 0.0
+    # 只在这一回合以前扣（含）。阵容测试（第 12370 轮）：第 8 / 9 回合刷新花 0.29 / 0.61 块，高手 1.70 / 2.62；
+    # 金色 1.12 个（万三 1.85），第 10 回合起阵容强度落后——后期不刷就找不到三连和高本关键卡
+    refresh_waste_until: int = 99
     # 花掉升本的钱：落后于目标曲线（等级 < 目标 - 0.5）时，一步操作让金币从“够升本”掉到“不够升本”（不是升本本身），
     # 给这一步扣这么多（买随从扣一半）；结束回合时钱还够升本却没升，也扣一次。
     # 金币流向对比（361 局 6500+ vs 竞技场 5 局）：高手第 2 回合 86% 直接升本（钱够时 87%），第 4–8 回合钱够时
@@ -476,7 +479,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                         r0 = self._combat_shape(env, off, idx, f[o:o + k], ak, r0)
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
-                        self._after_add(off + idx, ak)
+                        self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
                         n_dec += k
                         self.n_noop += int(noop.sum())
                     o += k

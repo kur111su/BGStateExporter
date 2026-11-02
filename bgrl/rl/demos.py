@@ -149,6 +149,8 @@ def bought_in(d, which: str, root: Path | None = None):
       syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动
       simkey     在引擎实测的关键卡里（rl/sim_value.json，bg.py simcards：拿掉它胜率掉得多）
       simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）
+      engcard    买的是引擎卡本身（布莱恩·铜须、提图斯·瑞文戴尔）
+      triple     买的随从场上或手里已经有同名的（不是金色）——凑三连
       engine     买的卡被场上的“引擎卡”放大：场上有布莱恩·铜须时买战吼随从、有提图斯·瑞文戴尔时买亡语随从——
                  布莱恩让战吼触发两次（南海卖艺者下回合 2 块钱、各种加攻防的战吼翻倍），打战吼随从换经济 / 换身材"""
     if "c" not in d:
@@ -162,6 +164,24 @@ def bought_in(d, which: str, root: Path | None = None):
     buy, slot = buy[ok], slot[ok]
     cards = d["c"][buy, C_SHOP + slot]
     sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which == "engcard":
+        eng = set(engine_table())
+        idx = [i for i, b in base.items() if b in eng]
+        sel[buy[np.isin(cards, idx)]] = True
+        return sel
+    if which == "triple":
+        from tg.catalog import card_id, is_golden_id
+        from tg.obs import C_HAND, N_HAND
+        det = catalog()
+        golden = {i for i in base if is_golden_id(card_id(i))}
+        for row, x in zip(buy, cards):
+            x = int(x)
+            if x in golden or (det.get(base.get(x)) or {}).get("kind") != "minion":
+                continue
+            own = [int(y) for y in list(d["c"][row, C_BOARD:C_BOARD + 7]) + list(d["c"][row, C_HAND:C_HAND + N_HAND])
+                   if y > 0 and int(y) not in golden]
+            sel[row] = any(base.get(y) == base.get(x) for y in own)
+        return sel
     if which == "engine":
         det = catalog()
         amp = engine_table()

@@ -185,6 +185,20 @@ def check_econ():
     c[1, 19] = idx["BG26_135"]
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "engine").tolist() == [True, False]
+    assert bought_in(d, "triple").tolist() == [False, True]          # 第 2 局场上已有一张南海卖艺者
+    c2 = c.copy()
+    c2[:, 36] = idx["BG_LOE_077"]
+    assert bought_in({**d, "c": c2}, "engcard").tolist() == [True, True]
+
+    # 后期刷新不扣“无效刷新”（refresh_waste_until）
+    from tg.actions import A_REFRESH
+    for turn, want in ((5, -0.015), (8, 0.0)):
+        roll = SimpleNamespace(r=[0.0], last=np.zeros(1, dtype=np.int64), ep=np.zeros(1, dtype=np.int64))
+        tt = SimpleNamespace(cfg=SimpleNamespace(refresh_waste_penalty=0.015, refresh_waste_until=6), rollout=roll,
+                             ref_idx=np.full(1, -1, dtype=np.int64), mix=defaultdict(int))
+        Trainer._after_add(tt, np.array([0]), np.array([A_REFRESH]), np.array([turn]))
+        Trainer._after_add(tt, np.array([0]), np.array([A_END]), np.array([turn]))
+        assert abs(roll.r[0] - want) < 1e-12, (turn, roll.r)
     return got, gems, fort, disc
 
 
