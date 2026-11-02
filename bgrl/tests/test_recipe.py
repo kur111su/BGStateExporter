@@ -1,8 +1,9 @@
 """训练配方（configs/*.json，tools/train.py --recipe）：
 
-- 配方里的每一项都是 Config 的字段；
-- train.bat 现在的命令（配方 + 命令行）得到的设置，和改用配方之前 train.bat 那一长串参数完全一样；
-- 命令行参数优先于配方。
+- 配方里的每一项都是 Config 的字段，值的类型能按默认值转换；
+- 配方里的值和把同样的值写成命令行参数得到的 Config 完全一样（配方和命令行是同一套参数）；
+- train.bat 用的是 configs/v3.json，而且命令行参数优先于配方。
+（改用配方时，train.bat 原来那串参数和配方的等价性在提交 cf7568a 里核对过。）
 """
 from __future__ import annotations
 
@@ -14,25 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# 改用配方之前 train.bat 的参数（去掉了 INIT，处理器个数换成 8）
-OLD = ('--run runs\\v3 --resume --iters 100000 --threads 8 --boost-frac 0.75 --boost-kind pro --boost-from-turn 5 '
-       '--tempo-curve pro --bc-coef 0.05 --bc-weights "upgrade:3,sell:3,buy:2" --bc-train-cap 0.6 --bc-smooth 0.1 '
-       '--pro-coef 0.1 --pro-batch 64 --pro-weights "upgrade:3,end:2,buy:1.5,sell:1.5,key:2,eco:2,tribe:2,syn:3,t2-5:2" '
-       '--tempo-bonus 0.03 --tempo-deficit 0.06 --refresh-waste-penalty 0.015 --upgrade-starve-penalty 0.08 '
-       '--starve-gift-weight 2 --comp-bonus 0.08 --starve-buy-weight 0 --unspent-gold-penalty 0.005 --pro-gap-cap 0.12 '
-       '--pro-data "runs\\pro_demos;runs\\h13_demos" --pro-boards "runs\\pro_boards.json;runs\\h13_boards.json"')
-
-
-def _split(s: str) -> list[str]:
-    return shlex.split(s.replace("\\", "/"))       # Windows 路径的反斜杠统一成 /（shlex 会把反斜杠当转义）
-
 
 def _bat_args() -> list[str]:
     line = next(x for x in (ROOT / "train.bat").read_text(encoding="utf-8").splitlines() if "bg.py train" in x)
     rest = line.split("bg.py train", 1)[1]
     for k, v in (("%INIT%", ""), ("%*", ""), ("%NUMBER_OF_PROCESSORS%", "8")):
         rest = rest.replace(k, v)
-    return _split(rest)
+    return shlex.split(rest.replace("\\", "/"))       # Windows 路径的反斜杠统一成 /（shlex 会把反斜杠当转义）
 
 
 def _norm(cfg) -> dict:
@@ -46,17 +35,26 @@ def main() -> int:
     for p in sorted((ROOT / "configs").glob("*.json")):
         r = load_recipe(str(p))
         assert set(r["config"]) <= names, (p.name, set(r["config"]) - names)
+        flags = []
+        for k, v in r["config"].items():
+            flags += ["--" + k.replace("_", "-"), str(v).replace("\\", "/")]
+        c_cli, _ = parse(flags)
+        c_rec, _ = parse(["--recipe", str(p)])
+        d_cli, d_rec = _norm(c_cli), _norm(c_rec)
+        diff = {k: (d_cli[k], d_rec[k]) for k in d_cli if d_cli[k] != d_rec[k]}
+        assert not diff, (p.name, diff)
 
-    c_old, a_old = parse(_split(OLD))
-    c_new, a_new = parse(_bat_args())
-    d_old, d_new = _norm(c_old), _norm(c_new)
-    diff = {k: (d_old[k], d_new[k]) for k in d_old if d_old[k] != d_new[k]}
-    assert not diff, diff
-    assert a_old.run.replace("\\", "/") == a_new.run.replace("\\", "/") and a_old.resume == a_new.resume
-
-    c, a = parse(_bat_args() + ["--comp-bonus", "0.02", "--run", "runs/x"])
-    assert c.comp_bonus == 0.02 and a.run == "runs/x"
-    print(f"recipe OK：train.bat 的 {len(d_new)} 项设置和原来一样")
+    args = _bat_args()
+    assert args[:2] == ["--recipe", "configs/v3.json"] and "--resume" in args, args
+    c, a = parse(args)
+    rec = load_recipe("configs/v3.json")
+    assert a.run.replace("\\", "/") == rec["run"].replace("\\", "/") and a.resume and c.threads == 8
+    for k, v in rec["config"].items():
+        got = getattr(c, k)
+        assert (got.replace("\\", "/") if isinstance(got, str) else got) == (v.replace("\\", "/") if isinstance(v, str) else v), k
+    c2, a2 = parse(args + ["--comp-bonus", "0.02", "--run", "runs/x"])
+    assert c2.comp_bonus == 0.02 and a2.run == "runs/x"
+    print(f"recipe OK：train.bat → configs/v3.json，{len(rec['config'])} 项设置")
     return 0
 
 
