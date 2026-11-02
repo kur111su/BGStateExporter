@@ -4,6 +4,8 @@
   upgrade_starve_penalty 等       金币流向：落后时把升本的钱花掉、钱够升本却结束回合扣分；剩钱扣分
   refresh_waste_penalty           无效刷新：刷新后什么都没买就又刷新 / 结束回合
   comp_bonus                      阵容成型：第 comp_from_turn 回合起，结束回合按场面配合程度加分（rl/comp.py 的参照）
+  target_bonus                    目标阵容：结束回合时场面离 S / A / B 级目标阵容（rl/target_comps.json）多近，
+                                  Φ = 等级权重（S 1 / A 0.8 / B 0.6）× 核心卡占比，比这局上次涨多少加多少（整局 = 最后的 Φ）
   econ_bonus                      经济：结束回合时“存下的资源”（下回合额外金币 + 2 × 永久金币上限加成 + 手牌价值）比这局上次
                                   多了多少就加多少，一局结束时扣回最后的存款（纯势能差，整局和为 0；资源变成场面由 combat_bonus 接着算）
   combat_bonus                    阵容强度：结束回合时让引擎拿当前场面打一组同期高分阵容（rl/boardsim.py），
@@ -45,6 +47,8 @@ class ShapingMixin:
         self.cs_ep = np.full(self.n_slots, -1, dtype=np.int64)
         self.cs_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.cs_rng = random.Random(cfg.seed + 11)
+        self.tg_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 目标阵容（target_bonus）：每个座位上次的 Φ
+        self.tg_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.ec_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 经济（econ_bonus）：每个座位上次的存款
         self.ec_prev = np.zeros(self.n_slots, dtype=np.float64)
         if cfg.combat_bonus > 0:
@@ -145,8 +149,43 @@ class ShapingMixin:
             self._gold_shape(slots, f, ak, r0)
         if c is not None and self.cfg.comp_bonus > 0:
             self._comp_shape(f, c, ak, r0)
+        if getattr(self.cfg, "target_bonus", 0) > 0 and c is not None:
+            ShapingMixin._target_shape(self, slots, f, c, ak, r0)
         if getattr(self.cfg, "econ_bonus", 0) > 0 and f.shape[1] > 9:
             self._econ_shape(slots, f, ak, r0, c)
+        return r0
+
+    def _target_tables(self):
+        if getattr(self, "_tgt", None) is None:
+            from tg.catalog import base_of_index, n_cards
+            from .comp import load_target_comps
+            self._tgt = ([base_of_index(i) if i else "" for i in range(n_cards())], load_target_comps())
+        return self._tgt
+
+    def _target_shape(self, slots, f, c, ak, r0):
+        """目标阵容奖励（target_bonus）：第 target_from_turn 回合起结束回合时，Φ = max（等级权重 × 场上核心卡占比），
+        奖励 = target_bonus × (Φ - 这局上次的 Φ)。例：场上放下布莱恩·铜须 → 喝茶流 1/3、野猪人·邪能野猪人 1/3 …… Φ = 0.33；
+        再凑齐巴琳达 → 0.67。整局加起来 = target_bonus × 最后一次的 Φ：最后成了 S 级阵容拿得最多。"""
+        from .comp import target_score
+        ends = np.flatnonzero(ak == A_END)
+        if not len(ends):
+            return r0
+        base, comps = ShapingMixin._target_tables(self)
+        if not comps:
+            return r0
+        turns = np.rint(f[ends, 0] * 20).astype(int)
+        for j, t in zip(ends, turns):
+            if t < getattr(self.cfg, "target_from_turn", 5):
+                continue
+            ids = [base[int(x)] for x in np.asarray(c[j])[C_BOARD:C_BOARD + 7] if 0 < int(x) < len(base)]
+            phi = target_score(ids, comps)[0]
+            s = int(slots[j])
+            ep = int(self.rollout.ep[s])
+            prev = self.tg_prev[s] if self.tg_ep[s] == ep else 0.0
+            r0[j] += self.cfg.target_bonus * (phi - prev)
+            self.tg_ep[s], self.tg_prev[s] = ep, phi
+            self.mix["tgt_sum"] += phi
+            self.mix["tgt_n"] += 1
         return r0
 
     def _hand_values(self):

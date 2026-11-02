@@ -114,7 +114,11 @@
   "simsyn": 0.026,
   "engine": 0.084,
   "engcard": 0.018,
-  "triple": 0.131
+  "triple": 0.131,
+  "tgtS": 0.067,
+  "tgtA": 0.093,
+  "tgtB": 0.028,
+  "tgtfit": 0.092
  },
  "cards": {
   "BG36_345": {

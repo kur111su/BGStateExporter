@@ -396,7 +396,7 @@ def buy_style(buy_rows: list) -> dict:
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
-    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple"):
+    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit"):
         sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
@@ -434,6 +434,35 @@ def show_picks(picks, sells: dict) -> dict | None:
         print("  模型最常卖：" + "、".join(f"{(hc.get(k) or {}).get('name', k)} {v}" for k, v in top_sold))
     return {"key_share": round(kb / max(1, picks.n), 3), "corr": round(corr, 3) if corr is not None else None,
             "miss": [[name(k), m, p] for k, m, p in miss], "over": [[name(k), m, p] for k, m, p in over]}
+
+
+def show_targets(finals: list[dict]) -> dict | None:
+    """最终阵容（场上 ≥ 4 个随从）各自最像 rl/target_comps.json 里的哪一套（核心卡占一半以上才算），
+    每套的局数比例和这些局的平均名次；S / A / B 合计。"""
+    from rl.comp import load_target_comps, nearest_comp, target_score
+    comps = load_target_comps()
+    fb = [x for x in finals if len(x["board"]) >= 4]
+    if not comps or not fb:
+        return None
+    rows, phis = {}, []
+    for x in fb:
+        c, fr = nearest_comp(x["board"], comps)
+        phis.append(target_score(x["board"], comps)[0])
+        key = f"{c['tier']} {c['name']}" if c else "不像任何一套"
+        r = rows.setdefault(key, {"n": 0, "places": [], "tier": c["tier"] if c else "-"})
+        r["n"] += 1
+        if x.get("place"):
+            r["places"].append(x["place"])
+    n = len(fb)
+    tiers = {t: sum(r["n"] for r in rows.values() if r["tier"] == t) / n for t in "SAB"}
+    order = sorted(rows.items(), key=lambda kv: ("SAB-".index(kv[1]["tier"]), -kv[1]["n"]))
+    print(f"  目标阵容（bgbuddy.gg S / A / B，核心卡占一半以上才算）：S {tiers['S']:.0%}、A {tiers['A']:.0%}、B {tiers['B']:.0%}，"
+          f"平均接近程度 {np.mean(phis):.2f}（S 级凑齐 = 1）")
+    print("    " + "、".join(f"{k} {r['n'] / n:.0%}" + (f"（平均 {np.mean(r['places']):.2f} 名）" if r["places"] else "")
+                           for k, r in order))
+    return {"share": {t: round(v, 3) for t, v in tiers.items()}, "q": round(float(np.mean(phis)), 3),
+            "comps": {k: {"share": round(r["n"] / n, 3), "place": round(float(np.mean(r["places"])), 2) if r["places"] else None}
+                      for k, r in order}}
 
 
 def show_engines(finals: list[dict]) -> dict | None:
@@ -544,11 +573,15 @@ def main() -> int:
         zh = {"tribe": "围绕种族", "syn": "和场上常见搭配", "key": "关键卡", "eco": "经济卡",
               "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配",
               "engine": "被场上引擎卡放大（有布莱恩买战吼 / 有提图斯买亡语）", "engcard": "买引擎卡本身",
-              "triple": "凑三连（场上 / 手里已有同名）"}
+              "triple": "凑三连（场上 / 手里已有同名）", "tgtS": "S 级阵容核心卡", "tgtA": "A 级核心卡", "tgtB": "B 级核心卡",
+              "tgtfit": "核心卡和场上 / 手里的核心卡同属一套"}
         print("  买法：" + "、".join(f"{zh[w]} {bs[w]:.0%}" + (f"（高手 {ps[w]:.0%}）" if w in ps else "")
                                   for w in zh if w in bs))
         if pk is not None:
             pk["style"] = bs
+    tg = show_targets(info.get("finals") or [])
+    if comps is not None and tg:
+        comps["targets"] = tg
     eng = show_engines(info.get("finals") or [])
     if comps is not None and eng:
         comps["engines"] = eng

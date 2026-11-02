@@ -92,3 +92,40 @@ def load_comp_refs(root: Path = REFS) -> tuple[set, set]:
     if cv.exists():
         key = set(json.loads(cv.read_text(encoding="utf-8")).get("key", []))
     return pairs, key
+
+
+# ---------------- 目标阵容（rl/target_comps.json：bgbuddy.gg 的 S / A / B 级终局阵容和核心卡） ----------------
+
+def load_target_comps(root: Path = REFS) -> list[dict]:
+    """[{name, tier, w（S 1.0 / A 0.8 / B 0.6）, core: {卡牌 ID}}]；没有文件时空列表。"""
+    p = Path(root) / "target_comps.json"
+    if not p.exists():
+        return []
+    v = json.loads(p.read_text(encoding="utf-8"))
+    tw = v.get("tiers") or {"S": 1.0, "A": 0.8, "B": 0.6}
+    return [{"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
+             "avg_place": c.get("avg_place")} for c in v.get("comps", [])]
+
+
+def target_score(ids, comps: list[dict]) -> tuple[float, dict | None, float]:
+    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比, 那一套, 核心卡占比)。"""
+    have = set(ids)
+    best, comp, frac = 0.0, None, 0.0
+    for c in comps:
+        fr = len(c["core"] & have) / len(c["core"])
+        if c["w"] * fr > best:
+            best, comp, frac = c["w"] * fr, c, fr
+    return best, comp, frac
+
+
+def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5) -> tuple[dict | None, float]:
+    """最终阵容算哪一套：核心卡占比最高的那套（一样高时等级高的优先），占比不到 min_frac 算“不像任何一套”。"""
+    have = set(ids)
+    order = {"S": 0, "A": 1, "B": 2}
+    best = None
+    for c in comps:
+        fr = len(c["core"] & have) / len(c["core"])
+        key = (fr, -order.get(c["tier"], 3), -(c.get("avg_place") or 9))
+        if fr >= min_frac and (best is None or key > best[0]):
+            best = (key, c, fr)
+    return (best[1], best[2]) if best else (None, 0.0)

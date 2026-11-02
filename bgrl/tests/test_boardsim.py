@@ -217,14 +217,55 @@ def check_drift():
     return msgs[-1]
 
 
+def check_targets():
+    """目标阵容（rl/target_comps.json）：核心卡识别、最像哪一套、势能差奖励、模仿时按 S / A / B 挑示范。"""
+    from rl.comp import load_target_comps, nearest_comp, target_score
+    from rl.demos import KINDS, bought_in
+    from rl.ppo import Trainer
+    from tg.actions import A_BUY, A_END
+    from tg.catalog import card_id, n_cards
+    comps = load_target_comps()
+    assert len(comps) == 23 and {c["tier"] for c in comps} == {"S", "A", "B"}
+    tea = next(c for c in comps if c["name"] == "喝茶流")
+    assert {"BG_LOE_077"} <= tea["core"]                                 # 布莱恩·铜须
+    c, fr = nearest_comp(list(tea["core"]) + ["BG26_135"], comps)
+    assert c["name"] == "喝茶流" and fr == 1.0
+    assert nearest_comp(["BG26_135"], comps)[0] is None
+    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：S 级三张里的一张
+    assert abs(q - 1 / 3) < 1e-9 and c2["tier"] == "S"
+
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
+                        rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)),
+                        tg_ep=np.full(1, -1, dtype=np.int64), tg_prev=np.zeros(1))
+    f = np.zeros((1, 16), np.float32)
+    c = np.zeros((1, 124), np.int64)
+    got = []
+    for turn, board in ((4, ["BG_LOE_077"]), (6, ["BG_LOE_077"]), (7, list(tea["core"])), (8, ["BG26_135"])):
+        f[0, 0] = turn / 20
+        c[0, 19:26] = 0
+        c[0, 19:19 + len(board)] = [idx[x] for x in board]
+        got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
+    assert got == [0.0, 0.05, 0.1, -0.15], got                             # 第 4 回合不算；整局和 = 0.15 × 最后的 0
+
+    cc = np.zeros((2, 124), np.int32)
+    cc[:, 36] = idx["BG_LOE_077"]
+    cc[1, 19] = idx[sorted(tea["core"] - {"BG_LOE_077"})[0]]             # 第 2 局场上已有喝茶流的另一张核心卡
+    d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": cc, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
+    assert bought_in(d, "tgtS").tolist() == [True, True] and bought_in(d, "tgtB").tolist() == [True, True]
+    assert bought_in(d, "tgtfit").tolist() == [False, True]
+    return got
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
     tot = check_combat_shape()
     ec = check_econ()
     dr = check_drift()
+    tg = check_targets()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
-          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}")
+          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0
 
 

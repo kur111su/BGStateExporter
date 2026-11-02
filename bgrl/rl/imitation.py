@@ -106,7 +106,7 @@ class ImitationMixin:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
-                elif k in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
+                elif k in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
                     tw.append((k, None, float(v)))
                 elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
                     lo, _, hi = k[1:].partition("-")
@@ -115,7 +115,7 @@ class ImitationMixin:
         for k, v in w.items():
             out[d["kind"] == k] = v
         for lo, hi, v in tw:
-            if lo in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple"):
+            if lo in ("key", "eco", "tribe", "syn", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit"):
                 sel = bought_in(d, lo)
                 if sel is not None:
                     out[sel] *= v

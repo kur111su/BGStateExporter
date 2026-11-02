@@ -149,6 +149,8 @@ def bought_in(d, which: str, root: Path | None = None):
       syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动
       simkey     在引擎实测的关键卡里（rl/sim_value.json，bg.py simcards：拿掉它胜率掉得多）
       simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）
+      tgtS / tgtA / tgtB  买的是 S / A / B 级目标阵容（rl/target_comps.json，bgbuddy.gg）的核心卡
+      tgtfit     买的核心卡和场上 / 手里已有的核心卡属于同一套目标阵容——在往那套阵容成型
       engcard    买的是引擎卡本身（布莱恩·铜须、提图斯·瑞文戴尔）
       triple     买的随从场上或手里已经有同名的（不是金色）——凑三连
       engine     买的卡被场上的“引擎卡”放大：场上有布莱恩·铜须时买战吼随从、有提图斯·瑞文戴尔时买亡语随从——
@@ -164,6 +166,23 @@ def bought_in(d, which: str, root: Path | None = None):
     buy, slot = buy[ok], slot[ok]
     cards = d["c"][buy, C_SHOP + slot]
     sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which in ("tgtS", "tgtA", "tgtB", "tgtfit"):
+        from .comp import load_target_comps
+        from tg.obs import C_HAND, N_HAND
+        comps = load_target_comps(root)
+        if not comps:
+            return None
+        if which != "tgtfit":
+            want = set().union(*(c["core"] for c in comps if c["tier"] == which[-1]))
+            idx = [i for i, b in base.items() if b in want]
+            sel[buy[np.isin(cards, idx)]] = True
+            return sel
+        for row, x in zip(buy, cards):
+            bx = base.get(int(x))
+            own = {base.get(int(y)) for y in list(d["c"][row, C_BOARD:C_BOARD + 7]) + list(d["c"][row, C_HAND:C_HAND + N_HAND])
+                   if y > 0}
+            sel[row] = any(bx in c["core"] and (c["core"] - {bx}) & own for c in comps)
+        return sel
     if which == "engcard":
         eng = set(engine_table())
         idx = [i for i, b in base.items() if b in eng]
