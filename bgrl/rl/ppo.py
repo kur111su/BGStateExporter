@@ -77,6 +77,13 @@ class Config:
     eval_games: int = 128          # 64 局时平均名次的误差约 ±0.3，128 局约 ±0.2
     amp: bool = True               # 混合精度用 bfloat16（数值范围和 float32 一样，不会溢出；3070 支持）
     max_rollbacks: int = 5         # 连续出问题回退几次后停止训练
+    # 策略慢慢变乱（不是 NaN 那种一下子坏掉）也算出问题：熵比最近 300 轮的中位数高出 drift_ent，或者无效操作
+    # （冻结 / 换位 / 取消）比例超过 drift_noop，连续 drift_iters 轮 → 回退到变乱之前、学习率减半；变乱期间不更新回退点。
+    # 第 12490–12700 轮：熵 1.0 → 1.8–2.0、无效操作 5% → 20–39%、白刷新 11% → 35–40%，加强局能承受的对手强度
+    # 0.76 → 0.52，对高分阵容考试 4.1 → 4.6–4.9，原来的检查一样都没发现。0 = 不检查
+    drift_ent: float = 0.35
+    drift_noop: float = 0.15
+    drift_iters: int = 10
     # 每回合最多几个操作（第 1、2、3… 回合，最后一个数用于之后所有回合）。TavernGym 默认不限：
     # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
@@ -738,6 +745,51 @@ class Trainer(ShapingMixin, ImitationMixin):
             return f"名次头损失发散（{upd['aux']:.2f}）"
         return ""
 
+    def _drift(self, ent, noop) -> str:
+        """策略慢慢变乱的检查（见 drift_ent / drift_noop）。返回问题描述，没有返回空串。"""
+        cfg = self.cfg
+        if not hasattr(self, "ent_hist"):
+            self.ent_hist, self.drift_n = deque(maxlen=300), 0
+        if ent is None or (cfg.drift_ent <= 0 and cfg.drift_noop <= 0):
+            return ""
+        base = float(np.median(self.ent_hist)) if len(self.ent_hist) >= 100 else None
+        bad = []
+        if cfg.drift_ent > 0 and base is not None and ent > base + cfg.drift_ent:
+            bad.append(f"熵 {ent:.2f}（最近中位数 {base:.2f}）")
+        if cfg.drift_noop > 0 and len(self.ent_hist) >= 100 and noop > cfg.drift_noop:
+            bad.append(f"无效操作 {noop:.0%}")
+        if not bad:
+            self.drift_n = 0
+            self.ent_hist.append(float(ent))
+            return ""
+        self.drift_n += 1
+        self.mix["drift"] += 1
+        if self.drift_n >= cfg.drift_iters:
+            self.drift_n = 0
+            return f"策略连续 {cfg.drift_iters} 轮变乱：" + "、".join(bad)
+        return ""
+
+    def restore(self, path):
+        """接着训练目录练（对手库、加强强度、模仿强度都保留），但模型参数换成某个快照的、优化器重新开始，
+        轮数退回快照那一轮，对手库里比它新的快照删掉（那是变坏以后的自己）。"""
+        import re
+        self.init_from(path)
+        self.opt = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr, eps=1e-5)
+        m = re.search(r"it(\d+)", Path(path).name)
+        if m:
+            it = int(m.group(1))
+            drop = [x for x in self.league.members if (re.search(r"it(\d+)", x.name or "") and
+                                                      int(re.search(r"it(\d+)", x.name).group(1)) > it)]
+            self.league.members = [x for x in self.league.members if x not in drop]
+            self.iter = it
+            print(f"退回第 {it} 轮的模型；对手库删掉 {len(drop)} 个更新的快照", flush=True)
+        self.snap_cache.clear()
+        self.active_snaps = []
+        self.good = None
+        self.log_f.write(json.dumps({"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     "restored_from": str(path)}, ensure_ascii=False) + "\n")
+        self.log_f.flush()
+
     def mark_good(self):
         import copy
         self.good = (copy.deepcopy(self.model.state_dict()), copy.deepcopy(self.opt.state_dict()), self.iter)
@@ -814,7 +866,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             upd = self.update(batch) if batch is not None else {}
             t_upd = time.time() - t1
             self.iter += 1
-            problem = self.health(upd)
+            problem = self.health(upd) or self._drift(upd.get("ent"), self.n_noop / max(1, n_dec))
             if not problem:
                 self.since_rollback += 1
                 g0 = self.opt.param_groups[0]["lr"]
@@ -854,6 +906,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["econ"] = round(mx["econ_sum"] / mx["econ_n"], 3)
             if mx.get("env_rebuild"):
                 rec["env_rebuild"] = mx["env_rebuild"]
+            if mx.get("drift"):                        # 这一轮看起来在变乱（连续 drift_iters 轮就回退）
+                rec["drift"] = mx["drift"]
             self.mix = defaultdict(int)
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
@@ -892,7 +946,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     rec.update(pe, pro_scale=round(self.pro_scale, 3))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
-                self.mark_good()
+                if not getattr(self, "drift_n", 0):       # 正在变乱时不把现在当成回退点
+                    self.mark_good()
             self.log_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self.log_f.flush()
             if on_log:

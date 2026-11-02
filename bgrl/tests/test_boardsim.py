@@ -202,13 +202,29 @@ def check_econ():
     return got, gems, fort, disc
 
 
+def check_drift():
+    """策略慢慢变乱的检查（Trainer._drift）：前 100 轮只记熵；熵高出中位数 0.35 或无效操作超过 15%，连续 10 轮才报。"""
+    from rl.ppo import Trainer
+    t = SimpleNamespace(cfg=SimpleNamespace(drift_ent=0.35, drift_noop=0.15, drift_iters=10), mix=defaultdict(int))
+    rng = np.random.default_rng(0)
+    for _ in range(150):
+        assert Trainer._drift(t, 1.0 + rng.normal(0, 0.05), 0.05) == ""
+    for k in range(9):
+        assert Trainer._drift(t, 1.6, 0.05) == ""
+    assert Trainer._drift(t, 1.0, 0.05) == "" and t.drift_n == 0          # 中间好了一轮：重新数
+    msgs = [Trainer._drift(t, 1.0, 0.3) for _ in range(10)]
+    assert msgs[-1].startswith("策略连续 10 轮变乱") and not any(msgs[:-1]), msgs
+    return msgs[-1]
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
     tot = check_combat_shape()
     ec = check_econ()
+    dr = check_drift()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
-          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}")
+          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}")
     return 0
 
 

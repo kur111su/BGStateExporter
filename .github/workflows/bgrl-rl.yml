@@ -34,6 +34,7 @@ jobs:
       - name: Tiny PPO run
         run: |
           python -X utf8 bgrl/bg.py train --smoke --threads 2
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --resume --restore bgrl/runs/_smoke/snapshots/it00002.pt
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --recipe bgrl/configs/v3.json
       - name: Demos from the replay fixture + tiny PPO run with imitation

@@ -53,6 +53,7 @@ def parse(argv=None):
     ap.add_argument("--stage", action="store_true", help="新阶段：以当前策略为锚加 KL 约束")
     ap.add_argument("--init", default="", help="新训练从这个检查点 / 快照的参数开始（已有 latest.pt 时忽略）")
     ap.add_argument("--recipe", default="", help="配方文件（JSON，例如 configs/v3.json）：训练目录和参数，命令行参数优先")
+    ap.add_argument("--restore", default="", help="接着训练目录练，但模型退回这个快照（例如 runs/v3/snapshots/it12450.pt）")
     for f in dataclasses.fields(Config):
         if f.name == "run_dir":
             continue
@@ -95,6 +96,8 @@ def main() -> int:
     if a.resume and latest.exists():
         tr.load(latest)
         print(f"从 {latest} 继续（第 {tr.iter} 轮）")
+        if a.restore:
+            tr.restore(a.restore)
     elif a.init:
         tr.init_from(a.init)
     if a.stage:
@@ -106,7 +109,7 @@ def main() -> int:
             return
         keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
                 "eval_place", "eval_top1", "eval_boost_place", "eval_boost_top1", "snapshot", "snapshot_dist", "snapshot_tier",
-                "bc", "bc_scale", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "human_top1", "human_top1_train", "human_nll", "human_upgrade", "human_end", "human_sell", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "boost_strength", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac")
+                "bc", "bc_scale", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "human_top1", "human_top1_train", "human_nll", "human_upgrade", "human_end", "human_sell", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "drift", "boost_strength", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac")
         line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
         print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
     tr.train(cfg.iters, on_log=show)
