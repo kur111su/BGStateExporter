@@ -61,6 +61,10 @@ def main() -> int:
         src = None
     run = Path(a.ckpt).resolve().parent.name
     it = info.get("iter")
+    if it is None:                                     # 快照文件只有参数：轮数从文件名读（it12450.pt）
+        import re
+        m = re.search(r"it(\d+)", Path(a.ckpt).name)
+        it = int(m.group(1)) if m else None
     meta = {"ckpt": str(Path(a.ckpt).resolve()), "run": run, "iter": it,
             "model_version": f"{a.name}-it{it}" if it is not None else a.name,
             "model_kwargs": info["size"], "layout": dict(c.layout()),
