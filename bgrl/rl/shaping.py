@@ -4,6 +4,8 @@
   upgrade_starve_penalty 等       金币流向：落后时把升本的钱花掉、钱够升本却结束回合扣分；剩钱扣分
   refresh_waste_penalty           无效刷新：刷新后什么都没买就又刷新 / 结束回合
   comp_bonus                      阵容成型：第 comp_from_turn 回合起，结束回合按场面配合程度加分（rl/comp.py 的参照）
+  econ_bonus                      经济：结束回合时“存下的钱”（下回合额外金币 + 2 × 永久金币上限加成）比这局上次多了
+                                  多少就加多少（势能差，和 combat_bonus 一起用：钱花出去变成场面，由阵容强度那项接着算）
   combat_bonus                    阵容强度：结束回合时让引擎拿当前场面打一组同期高分阵容（rl/boardsim.py），
                                   胜率比上次量的时候涨了多少就加多少（势能差：整局加起来 = 最后的强度 - 第一次的强度）
 
@@ -21,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from tg.actions import A_BUY, A_DARK_GIFT, A_END, A_REFRESH, A_SELL, A_UPGRADE
-from tg.obs import C_BOARD, F_GOLD, F_TIER, F_UPCOST
+from tg.obs import C_BOARD, F_GOLD, F_TIER, F_UPCOST, gold_next, max_gold_bonus
 
 from .comp import load_comp_refs
 from .league import load_real_profile
@@ -43,6 +45,8 @@ class ShapingMixin:
         self.cs_ep = np.full(self.n_slots, -1, dtype=np.int64)
         self.cs_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.cs_rng = random.Random(cfg.seed + 11)
+        self.ec_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 经济（econ_bonus）：每个座位上次的存款
+        self.ec_prev = np.zeros(self.n_slots, dtype=np.float64)
         if cfg.combat_bonus > 0:
             self.judge = self._make_judge()
 
@@ -141,6 +145,29 @@ class ShapingMixin:
             self._gold_shape(slots, f, ak, r0)
         if c is not None and self.cfg.comp_bonus > 0:
             self._comp_shape(f, c, ak, r0)
+        if getattr(self.cfg, "econ_bonus", 0) > 0 and f.shape[1] > 9:
+            self._econ_shape(slots, f, ak, r0)
+        return r0
+
+    def _econ_shape(self, slots, f, ak, r0):
+        """经济奖励（econ_bonus）：结束回合时存款 E = 下回合额外金币 + 2 × 永久金币上限加成，
+        奖励 = econ_bonus × (E - 这局上次结束回合时的 E)。例：场上有布莱恩·铜须时打出南海卖艺者，下回合多 2 块
+        （没有布莱恩只多 1 块）→ 当回合 +2 × econ_bonus；下回合钱到手、E 回到 0，扣回来——
+        钱换成了更强的场面就由阵容强度（combat_bonus）补上，没换成就白忙。整局加起来 ≈ 0，只是把功劳记在产钱那一步。"""
+        ends = np.flatnonzero(ak == A_END)
+        if not len(ends):
+            return r0
+        e = gold_next(f[ends]) + 2 * max_gold_bonus(f[ends])
+        for j, ej in zip(ends, e):
+            s = int(slots[j])
+            ep = int(self.rollout.ep[s])
+            if self.ec_ep[s] == ep:
+                r0[j] += self.cfg.econ_bonus * (float(ej) - self.ec_prev[s])
+            else:
+                r0[j] += self.cfg.econ_bonus * float(ej)
+            self.ec_ep[s], self.ec_prev[s] = ep, float(ej)
+            self.mix["econ_sum"] += float(ej)
+            self.mix["econ_n"] += 1
         return r0
 
     def _comp_tables(self):

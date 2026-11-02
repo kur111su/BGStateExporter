@@ -142,6 +142,8 @@ def main() -> int:
     print("最好的配合：" + "、".join(f"{p[2]}+{p[3]} +{p[0]:.2f}（{p[1]}）" for p in v["pairs"][:15]))
     weak = sorted((k for k, r in cs.items() if r["n"] >= 30), key=lambda k: cs[k]["contrib"])[:12]
     print("出现很多但几乎没贡献：" + "、".join(f"{cs[k]['name']} {cs[k]['contrib']:+.2f}" for k in weak))
+    print("（只量战斗：布莱恩·铜须这类卡的价值在招募阶段——战吼触发两次，南海卖艺者下回合 2 块、加攻防的战吼翻倍——"
+          "这里看不出来；训练里由经济奖励 econ_bonus、阵容强度的势能差和 --pro-weights 的 engine 算）")
     return 0
 
 

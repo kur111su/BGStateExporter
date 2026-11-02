@@ -117,6 +117,29 @@ def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int 
     return f, c, m, cand
 
 
+# ---------------- 引擎卡：放大某一类效果的随从 ----------------
+
+ENGINES = {"battlecry": ("BG_LOE_077", "TB_BaconUps_045", "TB_BaconUps_045t"),      # 布莱恩·铜须：战吼触发两次 / 三次
+           "deathrattle": ("BG25_354", "BG25_354_G")}                              # 提图斯·瑞文戴尔：亡语多触发
+
+
+def _effects(card: dict) -> set:
+    """一张卡有哪些能被引擎卡放大的效果（按英文说明里的关键词）。"""
+    t = str(card.get("text") or "")
+    if card.get("kind") != "minion":
+        return set()
+    return {k for k, w in (("battlecry", "Battlecry"), ("deathrattle", "Deathrattle")) if w in t}
+
+
+def engine_table() -> dict:
+    """卡牌 ID（去掉 _G）→ 它放大哪类效果。"""
+    out = {}
+    for kind, ids in ENGINES.items():
+        for cid in ids:
+            out.setdefault(cid[:-2] if cid.endswith("_G") else cid, set()).add(kind)
+    return out
+
+
 # ---------------- 按买的是什么卡挑示范（--bc-weights / --pro-weights 的 key、eco、tribe、syn） ----------------
 
 def bought_in(d, which: str, root: Path | None = None):
@@ -125,7 +148,9 @@ def bought_in(d, which: str, root: Path | None = None):
       tribe      是随从，而且场上已经有 ≥ 2 个和它同种族的随从（全种族算任何种族）——围绕主种族成型
       syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动
       simkey     在引擎实测的关键卡里（rl/sim_value.json，bg.py simcards：拿掉它胜率掉得多）
-      simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）"""
+      simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）
+      engine     买的卡被场上的“引擎卡”放大：场上有布莱恩·铜须时买战吼随从、有提图斯·瑞文戴尔时买亡语随从——
+                 布莱恩让战吼触发两次（南海卖艺者下回合 2 块钱、各种加攻防的战吼翻倍），打战吼随从换经济 / 换身材"""
     if "c" not in d:
         return None
     from tg.catalog import base_of_index, catalog, n_cards
@@ -137,6 +162,19 @@ def bought_in(d, which: str, root: Path | None = None):
     buy, slot = buy[ok], slot[ok]
     cards = d["c"][buy, C_SHOP + slot]
     sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which == "engine":
+        det = catalog()
+        amp = engine_table()
+        kinds = {i: _effects(det.get(b) or {}) for i, b in base.items()}
+        for row, x in zip(buy, cards):
+            want = kinds.get(int(x)) or set()
+            if not want:
+                continue
+            have = set()
+            for y in d["c"][row, C_BOARD:C_BOARD + 7]:
+                have |= amp.get(base.get(int(y)), set())
+            sel[row] = bool(want & have)
+        return sel
     if which in ("simkey", "simsyn"):
         from .comp import load_sim_refs
         if not (root / "sim_value.json").exists():

@@ -7,6 +7,8 @@
   F_TURN    回合 / TURN_SCALE          F_GOLD    金币 / GOLD_SCALE
   F_TIER    酒馆等级 / TIER_SCALE      F_UPCOST  升本费 / GOLD_SCALE（满级 0；费用可能被减到 0）
   F_GIFT    黑暗之赐现在能不能买（> 0 能）
+  F_GOLD_NEXT  下回合额外的金币 / BONUS_SCALE（南海卖艺者之类的战吼；有布莱恩·铜须时翻倍）
+  F_MAX_BONUS  金币上限额外加了几 / BONUS_SCALE（永久）
   F_BOARD   场上随从起点，每格 MINION_F 个；格内 MF_ATK / MF_HP = 攻 / 血 ÷ 10，MF_GOLDEN = 金色
   F_CHOICE  待选项起点，每格 ITEM_F 个
 卡牌编号（cards）：
@@ -18,6 +20,7 @@ import numpy as np
 
 TURN_SCALE, GOLD_SCALE, TIER_SCALE = 20, 10, 6
 F_TURN, F_GOLD, F_TIER, F_UPCOST, F_GIFT = 0, 7, 10, 11, 22
+F_MAX_BONUS, F_GOLD_NEXT, BONUS_SCALE = 8, 9, 5      # 用调试命令 set_player 改字段、看观察哪一位变了核对过
 MINION_F, ITEM_F = 31, 40
 F_BOARD = 68
 MF_ATK, MF_HP, MF_GOLDEN = 1, 2, 5
@@ -60,3 +63,13 @@ def board_stats(f, slot: int) -> tuple[int, int]:
     """(攻, 血)：场上第 slot 格随从。"""
     base = F_BOARD + MINION_F * slot
     return int(round(float(f[base + MF_ATK]) * 10)), int(round(float(f[base + MF_HP]) * 10))
+
+
+def gold_next(f):
+    """下回合额外的金币。"""
+    return _scaled(f, F_GOLD_NEXT, BONUS_SCALE)
+
+
+def max_gold_bonus(f):
+    """金币上限额外加了几（永久）。"""
+    return _scaled(f, F_MAX_BONUS, BONUS_SCALE)

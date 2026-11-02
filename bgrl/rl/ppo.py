@@ -174,6 +174,9 @@ class Config:
     combat_boards: int = 12
     combat_fights: int = 3
     combat_frac: float = 1.0
+    # 经济奖励（见 _econ_shape）：结束回合时存下的钱（下回合额外金币 + 2 × 永久金币上限加成）每多 1 块加这么多，
+    # 下回合钱到手时扣回来（势能差）。布莱恩·铜须让南海卖艺者之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
+    econ_bonus: float = 0.0
     # 模仿时把酒馆里随从的顺序随机打乱（买的那格跟着换）：酒馆顺序本来就不影响什么，背题的时候却会记住
     # “第几格买”——第 8000–11600 轮训练示范命中率 0.72 → 0.85，留出局一直 0.37
     demo_shop_shuffle: bool = False
@@ -842,6 +845,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             if mx.get("cs_n"):                         # 阵容强度：对同期高分阵容的平均胜率（全部 / 第 9 回合起）
                 rec.update(cs_wr=round(mx["cs_sum"] / mx["cs_n"], 3), cs_n=int(mx["cs_n"]), t_combat=round(mx["t_combat"], 1),
                            cs_late=round(mx["cs_late_sum"] / mx["cs_late_n"], 3) if mx.get("cs_late_n") else None)
+            if mx.get("econ_n"):                       # 结束回合时平均存下的钱（下回合额外金币 + 2 × 金币上限加成）
+                rec["econ"] = round(mx["econ_sum"] / mx["econ_n"], 3)
             if mx.get("env_rebuild"):
                 rec["env_rebuild"] = mx["env_rebuild"]
             self.mix = defaultdict(int)

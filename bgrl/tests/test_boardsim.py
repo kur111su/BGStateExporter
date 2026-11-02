@@ -1,4 +1,4 @@
-"""阵容强度（rl/boardsim.py）、阵容强度奖励（rl/shaping.py _combat_shape）、模仿时打乱酒馆顺序（rl/demos.permute_shop）。"""
+"""阵容强度（rl/boardsim.py）、阵容强度 / 经济奖励（rl/shaping.py _combat_shape / _econ_shape）、模仿时打乱酒馆顺序（rl/demos.permute_shop）、引擎卡（rl/demos.bought_in engine）。"""
 from __future__ import annotations
 
 import json
@@ -123,11 +123,53 @@ def check_combat_shape():
     return tot
 
 
+def check_econ():
+    """布莱恩·铜须让南海卖艺者的“下回合获得 1 枚铸币”触发两次：观察里读出的下回合额外金币 1 → 2；
+    经济奖励按存款的势能差给；买战吼随从时场上有布莱恩算 engine。"""
+    from rl.demos import KINDS, bought_in
+    from rl.ppo import Trainer
+    from tg.actions import A_BUY, A_END
+    from tg.catalog import card_id, n_cards
+    from tg.obs import gold_next
+
+    def busker(brann: bool):
+        g = _game_at(3, 5)
+        for z in ("board", "hand"):
+            g.debug(json.dumps({"cmd": "clear_zone", "p": 0, "zone": z}))
+        if brann:
+            g.debug(json.dumps({"cmd": "add_minion", "p": 0, "zone": "board", "card": "BG_LOE_077"}))
+        g.debug(json.dumps({"cmd": "add_minion", "p": 0, "zone": "hand", "card": "BG26_135"}))
+        m = np.frombuffer(g.legal_mask(0), dtype=np.uint8)
+        g.step(0, next(a for a in range(46, 126) if m[a]))
+        return int(gold_next(_obs(g)[0]))
+    assert (busker(False), busker(True)) == (1, 2), (busker(False), busker(True))
+
+    t = SimpleNamespace(cfg=SimpleNamespace(econ_bonus=0.01), rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)),
+                        mix=defaultdict(float), ec_ep=np.full(1, -1, dtype=np.int64), ec_prev=np.zeros(1))
+    f = np.zeros((1, 16), np.float32)
+    got = []
+    for gn in (0, 2, 0, 1):                            # 存了 2 块 → 花掉 → 存 1 块
+        f[0, 9] = gn / 5
+        got.append(round(float(Trainer._econ_shape(t, np.array([0]), f, np.array([A_END]), np.zeros(1))[0]), 6))
+    assert got == [0.0, 0.02, -0.02, 0.01], got
+
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    c = np.zeros((2, 124), np.int32)
+    c[:, 36] = idx["BG26_135"]                         # 酒馆第 1 格：南海卖艺者（战吼）
+    c[0, 19] = idx["BG_LOE_077"]                       # 第 1 局场上有布莱恩
+    c[1, 19] = idx["BG26_135"]
+    d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
+    assert bought_in(d, "engine").tolist() == [True, False]
+    return got
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
     tot = check_combat_shape()
-    print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}")
+    ec = check_econ()
+    print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
+          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec}")
     return 0
 
 

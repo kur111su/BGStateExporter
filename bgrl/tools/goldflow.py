@@ -396,7 +396,7 @@ def buy_style(buy_rows: list) -> dict:
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
-    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn"):
+    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine"):
         sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
@@ -434,6 +434,31 @@ def show_picks(picks, sells: dict) -> dict | None:
         print("  模型最常卖：" + "、".join(f"{(hc.get(k) or {}).get('name', k)} {v}" for k, v in top_sold))
     return {"key_share": round(kb / max(1, picks.n), 3), "corr": round(corr, 3) if corr is not None else None,
             "miss": [[name(k), m, p] for k, m, p in miss], "over": [[name(k), m, p] for k, m, p in over]}
+
+
+def show_engines(finals: list[dict]) -> dict | None:
+    """引擎卡（布莱恩·铜须：战吼触发两次；提图斯·瑞文戴尔：亡语多触发）上场的比例，以及有它的局里场上能被放大的随从有几个。"""
+    from rl.demos import ENGINES, _effects
+    from tg.catalog import catalog
+    fb = [x for x in finals if len(x["board"]) >= 5]
+    if not fb:
+        return None
+    det = catalog()
+    hp = ROOT / "rl" / "h13_profile.json"
+    h13 = {r[0]: r[2] for r in (json.loads(hp.read_text(encoding="utf-8"))["final"]["cards"] if hp.exists() else [])}
+    out, parts = {}, []
+    for kind, ids, zh, eff in (("battlecry", ENGINES["battlecry"], "布莱恩·铜须", "战吼"),
+                               ("deathrattle", ENGINES["deathrattle"], "提图斯·瑞文戴尔", "亡语")):
+        base = {i[:-2] if i.endswith("_G") else i for i in ids}
+        with_e = [x for x in fb if base & set(x["board"])]
+        n_amp = [sum(kind in _effects(det.get(c) or {}) for c in x["board"]) for x in with_e]
+        ref = max((h13.get(i, 0) for i in base), default=0)
+        out[kind] = {"share": round(len(with_e) / len(fb), 3), "amplified": round(float(np.mean(n_amp)), 2) if n_amp else None,
+                     "h13": ref}
+        parts.append(f"{zh} 上场 {len(with_e) / len(fb):.0%}（万三 {ref:.0%}）" +
+                     (f"，这些局场上{eff}随从平均 {np.mean(n_amp):.1f} 个" if n_amp else ""))
+    print("  引擎卡：" + "；".join(parts))
+    return out
 
 
 def show_simcards(picks) -> dict | None:
@@ -517,11 +542,15 @@ def main() -> int:
         ps = (json.loads(cvp.read_text(encoding="utf-8")).get("style") if cvp.exists() else None) or \
             {"tribe": 0.36, "syn": 0.07, "key": 0.59, "eco": 0.11}
         zh = {"tribe": "围绕种族", "syn": "和场上常见搭配", "key": "关键卡", "eco": "经济卡",
-              "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配"}
+              "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配",
+              "engine": "被场上引擎卡放大（有布莱恩买战吼 / 有提图斯买亡语）"}
         print("  买法：" + "、".join(f"{zh[w]} {bs[w]:.0%}" + (f"（高手 {ps[w]:.0%}）" if w in ps else "")
                                   for w in zh if w in bs))
         if pk is not None:
             pk["style"] = bs
+    eng = show_engines(info.get("finals") or [])
+    if comps is not None and eng:
+        comps["engines"] = eng
     sv = show_simcards(info.get("picks"))
     if pk is not None and sv:
         pk["sim"] = sv
