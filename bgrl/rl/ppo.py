@@ -174,8 +174,9 @@ class Config:
     combat_boards: int = 12
     combat_fights: int = 3
     combat_frac: float = 1.0
-    # 经济奖励（见 _econ_shape）：结束回合时存下的钱（下回合额外金币 + 2 × 永久金币上限加成）每多 1 块加这么多，
-    # 下回合钱到手时扣回来（势能差）。布莱恩·铜须让南海卖艺者之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
+    # 经济奖励（见 _econ_shape）：结束回合时存下的资源（下回合额外金币 + 2 × 永久金币上限加成 + 手牌价值）每多 1 块加这么多，
+    # 下回合钱到手 / 牌打出去时扣回来，一局结束时扣回最后的存款（纯势能差）。布莱恩·铜须让南海卖艺者、
+    # 剃刀沼泽地卜师（鲜血宝石）、竞技表演者（发现法术）之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
     econ_bonus: float = 0.0
     # 模仿时把酒馆里随从的顺序随机打乱（买的那格跟着换）：酒馆顺序本来就不影响什么，背题的时候却会记住
     # “第几格买”——第 8000–11600 轮训练示范命中率 0.72 → 0.85，留出局一直 0.37
@@ -386,7 +387,7 @@ class Trainer(ShapingMixin, ImitationMixin):
               flush=True)
         for i in range(env.n_slots):
             if self.role[off + i] == 0 and self.rollout.last[off + i] >= 0:
-                self.rollout.reward(off + i, 0.0, True, 0)
+                self.rollout.reward(off + i, self._econ_close(off + i), True, 0)
         seed = (cfg.seed if name == "bot" else cfg.seed + 10**6) + 7919 * (self.iter + 1) + self.env_rebuilds
         new = BatchEnv(env.n_games, seed=seed, controlled=env.controlled, threads=cfg.threads, config=cfg.rules())
         self.envs[ei] = (name, new, off)
@@ -490,7 +491,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     continue
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
-                        self.rollout.reward(off + int(i), rewards[i], bool(dones[i]), info["placement"][i])
+                        r_end = rewards[i] + (self._econ_close(off + int(i)) if dones[i] else 0.0)
+                        self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i])
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             self.stats.append((name, int(info["placement"][i])))
                             self.finished += 1

@@ -4,8 +4,8 @@
   upgrade_starve_penalty 等       金币流向：落后时把升本的钱花掉、钱够升本却结束回合扣分；剩钱扣分
   refresh_waste_penalty           无效刷新：刷新后什么都没买就又刷新 / 结束回合
   comp_bonus                      阵容成型：第 comp_from_turn 回合起，结束回合按场面配合程度加分（rl/comp.py 的参照）
-  econ_bonus                      经济：结束回合时“存下的钱”（下回合额外金币 + 2 × 永久金币上限加成）比这局上次多了
-                                  多少就加多少（势能差，和 combat_bonus 一起用：钱花出去变成场面，由阵容强度那项接着算）
+  econ_bonus                      经济：结束回合时“存下的资源”（下回合额外金币 + 2 × 永久金币上限加成 + 手牌价值）比这局上次
+                                  多了多少就加多少，一局结束时扣回最后的存款（纯势能差，整局和为 0；资源变成场面由 combat_bonus 接着算）
   combat_bonus                    阵容强度：结束回合时让引擎拿当前场面打一组同期高分阵容（rl/boardsim.py），
                                   胜率比上次量的时候涨了多少就加多少（势能差：整局加起来 = 最后的强度 - 第一次的强度）
 
@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from tg.actions import A_BUY, A_DARK_GIFT, A_END, A_REFRESH, A_SELL, A_UPGRADE
-from tg.obs import C_BOARD, F_GOLD, F_TIER, F_UPCOST, gold_next, max_gold_bonus
+from tg.obs import C_BOARD, C_HAND, F_GOLD, F_TIER, F_UPCOST, N_HAND, gold_next, max_gold_bonus
 
 from .comp import load_comp_refs
 from .league import load_real_profile
@@ -146,29 +146,65 @@ class ShapingMixin:
         if c is not None and self.cfg.comp_bonus > 0:
             self._comp_shape(f, c, ak, r0)
         if getattr(self.cfg, "econ_bonus", 0) > 0 and f.shape[1] > 9:
-            self._econ_shape(slots, f, ak, r0)
+            self._econ_shape(slots, f, ak, r0, c)
         return r0
 
-    def _econ_shape(self, slots, f, ak, r0):
-        """经济奖励（econ_bonus）：结束回合时存款 E = 下回合额外金币 + 2 × 永久金币上限加成，
-        奖励 = econ_bonus × (E - 这局上次结束回合时的 E)。例：场上有布莱恩·铜须时打出南海卖艺者，下回合多 2 块
-        （没有布莱恩只多 1 块）→ 当回合 +2 × econ_bonus；下回合钱到手、E 回到 0，扣回来——
-        钱换成了更强的场面就由阵容强度（combat_bonus）补上，没换成就白忙。整局加起来 ≈ 0，只是把功劳记在产钱那一步。"""
+    def _hand_values(self):
+        """手牌每张值几块钱（按卡牌编号查表）：随从 3（金色 6）；酒馆法术按它的价钱；
+        不要钱的法术：三连奖励 4、其它（鲜血宝石之类）0.5。"""
+        if getattr(self, "_hv", None) is None:
+            from tg.catalog import base_id, card_id, catalog, is_golden_id, n_cards
+            det = catalog()
+            hv = np.zeros(n_cards(), dtype=np.float64)
+            for i in range(1, n_cards()):
+                cid = card_id(i)
+                x = det.get(cid) or det.get(base_id(cid)) or {}
+                if x.get("kind") == "minion":
+                    hv[i] = 6.0 if is_golden_id(cid) else 3.0
+                elif x.get("kind") in ("spell", "tavern_spell"):
+                    cost = float(x.get("cost") or 0)
+                    hv[i] = cost if cost > 0 else 4.0 if "Triples" in cid else 0.5
+            self._hv = hv
+        return self._hv
+
+    def _econ_value(self, f, c=None):
+        """存款 E（金币当量）：下回合额外金币 + 2 × 永久金币上限加成 + 手牌的价值（c 给了才算）。"""
+        e = (gold_next(f) + 2 * max_gold_bonus(f)).astype(np.float64)
+        if c is not None:
+            hv = ShapingMixin._hand_values(self)
+            h = np.asarray(c)[:, C_HAND:C_HAND + N_HAND].astype(np.int64)
+            e = e + np.where(h > 0, hv[np.clip(h, 0, len(hv) - 1)], 0.0).sum(1)
+        return e
+
+    def _econ_shape(self, slots, f, ak, r0, c=None):
+        """经济奖励（econ_bonus）：结束回合时存款 E = 下回合额外金币 + 2 × 永久金币上限加成 + 手牌的价值，
+        奖励 = econ_bonus × (E - 这局上次结束回合时的 E)；这一局结束时把最后的 E 扣回来（_econ_close），
+        所以整局加起来正好是 0，只是把功劳记在产出资源的那一步——囤牌、囤钱到最后都不白拿。
+        例：场上有布莱恩·铜须时打出南海卖艺者，下回合多 2 块（没有布莱恩 1 块）；打出钢铁场地管理员拿 4 张强固
+        （没有布莱恩 2 张）、竞技表演者发现 2 张酒馆法术（没有布莱恩 1 张）→ 当回合拿到翻倍的功劳。
+        下回合钱到手 / 牌打出去，E 减少、扣回来——换成了更强的场面由阵容强度（combat_bonus）补上。"""
         ends = np.flatnonzero(ak == A_END)
         if not len(ends):
             return r0
-        e = gold_next(f[ends]) + 2 * max_gold_bonus(f[ends])
+        e = ShapingMixin._econ_value(self, f[ends], None if c is None else np.asarray(c)[ends])
         for j, ej in zip(ends, e):
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
-            if self.ec_ep[s] == ep:
-                r0[j] += self.cfg.econ_bonus * (float(ej) - self.ec_prev[s])
-            else:
-                r0[j] += self.cfg.econ_bonus * float(ej)
+            prev = self.ec_prev[s] if self.ec_ep[s] == ep else 0.0
+            r0[j] += self.cfg.econ_bonus * (float(ej) - prev)
             self.ec_ep[s], self.ec_prev[s] = ep, float(ej)
             self.mix["econ_sum"] += float(ej)
             self.mix["econ_n"] += 1
         return r0
+
+    def _econ_close(self, s: int) -> float:
+        """座位 s 这一局结束：返回要加在最后一步上的奖励（- econ_bonus × 最后一次的存款），之后清零。"""
+        bonus = getattr(self.cfg, "econ_bonus", 0)
+        if bonus <= 0 or self.ec_ep[s] != int(self.rollout.ep[s]):
+            return 0.0
+        v = -bonus * self.ec_prev[s]
+        self.ec_ep[s], self.ec_prev[s] = -1, 0.0
+        return v
 
     def _comp_tables(self):
         """阵容打分用的查表（按卡牌编号）：种族位掩码（全种族 = 所有位）、是不是随从、关键卡、高手常见搭配矩阵。"""

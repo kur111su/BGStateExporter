@@ -144,7 +144,7 @@ def check_econ():
         return int(gold_next(_obs(g)[0]))
     assert (busker(False), busker(True)) == (1, 2), (busker(False), busker(True))
 
-    t = SimpleNamespace(cfg=SimpleNamespace(econ_bonus=0.01), rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)),
+    t = SimpleNamespace(cfg=SimpleNamespace(econ_bonus=0.01), rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)), _hv=None,
                         mix=defaultdict(float), ec_ep=np.full(1, -1, dtype=np.int64), ec_prev=np.zeros(1))
     f = np.zeros((1, 16), np.float32)
     got = []
@@ -153,6 +153,31 @@ def check_econ():
         got.append(round(float(Trainer._econ_shape(t, np.array([0]), f, np.array([A_END]), np.zeros(1))[0]), 6))
     assert got == [0.0, 0.02, -0.02, 0.01], got
 
+    assert abs(Trainer._econ_close(t, 0) + 0.01) < 1e-12 and Trainer._econ_close(t, 0) == 0.0   # 一局结束扣回最后的 1 块
+
+    # 手牌也算存款：有布莱恩时“获取 / 发现”的战吼多给一份
+    def hand_e(card: str, brann: bool) -> float:
+        g = _game_at(3, 5)
+        for z in ("board", "hand"):
+            g.debug(json.dumps({"cmd": "clear_zone", "p": 0, "zone": z}))
+        if brann:
+            g.debug(json.dumps({"cmd": "add_minion", "p": 0, "zone": "board", "card": "BG_LOE_077"}))
+        g.debug(json.dumps({"cmd": "add_minion", "p": 0, "zone": "hand", "card": card}))
+        m = np.frombuffer(g.legal_mask(0), dtype=np.uint8)
+        g.step(0, next(a for a in range(46, 126) if m[a]))
+        for _ in range(4):                             # 发现：选第一个
+            m = np.frombuffer(g.legal_mask(0), dtype=np.uint8)
+            ch = [a for a in range(30, 46) if m[a]]
+            if not ch:
+                break
+            g.step(0, ch[0])
+        f, c, _ = _obs(g)
+        return float(Trainer._econ_value(t, f[None], c[None])[0])
+    gems = (hand_e("BG20_100", False), hand_e("BG20_100", True))         # 剃刀沼泽地卜师：2 / 4 张鲜血宝石
+    fort = (hand_e("BG27_000", False), hand_e("BG27_000", True))         # 钢铁场地管理员：2 / 4 张强固（1 块一张）
+    disc = (hand_e("BG28_550", False), hand_e("BG28_550", True))         # 竞技表演者：发现 1 / 2 张酒馆法术
+    assert gems == (1.0, 2.0) and fort == (2.0, 4.0) and disc[1] > disc[0] > 0, (gems, fort, disc)
+
     idx = {card_id(i): i for i in range(1, n_cards())}
     c = np.zeros((2, 124), np.int32)
     c[:, 36] = idx["BG26_135"]                         # 酒馆第 1 格：南海卖艺者（战吼）
@@ -160,7 +185,7 @@ def check_econ():
     c[1, 19] = idx["BG26_135"]
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "engine").tolist() == [True, False]
-    return got
+    return got, gems, fort, disc
 
 
 def main() -> int:
@@ -169,7 +194,7 @@ def main() -> int:
     tot = check_combat_shape()
     ec = check_econ()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
-          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec}")
+          f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}")
     return 0
 
 
