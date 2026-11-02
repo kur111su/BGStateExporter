@@ -21,6 +21,8 @@ from collections import deque
 
 import numpy as np
 
+from tg.catalog import base_id, is_golden_id
+
 try:                                   # orjson 快 5–10 倍（没装就用标准库）
     import orjson
 
@@ -260,10 +262,10 @@ class ProBoardBooster(BotBooster):
                         self.failed += 1
                         continue
                     for cid, atk, hp in entry["board"][:7]:
-                        gold = cid.endswith("_G")
+                        gold = is_golden_id(cid)
                         try:
                             G.debug(_dumps({"cmd": "add_minion", "p": seat, "zone": "board",
-                                            "card": cid[:-2] if gold else cid, "golden": gold,
+                                            "card": base_id(cid), "golden": gold,
                                             "atk": max(0, int(atk)), "hp": max(1, int(hp))}))
                         except Exception:                      # noqa: BLE001
                             self.failed += 1
@@ -279,7 +281,8 @@ class ProBoardBooster(BotBooster):
                     self.n_boosts += 1
                     changed = True
             except BaseException as ex:                        # noqa: BLE001
-                if type(ex).__name__ != "PanicException":
+                from tg.actions import is_panic
+                if not is_panic(ex):
                     raise
                 self.failed += 1
         return changed

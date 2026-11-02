@@ -14,10 +14,9 @@ import numpy as np
 from tg.actions import (A_ACTIVATE, A_BUY, A_CANCEL, A_CHOOSE, A_DARK_GIFT, A_END, A_FREEZE, A_HERO_POWER,
                         A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE, N_ACTIONS)
 
-C_POWERS, C_BOARD, C_HAND, C_SHOP, C_CHOICE = 1, 19, 26, 36, 44
-NB, NH, NS, NC, NPOS = 7, 10, 8, 16, 8
-F_TIER, F_GIFT = 10, 22
-F_CHOICE, IF = 1005, 40                                  # 待选项的浮点特征从第 1005 个开始，每格 40 个
+from tg.obs import C_BOARD, C_CHOICE, C_HAND, C_POWERS, C_SHOP, F_CHOICE, F_GIFT, F_TIER  # noqa: F401
+from tg.obs import ITEM_F as IF  # noqa: E402
+from tg.obs import N_BOARD as NB, N_CHOICE as NC, N_HAND as NH, N_POS as NPOS, N_SHOP as NS  # noqa: E402
 
 
 def super_mask(f: np.ndarray, c: np.ndarray) -> np.ndarray:

@@ -129,7 +129,8 @@ def sim_profile_batched(policy_batch, games: int = 16, seed: int = 0, config: di
                 except ValueError:
                     pass
                 except BaseException as ex:            # noqa: BLE001 —— 引擎内部出错（PanicException）：这局不要了
-                    if type(ex).__name__ != "PanicException":
+                    from tg.actions import is_panic
+                    if not is_panic(ex):
                         raise
                     dead.add(gi)
         for gi, g in enumerate(gs):

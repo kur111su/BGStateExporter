@@ -18,7 +18,7 @@ import json
 import statistics as st
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -26,10 +26,10 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
-from tg.actions import (A_ACTIVATE, A_BUY, A_CANCEL, A_CHOOSE, A_DARK_GIFT, A_END, A_FREEZE, A_HERO_POWER,  # noqa: E402
-                        A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE)
+from tg.actions import A_BUY, A_SELL, action_family  # noqa: E402
+from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
+from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, tier, turn, up_cost  # noqa: E402
 
-F_GOLD, F_TIER, F_UPCOST = 7, 10, 11
 PROFILE = ROOT / "rl" / "pro_profile.json"
 COLS = ("upgrade", "buy", "refresh", "activate", "dark_gift", "hero_power", "other")
 ZH = {"upgrade": "升本", "buy": "买", "refresh": "刷新", "activate": "发动", "dark_gift": "黑暗之赐",
@@ -37,29 +37,9 @@ ZH = {"upgrade": "升本", "buy": "买", "refresh": "刷新", "activate": "发�
 
 
 def kind_of(a: int) -> str:
-    if a == A_END:
-        return "end"
-    if a == A_REFRESH:
-        return "refresh"
-    if a == A_UPGRADE:
-        return "upgrade"
-    if a in (A_HERO_POWER, A_HERO_POWER + 1):
-        return "hero_power"
-    if a == A_DARK_GIFT:
-        return "dark_gift"
-    if a in (A_FREEZE, A_CANCEL) or a >= A_MOVE:
-        return "noop"
-    if A_BUY <= a < A_SELL:
-        return "buy"
-    if A_SELL <= a < A_ACTIVATE:
-        return "sell"
-    if A_ACTIVATE <= a < A_CHOOSE:
-        return "activate"
-    if A_CHOOSE <= a < A_PLAY:
-        return "choose"
-    if A_PLAY <= a < A_MAGNETIZE:
-        return "play"
-    return "magnetize"
+    """记账类别：冻结 / 取消 / 换位置不花钱，记成 noop；其它就是动作类别（tg.actions.action_family）。"""
+    fam = action_family(a)
+    return "noop" if fam in ("freeze", "cancel", "move") else fam
 
 
 class TurnLog:
@@ -200,16 +180,16 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             a = np.asarray(act(f, obs["cards"][ready], m))
             for k, i in enumerate(ready):
                 fi = f[k]
-                last_cards[i] = obs["cards"][i][19:26].copy()
+                ci = obs["cards"][i]
+                last_cards[i] = ci[C_BOARD:C_BOARD + N_BOARD].copy()
                 ak = int(a[k])
-                if 8 <= ak < 16:
-                    picks.add(obs["cards"][i][36:44], ak - 8)
-                    buy_rows.append((obs["cards"][i].copy(), ak))
-                elif 16 <= ak < 23 and obs["cards"][i][19 + ak - 16] > 0:
-                    sid = picks._id(int(obs["cards"][i][19 + ak - 16]))
+                if A_BUY <= ak < A_BUY + N_SHOP:
+                    picks.add(ci[C_SHOP:C_SHOP + N_SHOP], ak - A_BUY)
+                    buy_rows.append((ci.copy(), ak))
+                elif A_SELL <= ak < A_SELL + N_BOARD and ci[C_BOARD + ak - A_SELL] > 0:
+                    sid = picks._id(int(ci[C_BOARD + ak - A_SELL]))
                     sells[sid] = sells.get(sid, 0) + 1
-                logs[i].see(int(round(fi[0] * 20)), int(round(fi[F_GOLD] * 10)), int(round(fi[F_TIER] * 6)),
-                            int(round(fi[F_UPCOST] * 10)), int(a[k]))
+                logs[i].see(int(turn(fi)), int(gold(fi)), int(tier(fi)), int(up_cost(fi)), int(a[k]))
             actions[ready] = a
         _, dones, inf = env.step(actions)
         for i in np.flatnonzero(dones):
@@ -228,13 +208,12 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
     info["picks"], info["sells"], info["buy_rows"] = picks, sells, buy_rows
-    import taverngym
     finals = []
     for i, row in enumerate(last_cards):
         if row is None:
             continue
-        ids = [taverngym.card_info(int(x))[0] for x in row if x > 0]
-        finals.append({"board": [x[:-2] if x.endswith("_G") else x for x in ids], "golden": sum(x.endswith("_G") for x in ids),
+        ids = [card_id(int(x)) for x in row if x > 0]
+        finals.append({"board": [base_id(x) for x in ids], "golden": sum(is_golden_id(x) for x in ids),
                        "place": places.get(i, 0)})
     info["finals"] = finals
     return [x.turns for x in logs], info
@@ -328,10 +307,9 @@ def show_comps(finals: list[dict]) -> dict | None:
     if h:
         print("  万三常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in h["cards"][:12]))
     # 配合程度（tools/native_demos.board_scores）
-    import taverngym
     from tools.native_demos import board_scores, load_comp_refs
     pairs, key = load_comp_refs()
-    det = {c["id"]: c for c in json.loads(taverngym.catalog_json())}
+    det = catalog()
     sc = [board_scores(x["board"], det, pairs, key) for x in fb]
     m["scores"] = {k: round(float(np.mean([r[k] for r in sc])), 3) for k in ("coh", "syn", "key")}
     hs = (h or {}).get("scores") or {}

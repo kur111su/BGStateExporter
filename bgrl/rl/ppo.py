@@ -26,17 +26,9 @@ import torch.nn.functional as F
 from .league import League, load_real_profile
 from .model import SIZES, build_model, n_params, soft_log
 from tg.actions import A_BUY, A_DARK_GIFT, A_END, A_REFRESH, A_SELL, A_UPGRADE, is_noop
+from tg.actions import is_panic  # noqa: F401 —— 引擎内部出错（第 5413 轮 engine.rs:925 召唤后下标越界，整个训练停了）
+from tg.obs import C_BOARD, C_SHOP, F_GOLD, F_TIER, F_UPCOST  # noqa: F401
 from .calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, load_pro_boards, ramp
-
-# 观察（v1）里的几个全局数：第 0 个 回合/20，第 7 个 金币/10，第 10 个 酒馆等级/6，第 11 个 升本费/10（满级 0）
-F_GOLD, F_TIER, F_UPCOST = 7, 10, 11
-C_BOARD, C_SHOP = 19, 36                     # 卡牌编号里场上 / 酒馆的起点（rl/model.py 的 cslices）
-
-
-def is_panic(ex: BaseException) -> bool:
-    """TavernGym 引擎（Rust）内部出错：pyo3 抛 PanicException（BaseException 的子类，except Exception 接不住）。
-    第 5413 轮：engine.rs:925 召唤随从时任务奖励改了场面，下标越界，整个训练停了。"""
-    return type(ex).__name__ == "PanicException"
 
 
 @dataclass
@@ -656,12 +648,9 @@ class Trainer:
         from tools.make_demos import KINDS
         if "c" not in d:
             return None
-        import taverngym
+        from tg.catalog import base_of_index, catalog, n_cards
         root = Path(__file__).resolve().parent
-        base = {}
-        for i in range(1, taverngym.N_CARDS):
-            cid = taverngym.card_info(i)[0]
-            base[i] = cid[:-2] if cid.endswith("_G") else cid
+        base = {i: base_of_index(i) for i in range(1, n_cards())}
         buy = np.flatnonzero(d["kind"] == KINDS.index("buy"))
         slot = d["cand"][buy, 0].astype(np.int64) - 8
         ok = (slot >= 0) & (slot < 8)
@@ -676,7 +665,7 @@ class Trainer:
             idx = [i for i, b in base.items() if b in want]
             sel[buy[np.isin(cards, idx)]] = True
             return sel
-        det = {x["id"]: x for x in json.loads(taverngym.catalog_json())}
+        det = catalog()
         if which == "tribe":
             races = {i: set((det.get(b) or {}).get("races", [])) for i, b in base.items()}
             minion = {i for i, b in base.items() if (det.get(b) or {}).get("kind") == "minion"}
@@ -794,19 +783,18 @@ class Trainer:
         """阵容打分用的查表（按卡牌编号）：种族位掩码（全种族 = 所有位）、是不是随从、关键卡、高手常见搭配矩阵。"""
         if getattr(self, "_ct", None) is not None:
             return self._ct
-        import taverngym
+        from tg.catalog import base_of_index, catalog, n_cards
         from tools.native_demos import load_comp_refs
         pairs, key = load_comp_refs()
-        det = {x["id"]: x for x in json.loads(taverngym.catalog_json())}
-        n = taverngym.N_CARDS
+        det = catalog()
+        n = n_cards()
         tribes = sorted({r for x in det.values() for r in x.get("races", []) if r != "ALL"})
         mask = np.zeros(n, dtype=np.int64)
         minion = np.zeros(n, dtype=bool)
         keyv = np.zeros(n, dtype=bool)
         base = [""] * n
         for i in range(1, n):
-            cid = taverngym.card_info(i)[0]
-            b = cid[:-2] if cid.endswith("_G") else cid
+            b = base_of_index(i)
             base[i] = b
             x = det.get(b) or {}
             minion[i] = x.get("kind") == "minion"
@@ -1127,18 +1115,18 @@ class Trainer:
         """最终阵容的配合程度（场上 ≥ 5 个随从的局；见 tools/native_demos.board_scores）：
         comp_coh 主种族纯度（万三 0.70）、comp_syn 高手常见搭配对数（2.07）、comp_key 关键卡张数（4.34）、comp_golden 金色随从数（1.85）。"""
         try:
-            import taverngym
+            from tg.catalog import base_id, card_id, catalog, is_golden_id
             from tools.native_demos import board_scores, load_comp_refs
             if not hasattr(self, "_comp_ref"):
-                self._comp_ref = (*load_comp_refs(), {c["id"]: c for c in json.loads(taverngym.catalog_json())})
+                self._comp_ref = (*load_comp_refs(), catalog())
             pairs, key, det = self._comp_ref
             rows = []
             for b in boards:
-                ids = [taverngym.card_info(int(x))[0] for x in b if x > 0]
+                ids = [card_id(int(x)) for x in b if x > 0]
                 if len(ids) < 5:
                     continue
-                sc = board_scores([x[:-2] if x.endswith("_G") else x for x in ids], det, pairs, key)
-                sc["golden"] = sum(x.endswith("_G") for x in ids)
+                sc = board_scores([base_id(x) for x in ids], det, pairs, key)
+                sc["golden"] = sum(is_golden_id(x) for x in ids)
                 rows.append(sc)
             if not rows:
                 return {}

@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import random
 from collections import Counter
-from typing import Any
 
 from .actions import (A_ACTIVATE, A_BUY, A_CHOOSE, A_HERO_POWER, A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL,
                       A_UPGRADE, N_BOARD, N_POS)

@@ -26,40 +26,23 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import RUNS  # noqa: E402
-from tg.actions import (A_ACTIVATE, A_BUY, A_CANCEL, A_CHOOSE, A_DARK_GIFT, A_END, A_FREEZE, A_HERO_POWER,  # noqa: E402
-                        A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE)
-from tg.supermask import C_BOARD, C_HAND, NB, super_mask  # noqa: E402
+from tg.actions import A_MAGNETIZE, A_PLAY, A_UPGRADE, action_family  # noqa: E402
+from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
+from tg.obs import C_BOARD, C_HAND, N_BOARD as NB, board_stats, tier as obs_tier  # noqa: E402
+from tg.supermask import super_mask  # noqa: E402
 
-MF, F_BOARD = 31, 68                 # 场上随从：每格 31 个浮点，从第 68 个开始；格内第 1/2 个 = 攻/10、血/10
 SHARD = 4000
 
 
 def kind_of(a: int, hand_card_kind: str = "") -> str | None:
-    if a == A_END:
-        return "end"
-    if a == A_REFRESH:
-        return "refresh"
-    if a == A_FREEZE:
-        return "freeze"
-    if a == A_UPGRADE:
-        return "upgrade"
-    if a in (A_HERO_POWER, A_HERO_POWER + 1):
-        return "hero_power"
-    if a == A_DARK_GIFT:
-        return "dark_gift"
-    if a == A_CANCEL or A_CHOOSE <= a < A_PLAY:
-        return None                                      # 示范类别里没有（KINDS）
-    if A_BUY <= a < A_SELL:
-        return "buy"
-    if A_SELL <= a < A_ACTIVATE:
-        return "sell"
-    if A_ACTIVATE <= a < A_CHOOSE:
-        return "activate"
-    if A_PLAY <= a < A_MAGNETIZE:
+    """动作 → 示范类别（tools/make_demos.KINDS）；选择 / 取消不在示范类别里，返回 None。
+    打出手牌：手里那张是法术记成 cast，否则 play。"""
+    fam = action_family(a)
+    if fam in ("cancel", "choose"):
+        return None
+    if fam == "play":
         return "cast" if "spell" in hand_card_kind else "play"
-    if A_MAGNETIZE <= a < A_MOVE:
-        return "magnetize"
-    return "move"
+    return fam
 
 
 def convert(src: Path, mmr: int, val_every: int = 10):
@@ -75,13 +58,7 @@ def convert(src: Path, mmr: int, val_every: int = 10):
     n = len(a)
     if f.shape[1] != taverngym.OBS_FLOATS or c.shape[1] != taverngym.OBS_CARDS:
         raise SystemExit(f"观察长度 {f.shape[1]}/{c.shape[1]}，当前 TavernGym 是 {taverngym.OBS_FLOATS}/{taverngym.OBS_CARDS}")
-    info: dict[int, tuple] = {}
-    det = {x["id"]: x for x in json.loads(taverngym.catalog_json())}
-
-    def card(i: int) -> tuple:
-        if i not in info:
-            info[i] = taverngym.card_info(int(i))
-        return info[i]
+    det = catalog()
 
     stats = Counter()
     m = super_mask(f, c)
@@ -98,7 +75,7 @@ def convert(src: Path, mmr: int, val_every: int = 10):
         hk = ""
         if A_PLAY <= a[i] < A_MAGNETIZE:
             hc = int(c[i, C_HAND + (a[i] - A_PLAY) // 8])
-            hk = (det.get(card(hc)[0]) or {}).get("kind", "") if hc > 0 else ""
+            hk = (det.get(card_id(hc)) or {}).get("kind", "") if hc > 0 else ""
         k = kind_of(int(a[i]), hk)
         if k is None:
             stats["跳过：选择 / 取消"] += 1
@@ -127,14 +104,13 @@ def convert(src: Path, mmr: int, val_every: int = 10):
             x = int(c[i, C_BOARD + s])
             if x <= 0:
                 continue
-            cid = card(x)[0]
-            if (det.get(cid[:-2] if cid.endswith("_G") else cid) or {}).get("kind") != "minion":
+            cid = card_id(x)
+            if (det.get(base_id(cid)) or {}).get("kind") != "minion":
                 continue
-            atk = int(round(f[i, F_BOARD + MF * s + 1] * 10))
-            hp = int(round(f[i, F_BOARD + MF * s + 2] * 10))
+            atk, hp = board_stats(f[i], s)
             b.append([cid, atk, max(1, hp)])
         if b:
-            boards[t].append({"tier": int(round(f[i, 10] * 6)), "mmr": mmr, "board": b})
+            boards[t].append({"tier": int(obs_tier(f[i])), "mmr": mmr, "board": b})
     # 汇总（只有统计数字）：每回合开始时的等级、本回合升本率；最终阵容；常一起上场的卡
     first, upg = {}, defaultdict(int)
     for i in np.flatnonzero(known):
@@ -143,7 +119,7 @@ def convert(src: Path, mmr: int, val_every: int = 10):
         upg[key] |= int(a[i] == A_UPGRADE)
     per = defaultdict(lambda: ([], []))
     for key, i in first.items():
-        per[key[1]][0].append(int(round(f[i, 10] * 6)))
+        per[key[1]][0].append(int(obs_tier(f[i])))
         per[key[1]][1].append(upg[key])
     curve = {str(t): {"n": len(v[0]), "tier_start": round(float(np.mean(v[0])), 2), "up": round(float(np.mean(v[1])), 2)}
              for t, v in sorted(per.items()) if len(v[0]) >= 10}
@@ -157,13 +133,13 @@ def convert(src: Path, mmr: int, val_every: int = 10):
         for s_ in range(NB):
             x = int(c[i, C_BOARD + s_])
             if x > 0:
-                cid = card(x)[0]
-                g_ += cid.endswith("_G")
-                ids.append(cid[:-2] if cid.endswith("_G") else cid)
+                cid = card_id(x)
+                g_ += is_golden_id(cid)
+                ids.append(base_id(cid))
         if len(ids) >= 5:
             fb.append(ids)
             gl.append(g_)
-            tl.append(int(round(f[i, 10] * 6)))
+            tl.append(int(obs_tier(f[i])))
     profile = {"source": "他人对局（万三分段，TavernGym 观察格式）", "games": len(games), "mmr": mmr,
                "created": time.strftime("%Y-%m-%d"), "tempo": curve, "final": comp_stats(fb, gl, tl, det),
                "synergy": synergy(fb, det)}
@@ -179,8 +155,7 @@ ZH_RACE = {"QUILBOAR": "野猪人", "UNDEAD": "亡灵", "BEAST": "野兽", "MURL
 
 
 def _catalog():
-    import taverngym
-    return {x["id"]: x for x in json.loads(taverngym.catalog_json())}
+    return catalog()
 
 
 def comp_stats(boards: list[list[str]], goldens: list[int], tiers: list[int], det: dict | None = None) -> dict:

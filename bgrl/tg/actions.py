@@ -19,3 +19,28 @@ def is_noop(a):
     """“不改变局面”的动作：冻结、调站位（训练里有小惩罚，影子模式里不列成步骤）。
     a 可以是整数，也可以是 numpy 数组（逐个判断）。"""
     return (a == A_FREEZE) | (a >= A_MOVE)
+
+
+def action_family(a: int) -> str:
+    """动作属于哪一类：end refresh freeze upgrade hero_power dark_gift cancel buy sell activate choose play magnetize move。"""
+    a = int(a)
+    if a < A_BUY:
+        return ("end", "refresh", "freeze", "upgrade", "hero_power", "hero_power", "dark_gift", "cancel")[a]
+    if a < A_SELL:
+        return "buy"
+    if a < A_ACTIVATE:
+        return "sell"
+    if a < A_CHOOSE:
+        return "activate"
+    if a < A_PLAY:
+        return "choose"
+    if a < A_MAGNETIZE:
+        return "play"
+    if a < A_MOVE:
+        return "magnetize"
+    return "move"
+
+
+def is_panic(ex: BaseException) -> bool:
+    """TavernGym 引擎（Rust）内部出错：pyo3 抛 PanicException（BaseException 的子类，except Exception 接不住）。"""
+    return type(ex).__name__ == "PanicException"

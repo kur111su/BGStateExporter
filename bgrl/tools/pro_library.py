@@ -48,12 +48,11 @@ def _q(v: list, q: float) -> float:
 
 
 def build(src: Path, min_mmr: int = 0):
-    import taverngym
-    cat = {c["id"]: c for c in json.loads(taverngym.catalog_json())}
+    from tg.catalog import base_id, catalog
+    cat = catalog()
 
     def known(cid: str):
-        base = cid[:-2] if cid.endswith("_G") else cid
-        c = cat.get(base)
+        c = cat.get(base_id(cid))
         return c if c and c.get("kind") == "minion" and c.get("implemented", True) else None
 
     boards = defaultdict(list)

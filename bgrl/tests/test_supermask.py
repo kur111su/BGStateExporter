@@ -53,12 +53,11 @@ def main(rounds: int = 600) -> int:
     assert data["m"].shape[1] == (245 + 7) // 8 and set(data["cand"][:, 0].tolist()) <= set(A[turn > 0].tolist())
     # 训练里“买关键卡”的示范加权（rl/ppo.py Trainer._bought_in）：买的那格是关键卡才算
     import json as _json
-    import taverngym
     from rl.ppo import Trainer
+    from tg.catalog import card_id, catalog, n_cards
     key = _json.loads((Path(__file__).resolve().parent.parent / "rl" / "card_value.json").read_text(encoding="utf-8"))["key"]
-    k_idx = next(i for i in range(1, taverngym.N_CARDS) if taverngym.card_info(i)[0] == key[0])
-    other = next(i for i in range(1, taverngym.N_CARDS) if taverngym.card_info(i)[0] not in set(key)
-                 and taverngym.card_info(i)[0].startswith("BG"))
+    k_idx = next(i for i in range(1, n_cards()) if card_id(i) == key[0])
+    other = next(i for i in range(1, n_cards()) if card_id(i) not in set(key) and card_id(i).startswith("BG"))
     c = np.zeros((3, 124), np.int32)
     c[:, 36], c[:, 37] = k_idx, other
     dd = {"kind": np.array([KINDS.index("buy")] * 2 + [KINDS.index("end")], np.int8), "c": c,
@@ -68,10 +67,10 @@ def main(rounds: int = 600) -> int:
     from collections import defaultdict
     from types import SimpleNamespace
     from tg.actions import A_END
-    det = {x["id"]: x for x in _json.loads(taverngym.catalog_json())}
+    det = catalog()
     by_race = defaultdict(list)
-    for i in range(1, taverngym.N_CARDS):
-        x = det.get(taverngym.card_info(i)[0]) or {}
+    for i in range(1, n_cards()):
+        x = det.get(card_id(i)) or {}
         rs = x.get("races", [])
         if x.get("kind") == "minion" and len(rs) == 1 and rs[0] != "ALL":
             by_race[rs[0]].append(i)

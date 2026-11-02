@@ -219,7 +219,8 @@ class Action:
 
 
 def _base(card_id: str) -> str:
-    return card_id[:-2] if card_id.endswith("_G") else card_id
+    from tg.catalog import base_id
+    return base_id(card_id)
 
 
 def _golden(c: dict) -> bool:

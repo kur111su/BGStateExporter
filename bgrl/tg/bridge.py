@@ -25,6 +25,7 @@ import re
 from typing import Any
 
 from .actions import A_CHOOSE
+from .catalog import base_id  # noqa: F401 —— 金色 ID → 普通 ID（tg/replay.py 等从这里导入）
 
 # 插件（HDT 标签名）→ TavernGym PlayerStats 字段
 STAT_TAGS = {
@@ -56,16 +57,12 @@ COUNTERS = {
 }
 
 _GIFT = re.compile(r"^(BG36_MidGameEffect_000t\d+t?)e\d*$")
-_catalog: dict[str, dict] | None = None
 
 
 def catalog() -> dict[str, dict]:
-    """TavernGym 卡牌表：卡牌编号 → {cid, kind, text, ...}。"""
-    global _catalog
-    if _catalog is None:
-        import taverngym
-        _catalog = {c["id"]: c for c in json.loads(taverngym.catalog_json())}
-    return _catalog
+    """TavernGym 卡牌表：卡牌 ID → {cid, kind, text, ...}（tg/catalog.py，进程内缓存）。"""
+    from .catalog import catalog as _cat
+    return _cat()
 
 
 def attachments(c: dict) -> list[str]:
@@ -160,8 +157,6 @@ def _by_pos(cards):
     return sorted(cards or [], key=lambda x: x.get("position", 0))
 
 
-def base_id(card_id: str) -> str:
-    return card_id[:-2] if card_id and card_id.endswith("_G") else card_id
 
 
 class BridgeError(Exception):

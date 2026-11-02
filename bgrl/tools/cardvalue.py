@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
 
-C_SHOP, NS = 36, 8
+from tg.obs import C_SHOP, N_SHOP as NS  # noqa: E402
 OUT = ROOT / "rl" / "card_value.json"
 ECO = re.compile(r"获得\d+枚铸币|铸币上限|下回合获得|获得（\d+）枚铸币")
 
@@ -37,14 +37,10 @@ class PickStats:
         self.expected = defaultdict(float)
         self.picked = defaultdict(int)
         self.n = 0
-        self._ids: dict[int, str] = {}
 
     def _id(self, x: int) -> str:
-        if x not in self._ids:
-            import taverngym
-            cid = taverngym.card_info(int(x))[0]
-            self._ids[x] = cid[:-2] if cid.endswith("_G") else cid
-        return self._ids[x]
+        from tg.catalog import base_of_index
+        return base_of_index(int(x))
 
     def add(self, shop_row, slot: int) -> None:
         """shop_row：cards[36:44]（卡牌编号）；slot：买的是第几格。"""
@@ -82,8 +78,8 @@ def from_demos(dirs: list[Path]) -> tuple[PickStats, PickStats]:
 
 
 def build(dirs: list[Path]) -> dict:
-    import taverngym
-    det = {c["id"]: c for c in json.loads(taverngym.catalog_json())}
+    from tg.catalog import catalog
+    det = catalog()
     lo, hi = from_demos(dirs)
     both = PickStats()
     for src in (lo, hi):

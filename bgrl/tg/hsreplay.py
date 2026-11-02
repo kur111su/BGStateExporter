@@ -51,10 +51,9 @@ def tag_id(name: str) -> int:
     return _enums()[1][name]
 
 
-@lru_cache(maxsize=1)
 def _catalog():
-    import taverngym
-    return {c["id"]: c for c in json.loads(taverngym.catalog_json())}
+    from tg.catalog import catalog
+    return catalog()
 
 
 def _useful(name: str) -> bool:      # StateReader.IsUsefulTag
