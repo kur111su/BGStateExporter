@@ -6,7 +6,7 @@
   arena/model_bundle/static.npy  卡牌静态特征表（card_static）
   arena/model_bundle/meta.json   观察布局、数组长度、模型大小、训练轮数、训练用的卡牌词表（编号 → 卡牌 ID）及其哈希
 
-用法：.venv\\Scripts\\python arena\\export.py [--ckpt runs\\v3\\latest.pt]
+用法：.venv\\Scripts\\python arena\\export.py [--ckpt runs\\v3\\latest.pt] [--name capri]（竞技场上显示 capri-it<训练轮数>）
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+NAME = "capri"                     # 竞技场上的模型名：连接器的 --model-version 发的是 "capri-it<训练轮数>"
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
@@ -46,6 +47,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=str(DEFAULT_RUN / "latest.pt"))
     ap.add_argument("--out", default=str(HERE / "model_bundle"))
+    ap.add_argument("--name", default=NAME, help="竞技场上显示的模型名（后面自动加 -it训练轮数）")
     a = ap.parse_args()
     model, info = load_model(a.ckpt, "cpu")
     out = Path(a.out)
@@ -60,7 +62,7 @@ def main() -> int:
     run = Path(a.ckpt).resolve().parent.name
     it = info.get("iter")
     meta = {"ckpt": str(Path(a.ckpt).resolve()), "run": run, "iter": it,
-            "model_version": f"{run}-it{it}" if it is not None else run,
+            "model_version": f"{a.name}-it{it}" if it is not None else a.name,
             "model_kwargs": info["size"], "layout": dict(c.layout()),
             "floats": int(c.OBS_FLOATS), "cards": int(c.OBS_CARDS), "actions": int(c.N_ACTIONS),
             "taverngym_version": taverngym.version(), "engine_source_hash": src,

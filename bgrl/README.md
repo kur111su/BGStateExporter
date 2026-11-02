@@ -22,6 +22,8 @@
 | `arena_loop.bat` | 一局接一局打计分对局，直到关窗口或 Ctrl+C；`arena_loop.bat update` 每局前模型比打包的新 2 小时以上就重新打包 | `arena\results\history.jsonl`、`arena\records\` |
 | `arena_view.bat` | 竞技场对局查看器 http://127.0.0.1:8767/：战绩、Elo、名次分布、每局每一步的选择和候选概率、正在打的对局 | — |
 
+竞技场上的模型名是 `capri-it<训练轮数>`（`arena/export.py` 的 `NAME`，打包时写进 `arena\model_bundle\meta.json`，连接器用 `--model-version` 发出去）。
+
 竞技场的 Agent Key：在窗口里设 `ARENA_API_KEY`，或者单独写进 `arena\key.txt`（不进 Git）。它不会被打印、记日志或出现在命令行上；连接器只上传动作，模型、代码、存档都不上传。连接器跑在单独的 `arena\.venv`（不装 TavernGym，`arena.bat check` 会建）。
 
 ## 命令行（`bg.py`）
