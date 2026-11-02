@@ -15,6 +15,29 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
+def _play(g, agent) -> int:
+    """一整局：0 号座位用 agent.act，其它用脚本机器人。返回 agent 出了几步。"""
+    state, steps = {}, 0
+    while not g.is_over() and steps < 20000:
+        for p in range(g.num_players):
+            if not g.needs_action(p):
+                continue
+            if p == 0:
+                f, c = g.observe(0)
+                obs = {"features": np.concatenate([np.frombuffer(f, "<f4"), np.zeros(4017 - 3227, np.float32)]),
+                       "cards": np.concatenate([np.frombuffer(c, "<i4"), np.zeros(447 - 124, np.int32)]),
+                       "action_mask": np.frombuffer(g.legal_mask(0), dtype=np.uint8).astype(bool)}
+                ctx = {"match_id": "test", "seat": 0, "turn": g.turn, "phase": "recruit", "remaining_ms": 60000,
+                       "actions_used": 0, "action_limit": 100, "player_view": {}, "state": state}
+                a = agent.act(obs, ctx)
+                assert isinstance(a, int) and obs["action_mask"][a], a
+                g.step(0, a)
+                steps += 1
+            else:
+                g.step(p, g.bot_action(p))
+    return steps
+
+
 def main() -> int:
     import taverngym
     import torch
@@ -57,24 +80,17 @@ def main() -> int:
             got = agent.MODEL(t(f, torch.float32), t(c, torch.long), t(mask, torch.bool))[0]
         assert torch.allclose(ref, got, atol=1e-4), "打包后的模型输出和原模型不一样"
         # 一整局：0 号座位用 agent.act，其它用脚本机器人
-        state, steps = {}, 0
-        while not g.is_over() and steps < 20000:
-            for p in range(g.num_players):
-                if not g.needs_action(p):
-                    continue
-                if p == 0:
-                    f, c = g.observe(0)
-                    obs = {"features": np.concatenate([np.frombuffer(f, "<f4"), np.zeros(4017 - 3227, np.float32)]),
-                           "cards": np.concatenate([np.frombuffer(c, "<i4"), np.zeros(447 - 124, np.int32)]),
-                           "action_mask": np.frombuffer(g.legal_mask(0), dtype=np.uint8).astype(bool)}
-                    ctx = {"match_id": "test", "seat": 0, "turn": g.turn, "phase": "recruit", "remaining_ms": 60000,
-                           "actions_used": 0, "action_limit": 100, "player_view": {}, "state": state}
-                    a = agent.act(obs, ctx)
-                    assert isinstance(a, int) and obs["action_mask"][a], a
-                    g.step(0, a)
-                    steps += 1
-                else:
-                    g.step(p, g.bot_action(p))
+        import contextlib
+        import io
+        shown = io.StringIO()                      # 窗口里每回合打的那几行（agent._show_turn / _show_end）
+        with contextlib.redirect_stderr(shown):
+            steps = _play(g, agent)
+        lines = shown.getvalue().splitlines()
+        assert lines and lines[0].startswith("对局 test 开始"), lines[:3]
+        turns = [x for x in lines if "回合：酒馆" in x]
+        assert any("第 1 回合：酒馆 1 本，金币 3" in x for x in turns), turns[:3]
+        assert len(turns) >= 5 and sum("结束回合（" in x for x in lines) >= 5, lines[:12]
+        print("\n".join(lines[:5]))
         assert steps > 20, steps
         rec = [json.loads(x) for x in (arena / "records" / "test.jsonl").read_text(encoding="utf-8").splitlines()]
         assert len(rec) == steps and all(r["text"] for r in rec) and rec[0]["top"], rec[0]

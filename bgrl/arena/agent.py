@@ -6,6 +6,7 @@
   - 同一回合调站位 / 冻结超过 2 次后不再选它们（模型偶尔会来回调站位）；
   - 本回合操作次数只剩 2 次、或回合时间只剩 1.5 秒时，能结束就结束；
   - 每局在 arena/logs/<对局>.jsonl 记每回合各类操作的次数（不记观测、不记密钥）。
+运行时在窗口里每回合打一行：回合数、酒馆等级、金币、血量；结束回合时打这回合做了什么和预计名次（_show_*）。
 模型在 import 时加载（连接器建立连接之前），第一步不会因为加载耗时超时。
 """
 from __future__ import annotations
@@ -90,6 +91,53 @@ NF, NC = META["floats"], META["cards"]
 LOGS = HERE / "logs"
 RECORDS = HERE / "records"          # 每一步的可见局面 + 模型的前几个选择（只在本机，arena/viewer.py 显示）
 print(f"模型 {META['model_version']} 已加载（CPU）", file=sys.stderr, flush=True)
+
+
+ZH_KIND = {"buy": "买", "sell": "卖", "play": "打出", "upgrade": "升本", "refresh": "刷新", "hero_power": "技能",
+           "dark_gift": "黑暗之赐", "activate": "发动", "choose": "选", "magnetize": "磁力", "move": "换位", "freeze": "冻结",
+           "cancel": "取消"}
+
+
+def _say(msg: str) -> None:
+    """打到窗口（stderr；stdout 是连接器的结果，arena.bat 把它写进 json）。出错不影响出牌。"""
+    try:
+        print(msg, file=sys.stderr, flush=True)
+    except Exception:                              # noqa: BLE001
+        pass
+
+
+def _show_turn(context: dict, f) -> None:
+    """新回合开始：[时间] 第 N 回合：酒馆 T 本，金币 G，血量 H，还剩 K 人。
+    优先用 player_view 里的数；没有时等级、金币从观察读（第 10 / 7 个数是 等级/6、金币/10）。"""
+    try:
+        view = context.get("player_view") or {}
+        me = _me(view)
+        num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)  # noqa: E731
+        tier = me.get("tier") if num(me.get("tier")) else round(float(f[10]) * 6)
+        gold = me.get("gold") if num(me.get("gold")) else round(float(f[7]) * 10)
+        parts = [f"酒馆 {int(tier)} 本", f"金币 {int(gold)}"]
+        if num(me.get("health")):
+            armor = me.get("armor") if num(me.get("armor")) else 0
+            parts.append(f"血量 {int(me['health'])}" + (f"+{int(armor)}" if armor else ""))
+        opp = view.get("opponents") if isinstance(view, dict) else None
+        if isinstance(opp, list) and opp and all(isinstance(o, dict) and "alive" in o for o in opp):
+            parts.append(f"还剩 {1 + sum(bool(o['alive']) for o in opp)} 人")
+        ph = context.get("phase")
+        tag = "" if ph in (None, "", "recruit", "shop") else "（选英雄）" if ph == "hero_select" else f"（{ph}）"
+        _say(f"[{time.strftime('%H:%M:%S')}] 第 {context.get('turn')} 回合{tag}：" + "，".join(parts))
+    except Exception:                              # noqa: BLE001
+        pass
+
+
+def _show_end(st: dict, value) -> None:
+    """结束回合：这回合各类操作的次数 + 价值头估计的名次。"""
+    try:
+        done = "、".join(f"{ZH_KIND.get(k, k)} {n}" for k, n in st["counts"].items() if k != "end" and n)
+        place = "" if value is None else f"，预计名次 {1.0 + (1.0 - float(value)) * 3.5:.1f}"
+        guard = "、".join(f"{k} {n}" for k, n in st["guards"].items() if n)
+        _say(f"    结束回合（{done or '没操作'}{place}）" + (f" 保护：{guard}" if guard else ""))
+    except Exception:                              # noqa: BLE001
+        pass
 
 
 def _log(st: dict, match_id: str):
@@ -188,6 +236,10 @@ def act(observation, context):
     if st.get("key") != key:                       # 新回合：写上一回合的统计
         if st.get("key"):
             _log(st, st["key"][0])
+        if st.get("match") != context["match_id"]:
+            st["match"] = context["match_id"]
+            _say(f"对局 {context['match_id']} 开始（座位 {context.get('seat')}，模型 {META['model_version']}）")
+        _show_turn(context, observation["features"])
         st.update(key=key, turn=context["turn"], phase=context.get("phase"), counts=Counter(), guards=Counter(), noops=0,
                   banned=set(), cancels=0, trigger=None, used=Counter())
     mask = np.asarray(observation["action_mask"], dtype=bool)
@@ -196,6 +248,7 @@ def act(observation, context):
         st["guards"]["end_early"] += 1
         st["counts"]["end"] += 1
         _record(context, A_END, [], None, guard="end_early")
+        _show_end(st, None)
         return A_END
     m = mask.copy()
     if st["noops"] >= 2:
@@ -247,6 +300,7 @@ def act(observation, context):
     st["counts"][kind_of(a)] += 1
     _record(context, a, top, float(value.reshape(-1)[0]))
     if a == A_END:
+        _show_end(st, float(value.reshape(-1)[0]))
         _log(st, context["match_id"])
         st["counts"], st["guards"] = Counter(), Counter()
     return a
