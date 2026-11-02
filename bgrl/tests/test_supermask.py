@@ -1,4 +1,7 @@
-"""tg/supermask.py：从观察推出的动作集合必须包含所有真正合法的动作（随机打 TavernGym 对局检查）。"""
+"""tg/supermask.py：从观察推出的动作集合必须包含所有真正合法的动作（随机打 TavernGym 对局检查）。
+
+同一批随机局面顺带检查：tools/native_demos.py 的转换、rl/demos.bought_in（买关键卡的示范加权）、
+rl/shaping.py 的阵容成型奖励。"""
 from __future__ import annotations
 
 import sys
@@ -10,11 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tg.supermask import super_mask  # noqa: E402
 
 
-def main(rounds: int = 600) -> int:
+def random_positions(rounds: int, rng):
+    """8 个座位随机打（九成不选调站位），记下每个决策点的观察和真正的合法动作。"""
     from taverngym import BatchEnv
     env = BatchEnv(8, seed=5, controlled=tuple(range(8)), threads=2)
     obs = env.observe()
-    rng = np.random.default_rng(1)
     F, C, M = [], [], []
     for _ in range(rounds):
         r = np.flatnonzero(obs["ready"])
@@ -29,14 +32,19 @@ def main(rounds: int = 600) -> int:
             a[i] = rng.choice(nm if nm and rng.random() < 0.9 else legal)
         env.step(a)
         obs = env.observe()
-    F, C, M = np.array(F), np.array(C), np.array(M)
+    return np.array(F), np.array(C), np.array(M)
+
+
+def check_supermask(F, C, M):
     S = super_mask(F, C)
     viol = M & ~S
     bad = {int(x): int(viol[:, x].sum()) for x in np.flatnonzero(viol.sum(0))}
     print(f"supermask：{len(F)} 个局面，合法 {M.sum(1).mean():.1f} 个 / 推出 {S.sum(1).mean():.1f} 个，漏掉 {bad}")
     assert viol.sum() <= len(F) * 0.0005, bad
 
-    # tools/native_demos.py：把这些局面当成“别人的对局”转一遍（动作都是合法的，应该全部保留）
+
+def check_native_demos(F, C, M, rng) -> dict:
+    """把这些局面当成“别人的对局”转一遍（动作都是合法的，应该全部保留）。"""
     import tempfile
     from rl.demos import KINDS
     from tools.native_demos import convert
@@ -51,8 +59,13 @@ def main(rounds: int = 600) -> int:
     kept = int((turn > 0).sum()) - st["跳过：选择 / 取消"]
     assert len(data["kind"]) == kept and n_games == 8 and not st["跳过：动作和观察对不上"], (len(data["kind"]), kept, st)
     assert data["m"].shape[1] == (245 + 7) // 8 and set(data["cand"][:, 0].tolist()) <= set(A[turn > 0].tolist())
-    # 训练里“买关键卡”的示范加权（rl/demos.bought_in，Trainer._bought_in 是同一个）：买的那格是关键卡才算
+    return {KINDS[k]: int(v) for k, v in zip(*np.unique(data["kind"], return_counts=True))}
+
+
+def check_bought_in():
+    """训练里“买关键卡”的示范加权（rl/demos.bought_in，Trainer._bought_in 是同一个）：买的那格是关键卡才算。"""
     import json as _json
+    from rl.demos import KINDS
     from rl.ppo import Trainer
     from tg.catalog import card_id, catalog, n_cards
     key = _json.loads((Path(__file__).resolve().parent.parent / "rl" / "card_value.json").read_text(encoding="utf-8"))["key"]
@@ -63,10 +76,15 @@ def main(rounds: int = 600) -> int:
     dd = {"kind": np.array([KINDS.index("buy")] * 2 + [KINDS.index("end")], np.int8), "c": c,
           "cand": np.array([[8] + [-1] * 7, [9] + [-1] * 7, [0] + [-1] * 7], np.int16)}
     assert Trainer._bought_in(dd, "key").tolist() == [True, False, False]
-    # 阵容成型奖励（Trainer._comp_shape）：同种族 6 个随从的场面 > 6 个不同种族的场面
+
+
+def check_comp_shape():
+    """阵容成型奖励（Trainer._comp_shape）：同种族 6 个随从的场面 > 6 个不同种族的场面。"""
     from collections import defaultdict
     from types import SimpleNamespace
+    from rl.ppo import Trainer
     from tg.actions import A_END
+    from tg.catalog import card_id, catalog, n_cards
     det = catalog()
     by_race = defaultdict(list)
     for i in range(1, n_cards()):
@@ -84,7 +102,16 @@ def main(rounds: int = 600) -> int:
     tt._comp_tables = lambda: Trainer._comp_tables(tt)
     rr = Trainer._comp_shape(tt, ff, cc, np.array([A_END, A_END]), np.zeros(2))
     assert rr[0] >= 0.01 and rr[1] < 0.005, rr
-    print("nativedemos OK", {KINDS[k]: int(v) for k, v in zip(*np.unique(data["kind"], return_counts=True))})
+
+
+def main(rounds: int = 600) -> int:
+    rng = np.random.default_rng(1)
+    F, C, M = random_positions(rounds, rng)
+    check_supermask(F, C, M)
+    kinds = check_native_demos(F, C, M, rng)
+    check_bought_in()
+    check_comp_shape()
+    print("nativedemos OK", kinds)
     return 0
 
 

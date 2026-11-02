@@ -1,69 +1,131 @@
-# bgrl：TavernGym 训练 + 影子模式
+# bgrl：TavernGym 训练 + 影子模式 + 竞技场
 
-在 TavernGym（MCG-NJU/AutoTavern，MIT，锁定的版本见 `taverngym/PIN.txt`）里用 PPO 训练一个实体 Transformer 策略，建议完全来自这个模型：影子模式把它的本回合方案显示在 http://localhost:8766/（插件 v0.10 起不再有自己的搜索建议器和网页面板）。只显示，不操作游戏。
+在 TavernGym（MCG-NJU/AutoTavern，MIT，锁定的版本见 `taverngym/PIN.txt`）里用 PPO 训练一个实体 Transformer 策略。建议完全来自这个模型：影子模式把它的本回合方案显示在 http://localhost:8766/（插件 v0.10 起不再有自己的搜索建议器和网页面板）。影子模式只显示，不操作游戏；竞技场（TavernArena）只在官方服务器上的模拟对局里出动作。
 
-## 四个入口（Windows 双击）
+需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
+
+## 双击入口（13 个 .bat）
 
 | 文件 | 做什么 | 结果在哪 |
 | --- | --- | --- |
 | `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 | `reports\setup.txt` |
-| `train.bat` | 训练（第二阶段 `runs\v3`：机器人按真人强度加强，从第一阶段 `runs\v2` 的模型开始），关掉窗口再开会接着练。其它设置：`train.bat --help` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
-| `shadow.bat` | 影子模式：http://localhost:8766/（模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮）。训练中换局时自动换上最新模型（当前训练目录还没有模型时，用最近更新的其它训练目录的）。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
-| `tavernbench.bat` | 用 TavernBench 测当前模型（约几分钟，只用 CPU，训练开着也行）。`tavernbench.bat --ckpt runs\v2\latest.pt` 测指定模型 | `reports\tavernbench\<模型>\report.txt` |
+| `train.bat` | 训练 `runs\v3`（设置全在 `configs\v3.json`，见下面“训练配方”），关掉窗口再开会接着练；`runs\v3` 还没有模型时从 `runs\v2\latest.pt` 开始。每次启动先按新对局重建 `runs\demos.npz`。命令行再写的参数优先：`train.bat --threads 4` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
+| `shadow.bat` | 影子模式 http://localhost:8766/：模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮。换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
+| `goldflow.bat` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` | 屏幕；`runs\v3\goldflow.json` |
+| `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）和挑卡（关键卡 / 经济卡）和万三玩家 | 屏幕；`runs\v3\comptest.json` |
+| `prodemos.bat` | 从 Firestone 6500+ 分享包（默认 `data\firestone` 里的 5 个 zip，不用解压）生成高分决策样本，约 10–20 分钟 | `runs\pro_demos\`（只在本机） |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
+| `tavernbench.bat` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 | `reports\tavernbench\<模型>\report.txt` |
+| `arena.bat` | 竞技场：`check` 打包当前模型并核对竞技场契约、`practice` 一局不计分练习、`match` 一局计分对局。`check --ckpt …` 打包别的模型 | `arena\model_bundle\`、`arena\results\` |
+| `arena_practice.bat` | 双击 = `arena.bat practice` | `arena\results\` |
+| `arena_match.bat` | 双击 = `arena.bat match`（一局计分对局后停） | `arena\results\` |
+| `arena_loop.bat` | 一局接一局打计分对局，直到关窗口或 Ctrl+C；`arena_loop.bat update` 每局前模型比打包的新 2 小时以上就重新打包 | `arena\results\history.jsonl`、`arena\records\` |
+| `arena_view.bat` | 竞技场对局查看器 http://127.0.0.1:8767/：战绩、Elo、名次分布、每局每一步的选择和候选概率、正在打的对局 | — |
 
-需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
+竞技场的 Agent Key：在窗口里设 `ARENA_API_KEY`，或者单独写进 `arena\key.txt`（不进 Git）。它不会被打印、记日志或出现在命令行上；连接器只上传动作，模型、代码、存档都不上传。连接器跑在单独的 `arena\.venv`（不装 TavernGym，`arena.bat check` 会建）。
 
-## 命令行
+## 命令行（`bg.py`）
 
 所有入口都是 `bg.py` 的子命令（`.venv\Scripts\python bg.py <命令> --help` 看参数）：
 
 | 命令 | 实现 | 说明 |
 | --- | --- | --- |
-| `train` | `tools/train.py` | `--smoke` 冒烟、`--bench --size medium` 测速、`--run 目录 --resume` 正式训练；其余参数和 `rl/ppo.py` 的 `Config` 一一对应 |
+| `train` | `tools/train.py` | `--recipe configs/v3.json` 按配方训练、`--run 目录 --resume` 接着练、`--init 检查点` 从别的模型开始、`--smoke` 冒烟、`--bench --size medium` 测速；其余参数和 `rl/ppo.py` 的 `Config` 一一对应，优先于配方 |
 | `shadow` | `tools/shadow.py` | 影子模式服务 |
+| `shadow-eval` | `tools/shadow_eval.py` | 影子模式评估：按模型版本统计模型方案和你实际操作对得上多少（同类 / 同一张卡 / 在方案里） → `reports\shadow_eval.json` |
+| `goldflow` | `tools/goldflow.py` | 金币流向和阵容测试（`--boosted` 对高分阵容；`--pro data\firestone` 从回放重算高手那一列写进 `rl/pro_profile.json`） |
+| `demos` | `tools/make_demos.py` | 你的对局记录 → 示范数据 `runs\demos.npz`（每步操作前的局面 + 你的动作，每回合末尾加“结束回合”；每 5 局留 1 局验证）。`--if-stale` 有新对局才重建 |
+| `prolib` | `tools/pro_library.py` | Firestone 分享包的 `core/games.jsonl` → 高分阵容库 `runs\pro_boards.json`（只在本机）和汇总曲线 `rl/pro_profile.json` |
+| `prodemos` | `tools/make_pro_demos.py` | Firestone 回放 → 6500+ 决策样本 `runs\pro_demos\`。回放 XML 由 `tg/hsreplay.py` 读成插件格式记录，之后和你的对局走同一条路（切动作 → TavernGym 重建 → 观察 + 动作编号） |
+| `nativedemos` | `tools/native_demos.py` | 已经是 TavernGym 观察格式的别人对局（例如万三的 `human_native_v0.npz`）→ 决策样本 `runs\h13_demos\`、对手阵容库 `runs\h13_boards.json`、汇总 `rl/h13_profile.json`（升本节奏、最终阵容、常见搭配，只有统计数字） |
+| `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡 `rl/card_value.json`（只有统计数字） |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
-| `shadow-eval` | `tools/shadow_eval.py` | 影子模式评估：按模型版本统计模型方案和你实际操作对得上多少（第一步同类 / 同一张卡 / 在方案里），结果写到 `reports\shadow_eval.json` |
-| `tavernbench` | `tools/tavernbench.py` | C3：用 TavernBench（论文的 368 题评测集，`third_party/tavernbench`）测模型，和论文公布的 TavernAgent、大语言模型、Jev 比；`--ckpt` 指定模型。结果在 `reports\tavernbench\<模型>\report.txt` |
-| `demos` | `tools/make_demos.py` | 把你的对局记录变成示范数据 `runs\demos.npz`（每步操作前的局面 + 你做的动作，每回合末尾加“结束回合”；每 5 局留 1 局验证）。`--if-stale` 有新对局才重新生成（train.bat 每次启动时用） |
-| `prolib` | `tools/pro_library.py` | 高分对局分享包（Firestone 6500+，`core/games.jsonl`）→ 高分阵容库 `runs\pro_boards.json`（只在本机）和汇总曲线 `rl/pro_profile.json`（每回合等级、对手场面四分位、买卖刷新次数） |
-| `prodemos` | `tools/make_pro_demos.py` | 高分对局回放（Firestone 分享包，直接读那 5 个 zip）→ 6500+ 玩家的决策样本 `runs\pro_demos\`（只在本机）。回放 XML 由 `tg/hsreplay.py` 按插件 `StateReader.cs` 的规则读成插件格式记录，之后和你的对局走同一条路（切动作 → TavernGym 重建 → 观察 + 动作编号）。`prodemos.bat` 默认读 `bgrl\data\firestone` |
+| `tavernbench` | `tools/tavernbench.py` | C3 TavernBench 评测；`--ckpt` 指定模型、`--smoke` 冒烟 |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
 | `profile` | `tools/opp_profile.py` | B1 对手画像：真人对局 vs 脚本机器人（`--save` 更新 `rl/real_profile.json`） |
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
-| `test` | `tests/` | 单元测试 |
+| `test` | `tests/test_*.py` | 单元测试 |
 | `info` | — | 环境、对局记录数、训练进度 |
 
-## 模块
+竞技场的几个脚本不走 `bg.py`：`arena/export.py`（在训练环境里打包模型）、`arena/prep.py`（核对契约，生成卡牌编号对应表）、`arena/arena_client.py`（官方连接器）、`arena/agent.py`（连接器调用的策略）、`arena/viewer.py`（查看器），都由上面的 `arena*.bat` 调用。
+
+## 训练配方
+
+`configs/v3.json` 是 `train.bat` 的全部训练设置：`run`（训练目录）、`config`（`rl/ppo.py` 的 `Config` 字段和值）、`notes`（每组设置是干什么的）。优先级：`Config` 默认值 < 配方 < 命令行。要试别的设置，复制一份改名（例如 `configs/v4.json`，把 `run` 改成 `runs\v4`），然后 `bg.py train --recipe configs/v4.json --resume`。`tests/test_recipe.py` 检查配方里的字段都存在，并且 `train.bat` 得到的设置和改用配方之前那串命令行参数完全一样。
+
+## 模块和依赖方向
+
+依赖只往一个方向：`tg` ← `rl` ← `tools`（`tests/test_layout.py` 检查 `rl`、`tg` 不导入 `tools`，`tg` 不导入 `rl`）。`arena/agent.py` 按文件路径单独加载 `rl/model.py`，不依赖其它模块。
 
 ```
 paths.py          路径和端口（runs/、reports/、默认训练目录 runs/v3、插件数据目录、8765 / 8766）
-tg/actions.py     245 个动作的编号（所有模块共用）
-tg/logs.py        读插件对局记录：统一标签名、皮肤 → 英雄、切分动作；GameHistory 记对手上次阵容和已买的黑暗之赐（回放和影子模式共用）
-tg/bridge.py      插件局面 → TavernGym 局面（随从、附魔、宝石 / 法术加成、饰品和随从计数、战败状态、黑暗之赐次数、对手阵容）
-tg/replay.py      A5：执行你的动作并和记录比较（随机效果换种子、选项逐个试、动画延迟识别）
-tg/skins.json     不按 _SKIN_ 后缀命名的英雄皮肤
-rl/model.py       实体 Transformer：66 个实体 token，指针式动作头 + 价值头 + 名次头（small / medium / large）
-rl/ppo.py         PPO 训练：批量环境采样、GAE、混合精度、健康检查和自动回滚、无效操作惩罚
-rl/league.py      对手库：快照按“和真人强度画像的距离”加权；考试对手
-rl/calibrate.py   第二阶段：机器人局里把机器人场面按真人画像（rl/real_profile.json）的四分位放大，逼模型学会升本、做后期
-rl/advisor.py     影子模式的建议器：贪心走完本回合、跳过无效动作、第一步备选、预计名次
+configs/v3.json   训练配方（train.bat）
+
+tg/               TavernGym 桥接（不需要 torch）
+  actions.py      245 个动作的编号、动作类别 action_family、引擎出错判断 is_panic
+  obs.py          观察向量布局：回合 / 金币 / 等级 / 升本费的位置和缩放，场上 / 手牌 / 酒馆 / 选项切片
+  catalog.py      卡牌目录：编号 → 卡牌 ID、金色 _G 处理（全项目一份缓存）
+  logs.py         读插件对局记录：统一标签名、皮肤 → 英雄、切分动作；GameHistory（回放和影子模式共用）
+  bridge.py       插件局面 → TavernGym 局面（随从、附魔、加成、饰品、黑暗之赐次数、对手阵容）
+  replay.py       A5：执行你的动作并和记录比较
+  hsreplay.py     回放 XML → 插件格式对局记录（按插件 StateReader.cs 的规则）
+  supermask.py    没有合法动作表的数据：从观察推一个合法动作超集
+  gametags.json、skins.json   标签名、不按后缀命名的英雄皮肤
+
+rl/               模型和训练
+  model.py        实体 Transformer：指针式动作头 + 价值头 + 名次头（small / medium / large）
+  ppo.py          训练主流程（Trainer）：批量环境采样、GAE、PPO 更新、对手库快照、评估、健康检查和自动回滚、检查点
+  shaping.py      奖励塑形（Trainer 继承）：升本节奏、金币流向、无效刷新、阵容成型，每个座位的塑形状态
+  imitation.py    模仿学习（Trainer 继承）：读示范、按类别 / 回合 / 卡牌加权、损失、命中率、模仿强度自动调
+  demos.py        示范数据格式：动作类别 KINDS、读写单文件和分片、soft_log、按买的卡挑示范（bought_in）
+  comp.py         最终阵容打分：主种族纯度、常见搭配、关键卡（训练、goldflow、nativedemos 共用）
+  league.py       对手库：快照按“和真人强度画像的距离”加权；考试对手
+  calibrate.py    机器人加强：按真人画像放大攻防（BotBooster）或换成高分真人阵容（ProBoardBooster），强度自适应
+  advisor.py      影子模式的建议器：贪心走完本回合、跳过无效动作、第一步备选、预计名次
+  *.json          只有汇总统计的参照数据：real_profile（你的对手画像）、pro_profile（6500+ 曲线）、
+                  h13_profile（万三阵容和搭配）、card_value（关键卡、经济卡）
+
+tools/            bg.py 各命令的实现（见上表）；make_fixtures.py、make_replay_fixture.py 生成 CI 样本
+arena/            竞技场：export / prep / agent / arena_client / viewer
+tests/            单元测试；fixtures/ 是 CI 用的局面、回放样本
 ```
+
+## 数据流
+
+```
+插件 games\*.jsonl（你的对局）──▶ demos ──▶ runs\demos.npz ─────────────┐
+                              ├─▶ replay / bridge（检查模拟器）          │
+                              └─▶ profile ──▶ rl\real_profile.json ──┐   │
+Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\pro_profile.json
+                    └──▶ prodemos ──▶ runs\pro_demos\ ──────────────────┤
+万三对局 .npz ──▶ nativedemos ──▶ runs\h13_demos\、runs\h13_boards.json、rl\h13_profile.json
+高分示范 ──▶ cardvalue ──▶ rl\card_value.json                           │
+                                                                       ▼
+                     configs\v3.json ──▶ train（rl/ppo.py + shaping + imitation）──▶ runs\v3\latest.pt、snapshots\
+                                                                       │
+          ┌────────────────────────┬───────────────────────┬──────────┴──────────┐
+          ▼                        ▼                       ▼                     ▼
+  shadow（:8766，只显示）   goldflow / comptest     tavernbench          arena（export → 竞技场）
+```
+
+`runs\`、`data\`、`arena\model_bundle\`、`arena\key.txt` 都不进 Git：别人的对局（Firestone、万三）生成的样本和阵容库只在本机，仓库里只有汇总数字（`rl/*.json`）。
 
 ## CI
 
 - `.github/workflows/taverngym.yml`：改 `taverngym/PIN.txt` 后编译 Windows / Linux 安装包，发布为预发布 `taverngym-<commit>`（插件自动更新不会取到）。
 - `.github/workflows/bgrl-tg.yml`：A4 重建检查、A5 回放检查（用 `tests/fixtures` 里的样本）。
-- `.github/workflows/bgrl-rl.yml`：单元测试、对手画像、冒烟训练（CPU）。
+- `.github/workflows/bgrl-rl.yml`：单元测试（`bg.py test`）、TavernBench 冒烟、对手画像、冒烟训练（默认、加强对手、按配方、模仿你的操作、模仿高分玩家），CPU。`bgrl/` 下 rl、tg、tools、configs、tests、arena 有改动就跑。
 
 样本更新：`tools/make_fixtures.py`（A4）、`tools/make_replay_fixture.py`（A5）从新的对局记录生成。
 
 ## 训练阶段
 
-| 阶段 | 目录 | 对手 | 结果 |
+| 阶段 | 目录 | 对手 / 改动 | 看什么 |
 | --- | --- | --- | --- |
-| 第一阶段 | `runs\v2` | 脚本机器人 + 自己的旧版本 | 考试（对普通机器人）从 4.27 名到约 1.8 名；但学会了一直待在 1–2 本（第 13 回合平均 2.8 本，真人约 5.8 本），影子模式里几乎从不建议升本 |
-| 第二阶段 | `runs\v3` | 75% 的机器人局里机器人按真人强度加强（第 7 回合起每 2 回合一次）+ 自己的旧版本。加强幅度自适应：学习者在加强局里平均好于 3.5 名就加 2%，差于 4.0 名就减 2%（第 251 轮起；之前是 200 轮内固定爬到 100%，结果加强局名次和随便打一样、熵翻倍） | 看日志里的 `boost_strength`（爬到 1.0 = 能和真人画像强度的机器人打平）、`place_boost`（这一轮加强局的平均名次）、`eval_boost_place`（对 100% 加强机器人的考试）和 `snapshot_tier` |
-| 第二阶段 + 模仿 | `runs\v3`（第 2338 轮起） | 同上；另外每个小批抽 256 条你的操作算交叉熵（`--bc-coef 0.02`）。自适应强度在 0.76–0.82 停了约 1000 轮、第 13 回合仍只有 3–4 本，靠奖励学不会按时升本 | 看 `human_top1`（留出局上模型首选 = 你的操作的比例）、`human_upgrade` / `human_end`（该升本 / 该结束时选对的比例），同时 `eval_place`、`boost_strength` 不能明显变差 |
-| 第二阶段 + 高分阵容 | `runs\v3`（第 3048 轮起） | 机器人局里机器人场面换成同一回合 6500+ 对局的真实阵容（`--boost-kind pro`，第 5 回合起每 2 回合，换的概率按加强局名次自动调）；升本节奏奖励改按 6500+ 等级曲线（`--tempo-curve pro`）；模仿强度按训练示范命中率自动调 | `boost_strength`（被换阵容的概率）、`eval_boost_place`（对全部换成高分阵容的机器人）、`snapshot_tier` 对比 `rl/pro_profile.json` |
-| 第二阶段 + 模仿高分玩家 | `runs\v3` | 同上；另外每个小批抽 256 条 6500+ 玩家的决策算交叉熵（`--pro-coef 0.1`，第 4359 轮起；之前 0.05，升本 ×3、结束回合 ×2、买 ×1.5）；落后于 6500+ 等级曲线每回合扣分 | `pro_top1`（留出的 36 局里模型首选 = 高分玩家操作的比例）、`pro_upgrade` / `pro_end`，以及 `snapshot_tier`、`tier_gap` |
+| 第一阶段 | `runs\v2` | 脚本机器人 + 自己的旧版本 | 考试（对普通机器人）从 4.27 名到约 1.8 名；但学会了一直待在 1–2 本（第 13 回合平均 2.8 本，真人约 5.8 本） |
+| 第二阶段 | `runs\v3` | 75% 的机器人局里机器人按真人强度加强 + 自己的旧版本；加强幅度按加强局名次自适应 | `boost_strength`、`place_boost`、`eval_boost_place`、`snapshot_tier` |
+| + 模仿你的操作 | 第 2338 轮起 | 每个小批抽你的操作算交叉熵（`bc_coef`），训练示范命中率太高时自动减弱 | `human_top1`、`human_upgrade` / `human_end` |
+| + 高分阵容 | 第 3048 轮起 | 机器人场面换成同一回合 6500+ 对局的真实阵容（`boost_kind pro`）；升本节奏按 6500+ 曲线（`tempo_curve pro`） | `boost_strength`、`eval_boost_place`、`snapshot_tier` 对比 `rl/pro_profile.json` |
+| + 模仿高分玩家 | 第 4359 轮起 | 抽 6500+ 玩家的决策算交叉熵（`pro_coef 0.1`）；落后于等级曲线扣分（`tempo_deficit`） | `pro_top1`、`pro_upgrade` / `pro_end`、`tier_gap` |
+| + 金币流向、万三 | 约第 5000 轮起（万三样本第 5100 轮起） | 落后时把升本的钱花在别处扣分（`upgrade_starve_penalty`）、剩钱扣分；加万三样本和阵容库；模仿强度按训练 / 留出命中率差自动调（`pro_gap_cap`） | `up_afford`、`up_t2`、`starve_turn`、`end_rich`、`unspent`、`pro_scale` |
+| + 阵容成型 | 第 7950 轮起 | 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范加权（`pro_weights`）；第 8661 轮起第 6 回合后结束回合按场面成型程度加分（`comp_bonus`，现为 0.08） | `comp_q`、`comp_coh`、`comp_syn`、`comp_key`，以及 `comptest.bat` |

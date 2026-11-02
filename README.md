@@ -18,6 +18,8 @@
 | 模型 | 训练（断点续训、对手库、自动回滚） | `bgrl\train.bat` |
 | 模型 | 影子模式：本回合方案、预计名次、第一步备选（只显示，不操作游戏） | `bgrl\shadow.bat` → http://localhost:8766/ |
 | 模型 | 回放检查：用你的对局逐步检查模拟器 | `bgrl\replay.bat` |
+| 模型 | 金币流向、阵容测试：模型和高分玩家并排比 | `bgrl\goldflow.bat`、`bgrl\comptest.bat` |
+| 模型 | 竞技场（TavernArena）：打包模型、练习 / 计分对局、对局查看器 | `bgrl\arena*.bat` |
 
 插件细节（算法、权重、安装 / 编译 / 发布、JSON 格式）见 [docs/插件详细说明.md](docs/插件详细说明.md)；模型部分见 [bgrl/README.md](bgrl/README.md)。
 
@@ -38,12 +40,14 @@ plugin/                     HDT 插件（C#，.NET Framework 4.7.2）
   src/Core/                 插件入口、局面读取、JSON 模型、本机 HTTP 服务（/state.json、/events、/optimize）、自动更新
   src/Sim/                  Bob's Buddy 调用（反射）和模拟调度：本场胜率、对位胜率、站位优化
 bgrl/                       模型：模拟环境桥接、训练、影子模式（Python）
-  setup.bat train.bat shadow.bat replay.bat   四个双击入口
+  *.bat                     13 个双击入口（setup、train、shadow、goldflow、comptest、prodemos、replay、tavernbench、arena×5）
   bg.py                     统一命令入口（python bg.py <命令>）
   paths.py                  路径和端口
-  tg/                       TavernGym 桥接：动作编号、对局记录解析、局面重建、回放检查
-  rl/                       模型、PPO 训练、对手库、影子模式的建议器
+  configs/v3.json           训练配方（train.bat 的全部设置）
+  tg/                       TavernGym 桥接：动作编号、观察布局、卡牌目录、对局记录解析、局面重建、回放检查
+  rl/                       模型、PPO 训练（奖励塑形、模仿学习分开放）、示范格式、阵容打分、对手库、影子模式的建议器
   tools/                    各命令的实现
+  arena/                    竞技场：模型打包、契约核对、连接器策略、对局查看器
   tests/                    单元测试和 CI 用的局面样本
   taverngym/PIN.txt         锁定的 TavernGym 版本（改这里会重新编译安装包）
 docs/                       插件详细说明、样例数据
@@ -56,9 +60,13 @@ examples/watch_state.py     订阅插件实时局面的最小示例
 ```
 HDT ──读局面──▶ 插件 ──▶ :8765/state.json、state.json、games\*.jsonl（对局记录）
                                 │                  │
-                                ▼                  ├─▶ replay（检查模拟器）、demos（模仿你的操作）
-             影子模式页面 :8766 ◀── 模型 runs\v3\latest.pt ◀── train（TavernGym 里 PPO 训练）
-                                                  └─▶ 对手强度画像（校准训练对手）
+                                │                  ├─▶ replay（检查模拟器）、demos（模仿你的操作）
+                                │                  └─▶ profile（对手强度画像，校准训练对手）
+                                ▼
+             影子模式页面 :8766 ◀── 模型 runs\v3\latest.pt ◀── train（TavernGym 里 PPO 训练，配方 configs\v3.json）
+                                          │                      ▲
+                                          │                      └── 高分示范和阵容库（Firestone 6500+、万三；只在本机）
+                                          └─▶ goldflow / comptest、tavernbench、竞技场
 ```
 
 ## 本机文件位置
