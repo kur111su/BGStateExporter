@@ -26,7 +26,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
-from tg.actions import A_BUY, A_SELL, action_family  # noqa: E402
+from tg.actions import A_BUY, A_END, A_SELL, action_family  # noqa: E402
 from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
 from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, tier, turn, up_cost  # noqa: E402
 
@@ -147,6 +147,14 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             print(f"对手：高分阵容 {sum(len(v) for v in lib.values())} 个（第 5 回合起，全强度）", flush=True)
         else:
             print("没有 runs/pro_boards.json / runs/h13_boards.json，对手是普通脚本机器人", flush=True)
+    # 阵容强度（rl/boardsim.py，和训练的 combat_bonus 同一把尺子）：模型每次结束回合时的场面打同期高分阵容的胜率
+    judge, lib = None, None
+    from rl.calibrate import merge_pro_boards as _merge
+    lib = _merge(p for p in (RUNS / "pro_boards.json", RUNS / "h13_boards.json") if p.exists())
+    if lib:
+        from rl.boardsim import BoardJudge
+        judge = BoardJudge(lib, k=12, n=3, seed=0)
+    phis: dict[int, list] = {}                         # 槽位 → [(回合, Φ)]
     picks = PickStats()
     sells: dict[str, int] = {}
     buy_rows: list = []                                # 每次买：(当时的卡牌编号, 动作)，算“围绕种族 / 搭配”的买法
@@ -186,6 +194,11 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                     sid = picks._id(int(ci[C_BOARD + ak - A_SELL]))
                     sells[sid] = sells.get(sid, 0) + 1
                 logs[i].see(int(turn(fi)), int(gold(fi)), int(tier(fi)), int(up_cost(fi)), int(a[k]))
+                if judge is not None and ak == A_END and int(turn(fi)) >= 3:
+                    g_, seat_ = env.slot(int(i))
+                    v = judge.judge(env.game(int(g_)), int(seat_), int(turn(fi)))
+                    if v is not None:
+                        phis.setdefault(int(i), []).append((int(turn(fi)), v))
             actions[ready] = a
         _, dones, inf = env.step(actions)
         for i in np.flatnonzero(dones):
@@ -212,7 +225,50 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         finals.append({"board": [base_id(x) for x in ids], "golden": sum(is_golden_id(x) for x in ids),
                        "place": places.get(i, 0)})
     info["finals"] = finals
+    info["phis"] = {i: v for i, v in phis.items()}
+    info["places"] = places
+    info["judge"], info["lib"] = judge, lib
     return [x.turns for x in logs], info
+
+
+def show_strength(info: dict, upto: int = 14) -> dict | None:
+    """每回合结束时的阵容强度 Φ（打同期 12 个高分阵容的平均胜率）：模型 / 前四名的局 / 后四名的局 / 高分阵容自己。
+    高分阵容那一列：库里同一回合的场面摆到实验局里打同一组考官（没有英雄技能、饰品，和模型那列差这一点）。"""
+    judge, phis, places = info.get("judge"), info.get("phis") or {}, info.get("places") or {}
+    if judge is None or not phis:
+        return None
+    import random as _r
+    from rl.boardsim import put_board
+    from tools.simcards import _lab
+    lab = _lab(0)
+    rng = _r.Random(1)
+    rows = {}
+    for t in range(3, upto + 1):
+        allv = [v for i, xs in phis.items() for tt, v in xs if tt == t]
+        if len(allv) < 8:
+            continue
+        top = [v for i, xs in phis.items() for tt, v in xs if tt == t and 0 < places.get(i, 0) <= 4]
+        bot = [v for i, xs in phis.items() for tt, v in xs if tt == t and places.get(i, 0) > 4]
+        pool = [e for e in (info["lib"].get(t) or []) if e.get("board")]
+        ref = []
+        for e in rng.sample(pool, min(40, len(pool))):
+            g = lab.copy()
+            if put_board(g, 0, e["board"]):
+                v = judge.judge(g, 0, t)
+                if v is not None:
+                    ref.append(v)
+        rows[t] = {"model": round(float(np.mean(allv)), 3), "n": len(allv),
+                   "top4": round(float(np.mean(top)), 3) if top else None,
+                   "bottom4": round(float(np.mean(bot)), 3) if bot else None,
+                   "pro": round(float(np.mean(ref)), 3) if ref else None}
+    if not rows:
+        return None
+    f = lambda x: "  -  " if x is None else f"{x:.2f}"   # noqa: E731
+    print("\n阵容强度（结束回合时的场面打同期 12 个高分阵容的胜率，第 t … t-3 回合各 3 个；引擎实打，平局算半场）")
+    print("回合 | 模型 | 前四名的局 | 后四名的局 | 高分阵容")
+    for t, r in rows.items():
+        print(f"{t:4d} | {f(r['model'])} |       {f(r['top4'])} |       {f(r['bottom4'])} |     {f(r['pro'])}")
+    return rows
 
 
 # ---------------- 高手（回放） ----------------
@@ -340,7 +396,7 @@ def buy_style(buy_rows: list) -> dict:
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
-    for w in ("tribe", "syn", "key", "eco"):
+    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn"):
         sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
@@ -378,6 +434,25 @@ def show_picks(picks, sells: dict) -> dict | None:
         print("  模型最常卖：" + "、".join(f"{(hc.get(k) or {}).get('name', k)} {v}" for k, v in top_sold))
     return {"key_share": round(kb / max(1, picks.n), 3), "corr": round(corr, 3) if corr is not None else None,
             "miss": [[name(k), m, p] for k, m, p in miss], "over": [[name(k), m, p] for k, m, p in over]}
+
+
+def show_simcards(picks) -> dict | None:
+    """引擎实测的关键卡（rl/sim_value.json，bg.py simcards）：模型买它们的倍率。"""
+    sp = ROOT / "rl" / "sim_value.json"
+    if not sp.exists() or picks is None or not picks.n:
+        return None
+    sv = json.loads(sp.read_text(encoding="utf-8"))
+    mt = picks.table(10)
+    rows = [(k, sv["cards"][k]["name"], sv["cards"][k]["contrib"], mt[k]["lift"]) for k in sv.get("key", []) if k in mt]
+    if not rows:
+        return None
+    low = sorted((r for r in rows if r[3] < 1.0), key=lambda r: -r[2])[:12]
+    high = sorted((r for r in rows if r[3] >= 1.5), key=lambda r: -r[3])[:8]
+    print("  引擎实测关键卡（拿掉它同期胜率掉多少）里模型不爱买的：" +
+          "、".join(f"{n} +{c:.2f}（倍率 {m:.1f}）" for _, n, c, m in low))
+    if high:
+        print("  引擎实测关键卡里模型爱买的：" + "、".join(f"{n} +{c:.2f}（倍率 {m:.1f}）" for _, n, c, m in high))
+    return {"low": [[n, c, m] for _, n, c, m in low], "high": [[n, c, m] for _, n, c, m in high]}
 
 
 def advice(model: dict, pro: dict | None) -> list[str]:
@@ -438,14 +513,24 @@ def main() -> int:
     pk = show_picks(info.get("picks"), info.get("sells") or {})
     bs = buy_style(info.get("buy_rows") or [])
     if bs:
-        print(f"  买法：围绕种族 {bs.get('tribe', 0):.0%}（高手 36%）、和场上常见搭配 {bs.get('syn', 0):.0%}（7%）、"
-              f"关键卡 {bs.get('key', 0):.0%}（59%）、经济卡 {bs.get('eco', 0):.0%}（11%）")
+        cvp = ROOT / "rl" / "card_value.json"
+        ps = (json.loads(cvp.read_text(encoding="utf-8")).get("style") if cvp.exists() else None) or \
+            {"tribe": 0.36, "syn": 0.07, "key": 0.59, "eco": 0.11}
+        zh = {"tribe": "围绕种族", "syn": "和场上常见搭配", "key": "关键卡", "eco": "经济卡",
+              "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配"}
+        print("  买法：" + "、".join(f"{zh[w]} {bs[w]:.0%}" + (f"（高手 {ps[w]:.0%}）" if w in ps else "")
+                                  for w in zh if w in bs))
         if pk is not None:
             pk["style"] = bs
+    sv = show_simcards(info.get("picks"))
+    if pk is not None and sv:
+        pk["sim"] = sv
+    strength = show_strength(info)
     out = Path(a.ckpt).resolve().parent / ("comptest.json" if a.boosted else "goldflow.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-                               "boosted": a.boosted, "turns": model, "final": comps, "picks": pk}, ensure_ascii=False, indent=1), encoding="utf-8")
+                               "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
+                               "strength": strength}, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0
 

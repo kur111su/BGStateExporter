@@ -60,9 +60,12 @@ class PickStats:
                 for cid, o in self.offered.items() if o >= min_offered}
 
 
-def from_demos(dirs: list[Path]) -> tuple[PickStats, PickStats]:
-    """(6500+ 回放, 万分以上) 两份。"""
-    from rl.demos import KINDS, load_dir
+STYLE = ("tribe", "syn", "key", "eco", "simkey", "simsyn")
+
+
+def from_demos(dirs: list[Path], style: dict | None = None) -> tuple[PickStats, PickStats]:
+    """(6500+ 回放, 万分以上) 两份。style：顺便统计高手的买法（rl/demos.bought_in 各类占买卡的比例，{类: [命中, 总数]}）。"""
+    from rl.demos import KINDS, bought_in, load_dir
     lo, hi = PickStats(), PickStats()
     kb = KINDS.index("buy")
     for d in dirs:
@@ -73,13 +76,21 @@ def from_demos(dirs: list[Path]) -> tuple[PickStats, PickStats]:
         for i in sel:
             slot = int(x["cand"][i, 0]) - 8
             (hi if int(x["mmr"][i]) >= 10000 else lo).add(x["c"][i, C_SHOP:C_SHOP + NS], slot)
+        if style is not None:
+            for w in STYLE:
+                s = bought_in({"kind": x["kind"], "c": x["c"], "cand": x["cand"]}, w)
+                if s is not None:
+                    acc = style.setdefault(w, [0, 0])
+                    acc[0] += int(s[sel].sum())
+                    acc[1] += len(sel)
     return lo, hi
 
 
 def build(dirs: list[Path]) -> dict:
     from tg.catalog import catalog
     det = catalog()
-    lo, hi = from_demos(dirs)
+    style: dict = {}
+    lo, hi = from_demos(dirs, style)
     both = PickStats()
     for src in (lo, hi):
         for k, v in src.offered.items():
@@ -106,7 +117,8 @@ def build(dirs: list[Path]) -> dict:
                  key=lambda k: -cards[k]["lift"])
     eco = sorted((cid for cid, r in cards.items() if r["eco"]), key=lambda k: -cards[k]["lift"])
     return {"source": "高分示范（runs/pro_demos 6500+ 回放 + runs/h13_demos 万三）里每次买卡时的选项", "created": time.strftime("%Y-%m-%d"),
-            "buys": both.n, "buys_6500": lo.n, "buys_13k": hi.n, "key": key, "eco": eco, "cards": cards}
+            "buys": both.n, "buys_6500": lo.n, "buys_13k": hi.n, "key": key, "eco": eco,
+            "style": {w: round(a / max(1, n), 3) for w, (a, n) in style.items()}, "cards": cards}
 
 
 def main() -> int:

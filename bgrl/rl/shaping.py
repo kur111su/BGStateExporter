@@ -4,6 +4,8 @@
   upgrade_starve_penalty 等       金币流向：落后时把升本的钱花掉、钱够升本却结束回合扣分；剩钱扣分
   refresh_waste_penalty           无效刷新：刷新后什么都没买就又刷新 / 结束回合
   comp_bonus                      阵容成型：第 comp_from_turn 回合起，结束回合按场面配合程度加分（rl/comp.py 的参照）
+  combat_bonus                    阵容强度：结束回合时让引擎拿当前场面打一组同期高分阵容（rl/boardsim.py），
+                                  胜率比上次量的时候涨了多少就加多少（势能差：整局加起来 = 最后的强度 - 第一次的强度）
 
 Trainer（rl/ppo.py）继承 ShapingMixin。这里用到 Trainer 的：cfg、iter、rollout（ep / last / r：改已经存下的奖励）、
 mix（日志计数）。每个座位的状态（upg_ep、upg_n、ref_idx、gs）在这里建；tempo_t0 存在检查点里。
@@ -12,6 +14,8 @@ _init_shaping() 在 Trainer.__init__ 里调用一次。
 from __future__ import annotations
 
 import json
+import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +39,63 @@ class ShapingMixin:
         self.upg_ep = np.full(self.n_slots, -1, dtype=np.int64)    # 每个槽位：这一局升了几次本
         self.upg_n = np.zeros(self.n_slots, dtype=np.int64)
         self.ref_idx = np.full(self.n_slots, -1, dtype=np.int64)   # 每个槽位：上一次还没买东西的刷新（本轮的步编号）
+        self.judge = None                              # 阵容强度（combat_bonus）：每个座位上次量到的强度
+        self.cs_ep = np.full(self.n_slots, -1, dtype=np.int64)
+        self.cs_prev = np.zeros(self.n_slots, dtype=np.float64)
+        self.cs_rng = random.Random(cfg.seed + 11)
+        if cfg.combat_bonus > 0:
+            self.judge = self._make_judge()
+
+    def _make_judge(self):
+        from .boardsim import BoardJudge
+        lib = getattr(self, "_pro_lib", None)
+        if not lib:
+            from paths import RUNS
+            from .calibrate import merge_pro_boards
+            paths = [Path(p) for p in str(self.cfg.pro_boards).split(";") if p.strip()] or [RUNS / "pro_boards.json"]
+            lib = merge_pro_boards(p for p in paths if p.exists())
+        if not lib:
+            print("没有高分阵容库（runs/pro_boards.json、runs/h13_boards.json），阵容强度奖励这次不用", flush=True)
+            return None
+        cfg = self.cfg
+        print(f"阵容强度奖励：每次结束回合（第 {cfg.combat_from_turn} 回合起，抽 {cfg.combat_frac:.0%}）打 "
+              f"{cfg.combat_boards} 个同期高分阵容 × {cfg.combat_fights} 场，系数 {cfg.combat_bonus}", flush=True)
+        return BoardJudge(lib, k=cfg.combat_boards, n=cfg.combat_fights, seed=cfg.seed)
+
+    def _combat_shape(self, env, off, idx, f, ak, r0):
+        """阵容强度奖励（combat_bonus）：学习者结束回合时（局面还是招募阶段的最后样子），拿这局的副本
+        让引擎打一组同期高分阵容，Φ = 平均胜率；奖励 = combat_bonus × (Φ - 这一局上次量到的 Φ)。
+        整局加起来是 combat_bonus × (最后一次 - 第一次)：为了升本暂时变弱不吃亏，之后变强补回来；
+        真正奖励的是“场面越打越强”——卡牌配合、关键卡、金色、卖掉弱的换强的，引擎都替我们算了。
+        bot 环境 40 局实测（脚本机器人）：第 7–14 回合的 Φ 和最终名次的相关系数 -0.43 到 -0.57。"""
+        cfg = self.cfg
+        if self.judge is None or cfg.combat_bonus <= 0:
+            return r0
+        ends = np.flatnonzero(ak == A_END)
+        if not len(ends):
+            return r0
+        t0 = time.time()
+        turns = np.rint(f[ends, 0] * 20).astype(int)
+        for j, t in zip(ends, turns):
+            if t < cfg.combat_from_turn or (cfg.combat_frac < 1 and self.cs_rng.random() >= cfg.combat_frac):
+                continue
+            i = int(idx[j])
+            g, seat = env.slot(i)
+            phi = self.judge.judge(env.game(int(g)), int(seat), int(t))
+            if phi is None:
+                continue
+            s = off + i
+            ep = int(self.rollout.ep[s])
+            if self.cs_ep[s] == ep:
+                r0[j] += cfg.combat_bonus * (phi - self.cs_prev[s])
+            self.cs_ep[s], self.cs_prev[s] = ep, phi
+            self.mix["cs_sum"] += phi
+            self.mix["cs_n"] += 1
+            if t >= 9:
+                self.mix["cs_late_sum"] += phi
+                self.mix["cs_late_n"] += 1
+        self.mix["t_combat"] += time.time() - t0
+        return r0
 
     def tempo_now(self) -> float:
         cfg = self.cfg
@@ -144,7 +205,8 @@ class ShapingMixin:
             for j in range(i + 1, 7):
                 syn += t["pair"][b[:, i], b[:, j]] & valid[:, i] & valid[:, j]
         keyn = (t["key"][b] & valid).sum(1)
-        q = 0.6 * np.clip((coh - 0.3) / 0.6, 0, 1) + 0.2 * np.minimum(syn, 3) / 3 + 0.2 * np.minimum(keyn, 5) / 5
+        wc, ws, wk = (float(x) for x in str(getattr(self.cfg, "comp_weights", "0.6,0.2,0.2")).split(","))
+        q = wc * np.clip((coh - 0.3) / 0.6, 0, 1) + ws * np.minimum(syn, 3) / 3 + wk * np.minimum(keyn, 5) / 5
         q = np.where(nmin >= 4, q, 0.0)
         r0[ends] += self.cfg.comp_bonus * q
         self.mix["comp_q_sum"] += float(q.sum())

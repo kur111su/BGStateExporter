@@ -49,3 +49,5 @@ jobs:
           python -X utf8 bgrl/tests/test_hsreplay.py --write-sample bgrl/runs/_replays
           python -X utf8 bgrl/bg.py prodemos bgrl/runs/_replays --workers 1 --val-every 3
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,end:2"
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,simkey:2,simsyn:2" --demo-shop-shuffle true --combat-bonus 0.3 --combat-from-turn 2 --comp-bonus 0.03 --comp-weights "1,0,0"
+          python -X utf8 bgrl/bg.py simcards --per-turn 3 --out bgrl/runs/_sim_value_ci.json

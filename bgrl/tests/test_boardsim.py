@@ -1,0 +1,135 @@
+"""阵容强度（rl/boardsim.py）、阵容强度奖励（rl/shaping.py _combat_shape）、模仿时打乱酒馆顺序（rl/demos.permute_shop）。"""
+from __future__ import annotations
+
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+def _game_at(turn: int, seed: int = 3):
+    import taverngym
+    g = taverngym.Game(seed=seed)
+    while g.turn < turn and not g.is_over():
+        for p in range(g.num_players):
+            if g.needs_action(p):
+                g.step(p, g.bot_action(p))
+    return g
+
+
+def _obs(g, p=0):
+    f, c = g.observe(p)
+    return (np.frombuffer(f, "<f4").copy(), np.frombuffer(c, "<i4").copy(),
+            np.frombuffer(g.legal_mask(p), dtype=np.uint8).astype(bool))
+
+
+def check_permute_shop():
+    """打乱后的观察 = 在引擎里把酒馆列表换成同样顺序以后再 observe() 的结果。"""
+    import taverngym
+    from rl.demos import permute_shop
+    from rl.model import Layout
+    from tg.actions import A_BUY
+    lay = Layout.from_taverngym()
+    shop_f = lay.fslices()["shop"][0]
+    checked = 0
+    for seed in range(6):
+        g = _game_at(4 + seed % 3, seed)
+        p = next((q for q in range(g.num_players) if g.needs_action(q)), None)
+        if p is None:
+            continue
+        f, c, m = _obs(g, p)
+        n = int((c[36:44] > 0).sum())
+        if n < 3:
+            continue
+
+        class R:                                       # 让 permute_shop 用指定的顺序：倒过来
+            def random(self, shape):
+                return np.tile(np.linspace(0.9, 0.1, shape[1]), (shape[0], 1))
+        cand = np.array([[A_BUY + 0, A_BUY + n - 1, 0, -1, -1, -1, -1, -1]], np.int16)
+        f2, c2, m2, cand2 = permute_shop(f[None], c[None], m[None], cand, R(), shop_f, lay.IF, lay.NS)
+        s = json.loads(g.state_json())
+        shop = s["players"][p]["shop"]
+        s["players"][p]["shop"] = shop[:n][::-1] + shop[n:]
+        h = taverngym.Game.from_json(json.dumps(s))
+        fe, ce, me = _obs(h, p)
+        assert np.array_equal(c2[0], ce), (c[36:44], c2[0, 36:44], ce[36:44])
+        assert np.allclose(f2[0], fe), np.flatnonzero(~np.isclose(f2[0], fe))[:10]
+        assert np.array_equal(m2[0], me)
+        assert cand2[0, :3].tolist() == [A_BUY + n - 1, A_BUY + 0, 0], cand2
+        checked += 1
+    assert checked >= 3, checked
+    return checked
+
+
+def check_judge():
+    """强的场面 > 弱的场面 > 空场面；副本被改不影响原局。"""
+    from rl.boardsim import BoardJudge, put_board
+    from tg.catalog import catalog
+    det = catalog()
+    mins = sorted((x for x in det.values() if x.get("kind") == "minion" and x.get("tier") in (1, 2)
+                   and not x.get("races") == ["ALL"]), key=lambda x: x["id"])[:30]
+    lib = {t: [{"tier": 2, "board": [[x["id"], 3 + t, 3 + t] for x in mins[i:i + 5]]} for i in range(0, 25, 5)]
+           for t in range(1, 12)}
+    J = BoardJudge(lib, k=4, n=3, seed=0, lag=1)
+    g = _game_at(6)
+    before = g.state_json()
+    strong, weak, empty = g.copy(), g.copy(), g.copy()
+    put_board(strong, 0, [[x["id"], 30, 30] for x in mins[:7]])
+    put_board(weak, 0, [[mins[0]["id"], 1, 1]])
+    empty.debug(json.dumps({"cmd": "clear_zone", "p": 0, "zone": "board"}))
+    vs, vw, ve = J.judge(strong, 0), J.judge(weak, 0), J.judge(empty, 0)
+    assert vs > 0.9 and vw < vs and ve <= vw, (vs, vw, ve)
+    assert g.state_json() == before
+    return vs, vw, ve
+
+
+def check_combat_shape():
+    """势能差：整局加起来 = 系数 × (最后一次 - 第一次)；换了一局重新开始算。"""
+    from rl.ppo import Trainer
+    from tg.actions import A_BUY, A_END
+
+    class FakeJudge:
+        def __init__(self):
+            self.v = iter([0.2, 0.5, 0.4, 0.9, 0.3])
+
+        def judge(self, game, seat, turn=None):
+            return next(self.v)
+
+    class FakeEnv:
+        def slot(self, i):
+            return i, 0
+
+        def game(self, g):
+            return None
+
+    t = SimpleNamespace(cfg=SimpleNamespace(combat_bonus=0.5, combat_from_turn=4, combat_frac=1.0), judge=FakeJudge(),
+                        rollout=SimpleNamespace(ep=np.zeros(2, dtype=np.int64)), mix=defaultdict(float),
+                        cs_ep=np.full(2, -1, dtype=np.int64), cs_prev=np.zeros(2))
+    f = np.zeros((1, 16), np.float32)
+    tot = []
+    for turn in (3, 4, 5, 6, 7):                       # 第 3 回合不量
+        f[0, 0] = turn / 20
+        tot.append(float(Trainer._combat_shape(t, FakeEnv(), 0, np.array([0]), f, np.array([A_END]), np.zeros(1))[0]))
+    assert tot[0] == 0.0 and abs(sum(tot) - 0.5 * (0.9 - 0.2)) < 1e-9, tot
+    t.rollout.ep[0] = 1                                # 新的一局：第一次量只记下，不给分
+    f[0, 0] = 5 / 20
+    assert Trainer._combat_shape(t, FakeEnv(), 0, np.array([0]), f, np.array([A_END]), np.zeros(1))[0] == 0.0
+    assert Trainer._combat_shape(t, FakeEnv(), 0, np.array([0]), f, np.array([A_BUY]), np.zeros(1))[0] == 0.0
+    return tot
+
+
+def main() -> int:
+    n = check_permute_shop()
+    j = check_judge()
+    tot = check_combat_shape()
+    print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

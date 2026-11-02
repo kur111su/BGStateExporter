@@ -92,13 +92,40 @@ def load_dir(path) -> dict | None:
     return d
 
 
+# ---------------- 打乱酒馆顺序（模仿时的数据增强） ----------------
+
+def permute_shop(f, c, m, cand, rng, shop_f: int, item_f: int = 40, n_shop: int = 8):
+    """每条样本把酒馆里有东西的那几格随机换个顺序：观察里每格的浮点块（从 shop_f 开始，每格 item_f 个）、
+    卡牌编号（C_SHOP 起）、合法动作里的“买第几格”、示范动作里的“买第几格”一起换。空格留在后面（和引擎一样）。
+    返回新数组，不改原来的。tests/test_boardsim.py 核对：和在引擎里把酒馆列表换顺序后再 observe() 完全一样。"""
+    from tg.actions import A_BUY
+    B = len(c)
+    occ = np.asarray(c[:, C_SHOP:C_SHOP + n_shop]) > 0
+    key = np.where(occ, rng.random((B, n_shop)), 2.0 + np.arange(n_shop))
+    perm = np.argsort(key, 1)                       # 新第 k 格 = 原来第 perm[b, k] 格
+    inv = np.argsort(perm, 1)                       # 原来第 k 格 → 新的第 inv[b, k] 格
+    f = np.array(f, copy=True)
+    blk = f[:, shop_f:shop_f + n_shop * item_f].reshape(B, n_shop, item_f)
+    f[:, shop_f:shop_f + n_shop * item_f] = np.take_along_axis(blk, perm[:, :, None], 1).reshape(B, -1)
+    c = np.array(c, copy=True)
+    c[:, C_SHOP:C_SHOP + n_shop] = np.take_along_axis(c[:, C_SHOP:C_SHOP + n_shop], perm, 1)
+    m = np.array(m, copy=True)
+    m[:, A_BUY:A_BUY + n_shop] = np.take_along_axis(m[:, A_BUY:A_BUY + n_shop], perm, 1)
+    cand = np.array(cand, copy=True)
+    rows, cols = np.nonzero((cand >= A_BUY) & (cand < A_BUY + n_shop))
+    cand[rows, cols] = A_BUY + inv[rows, cand[rows, cols] - A_BUY]
+    return f, c, m, cand
+
+
 # ---------------- 按买的是什么卡挑示范（--bc-weights / --pro-weights 的 key、eco、tribe、syn） ----------------
 
 def bought_in(d, which: str, root: Path | None = None):
     """哪些示范是“买了一张 …… 的卡”（买的那格的卡牌），返回布尔数组（参照文件不在时返回 None）：
       key / eco  在 rl/card_value.json 的关键卡 / 经济卡里
       tribe      是随从，而且场上已经有 ≥ 2 个和它同种族的随从（全种族算任何种族）——围绕主种族成型
-      syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动"""
+      syn        和场上某个随从是高手常见搭配（rl/h13_profile.json 里提升度 ≥ 3 的组合）——卡牌联动
+      simkey     在引擎实测的关键卡里（rl/sim_value.json，bg.py simcards：拿掉它胜率掉得多）
+      simsyn     和场上某个随从是引擎实测的好搭配（rl/sim_value.json 的 pairs）"""
     if "c" not in d:
         return None
     from tg.catalog import base_of_index, catalog, n_cards
@@ -110,6 +137,20 @@ def bought_in(d, which: str, root: Path | None = None):
     buy, slot = buy[ok], slot[ok]
     cards = d["c"][buy, C_SHOP + slot]
     sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which in ("simkey", "simsyn"):
+        from .comp import load_sim_refs
+        if not (root / "sim_value.json").exists():
+            return None
+        spairs, skey = load_sim_refs(root)
+        if which == "simkey":
+            idx = [i for i, b in base.items() if b in skey]
+            sel[buy[np.isin(cards, idx)]] = True
+            return sel
+        pairs = {q for x, y in spairs for q in ((x, y), (y, x))}
+        for row, x in zip(buy, cards):
+            bx = base.get(int(x))
+            sel[row] = any((bx, base.get(int(y))) in pairs for y in d["c"][row, C_BOARD:C_BOARD + 7] if y > 0)
+        return sel
     if which in ("key", "eco"):
         cv = root / "card_value.json"
         if not cv.exists():

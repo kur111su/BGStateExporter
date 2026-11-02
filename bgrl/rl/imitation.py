@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .demos import KINDS, SHARD_KEYS, bought_in, load as load_demos, load_dir
+from .demos import KINDS, SHARD_KEYS, bought_in, load as load_demos, load_dir, permute_shop
 
 
 class ImitationMixin:
@@ -82,11 +82,15 @@ class ImitationMixin:
               f"模仿系数 {self.cfg.pro_coef}", flush=True)
         return d
 
-    def _demo_tensors(self, j, d=None):
+    def _demo_tensors(self, j, d=None, shuffle: bool = False):
+        """示范第 j 条（数组）→ 张量。shuffle：酒馆顺序随机打乱（demo_shop_shuffle，只在训练时用，考试不打乱）。"""
         d = self.demos if d is None else d
+        f, c, m, cand = d["f"][j], d["c"][j], d["m"][j], d["cand"][j]
+        if shuffle:
+            f, c, m, cand = permute_shop(f, c, m, cand, self.bc_rng, self.model.L.fslices()["shop"][0], self.model.L.IF,
+                                         self.model.L.NS)
         t = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
-        return (t(d["f"][j], torch.float32), t(d["c"][j], torch.long), t(d["m"][j], torch.bool),
-                t(d["cand"][j].astype(np.int64), torch.long))
+        return (t(f, torch.float32), t(c, torch.long), t(m, torch.bool), t(cand.astype(np.int64), torch.long))
 
     def _demo_logp(self, f, c, m, compressed=False):
         with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
@@ -102,7 +106,7 @@ class ImitationMixin:
                 k, v = part.split(":", 1)
                 if k in KINDS:
                     w[KINDS.index(k)] = float(v)
-                elif k in ("key", "eco", "tribe", "syn"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
+                elif k in ("key", "eco", "tribe", "syn", "simkey", "simsyn"):     # 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范再乘（见 _bought_in）
                     tw.append((k, None, float(v)))
                 elif k[:1] == "t" and "turn" in d:              # 按回合再乘：t2:3 第 2 回合 ×3，t3-6:2 第 3–6 回合 ×2
                     lo, _, hi = k[1:].partition("-")
@@ -111,7 +115,7 @@ class ImitationMixin:
         for k, v in w.items():
             out[d["kind"] == k] = v
         for lo, hi, v in tw:
-            if lo in ("key", "eco", "tribe", "syn"):
+            if lo in ("key", "eco", "tribe", "syn", "simkey", "simsyn"):
                 sel = bought_in(d, lo)
                 if sel is not None:
                     out[sel] *= v
@@ -126,7 +130,7 @@ class ImitationMixin:
         wts = self.bc_w if wts is None else wts
         batch = batch or self.cfg.bc_batch
         j = self.bc_rng.choice(d["train_idx"], size=min(batch, len(d["train_idx"])))
-        f, c, m, cand = self._demo_tensors(j, d)
+        f, c, m, cand = self._demo_tensors(j, d, shuffle=self.cfg.demo_shop_shuffle)
         lp_all = self._demo_logp(f, c, m, bool(d.get("compressed")))
         lp = lp_all.gather(1, cand.clamp(min=0)).masked_fill(cand < 0, float("-inf"))
         nll = -torch.logsumexp(lp, 1)                  # 候选有几个（磁力吸附目标不确定）时，任一个都算对

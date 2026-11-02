@@ -10,6 +10,7 @@
   prodemos  高分对局回放（Firestone 6500+ 分享包的 rawxml-sanitized）→ 高分玩家决策样本 runs/pro_demos/
   nativedemos  别人的对局（TavernGym 观察格式 .npz）→ 决策样本 runs/h13_demos + 阵容库 runs/h13_boards.json
   cardvalue 高手怎么挑卡：每张卡的挑中倍率、关键卡、经济卡 → rl/card_value.json（tools/cardvalue.py）
+  simcards  引擎实测的卡牌价值和配合：高分场面拿掉一 / 两张卡再打 → rl/sim_value.json（tools/simcards.py）
   goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
@@ -33,7 +34,7 @@ sys.path.insert(0, str(ROOT))
 
 TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
          "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
-         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue",
+         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards",
          "profile": "opp_profile", "bench": "tg_bench"}
 
 
@@ -46,7 +47,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 def _test() -> int:
     rc = 0
     for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
-              "test_layout.py", "test_recipe.py"):
+              "test_layout.py", "test_recipe.py", "test_boardsim.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")

@@ -71,6 +71,16 @@ def board_scores(ids: list[str], det: dict, pairs: set, key: set) -> dict:
             "key": sum(1 for x in ids if x in key)}
 
 
+def load_sim_refs(root: Path = REFS) -> tuple[set, set]:
+    """(引擎实测的好搭配 {(id, id)}，引擎实测的关键卡 {id})：rl/sim_value.json（bg.py simcards 生成）；没有时都是空的。
+    好搭配 = 两张一起在场比各自单独多赢 ≥ 2 个百分点。"""
+    p = Path(root) / "sim_value.json"
+    if not p.exists():
+        return set(), set()
+    v = json.loads(p.read_text(encoding="utf-8"))
+    return {tuple(sorted((r[4], r[5]))) for r in v.get("pairs", []) if r[0] >= 0.02}, set(v.get("key", []))
+
+
 def load_comp_refs(root: Path = REFS) -> tuple[set, set]:
     """(高手常见搭配 {(id, id)}, 关键卡 {id})：rl/h13_profile.json 和 rl/card_value.json。"""
     pairs, key = set(), set()

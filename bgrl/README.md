@@ -12,7 +12,7 @@
 | `train.bat` | 训练 `runs\v3`（设置全在 `configs\v3.json`，见下面“训练配方”），关掉窗口再开会接着练；`runs\v3` 还没有模型时从 `runs\v2\latest.pt` 开始。每次启动先按新对局重建 `runs\demos.npz`。命令行再写的参数优先：`train.bat --threads 4` | `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
 | `shadow.bat` | 影子模式 http://localhost:8766/：模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮。换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `goldflow.bat` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` | 屏幕；`runs\v3\goldflow.json` |
-| `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）和挑卡（关键卡 / 经济卡）和万三玩家 | 屏幕；`runs\v3\comptest.json` |
+| `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）、挑卡（关键卡 / 经济卡 / 引擎实测关键卡）和每回合的阵容强度（场面打同期高分阵容的胜率，前四 / 后四 / 高分阵容自己） | 屏幕；`runs\v3\comptest.json` |
 | `prodemos.bat` | 从 Firestone 6500+ 分享包（默认 `data\firestone` 里的 5 个 zip，不用解压）生成高分决策样本，约 10–20 分钟 | `runs\pro_demos\`（只在本机） |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 | `tavernbench.bat` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 | `reports\tavernbench\<模型>\report.txt` |
@@ -38,7 +38,8 @@
 | `prolib` | `tools/pro_library.py` | Firestone 分享包的 `core/games.jsonl` → 高分阵容库 `runs\pro_boards.json`（只在本机）和汇总曲线 `rl/pro_profile.json` |
 | `prodemos` | `tools/make_pro_demos.py` | Firestone 回放 → 6500+ 决策样本 `runs\pro_demos\`。回放 XML 由 `tg/hsreplay.py` 读成插件格式记录，之后和你的对局走同一条路（切动作 → TavernGym 重建 → 观察 + 动作编号） |
 | `nativedemos` | `tools/native_demos.py` | 已经是 TavernGym 观察格式的别人对局（例如万三的 `human_native_v0.npz`）→ 决策样本 `runs\h13_demos\`、对手阵容库 `runs\h13_boards.json`、汇总 `rl/h13_profile.json`（升本节奏、最终阵容、常见搭配，只有统计数字） |
-| `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡 `rl/card_value.json`（只有统计数字） |
+| `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡、高手的买法比例 `rl/card_value.json`（只有统计数字） |
+| `simcards` | `tools/simcards.py` | 引擎实测的卡牌价值和配合：高分阵容库里的场面在 TavernGym 里拿掉一张 / 两张卡再打同期高分阵容，看胜率掉多少 → `rl/sim_value.json`（关键卡、好搭配，只有统计数字；约 2–3 分钟） |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
 | `tavernbench` | `tools/tavernbench.py` | C3 TavernBench 评测；`--ckpt` 指定模型、`--smoke` 冒烟 |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
@@ -78,12 +79,13 @@ rl/               模型和训练
   shaping.py      奖励塑形（Trainer 继承）：升本节奏、金币流向、无效刷新、阵容成型，每个座位的塑形状态
   imitation.py    模仿学习（Trainer 继承）：读示范、按类别 / 回合 / 卡牌加权、损失、命中率、模仿强度自动调
   demos.py        示范数据格式：动作类别 KINDS、读写单文件和分片、soft_log、按买的卡挑示范（bought_in）
-  comp.py         最终阵容打分：主种族纯度、常见搭配、关键卡（训练、goldflow、nativedemos 共用）
+  comp.py         最终阵容打分：主种族纯度、常见搭配、关键卡（训练、goldflow、nativedemos 共用）；读 sim_value.json
+  boardsim.py     阵容强度：用引擎的战斗模拟（combat_preview）量场面打同期高分阵容的胜率（阵容强度奖励、simcards、comptest 用）
   league.py       对手库：快照按“和真人强度画像的距离”加权；考试对手
   calibrate.py    机器人加强：按真人画像放大攻防（BotBooster）或换成高分真人阵容（ProBoardBooster），强度自适应
   advisor.py      影子模式的建议器：贪心走完本回合、跳过无效动作、第一步备选、预计名次
   *.json          只有汇总统计的参照数据：real_profile（你的对手画像）、pro_profile（6500+ 曲线）、
-                  h13_profile（万三阵容和搭配）、card_value（关键卡、经济卡）
+                  h13_profile（万三阵容和搭配）、card_value（关键卡、经济卡）、sim_value（引擎实测的关键卡和配合）
 
 tools/            bg.py 各命令的实现（见上表）；make_fixtures.py、make_replay_fixture.py 生成 CI 样本
 arena/            竞技场：export / prep / agent / arena_client / viewer
@@ -129,3 +131,4 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | + 模仿高分玩家 | 第 4359 轮起 | 抽 6500+ 玩家的决策算交叉熵（`pro_coef 0.1`）；落后于等级曲线扣分（`tempo_deficit`） | `pro_top1`、`pro_upgrade` / `pro_end`、`tier_gap` |
 | + 金币流向、万三 | 约第 5000 轮起（万三样本第 5100 轮起） | 落后时把升本的钱花在别处扣分（`upgrade_starve_penalty`）、剩钱扣分；加万三样本和阵容库；模仿强度按训练 / 留出命中率差自动调（`pro_gap_cap`） | `up_afford`、`up_t2`、`starve_turn`、`end_rich`、`unspent`、`pro_scale` |
 | + 阵容成型 | 第 7950 轮起 | 买关键卡 / 经济卡 / 同种族 / 常见搭配的示范加权（`pro_weights`）；第 8661 轮起第 6 回合后结束回合按场面成型程度加分（`comp_bonus`，现为 0.08） | `comp_q`、`comp_coh`、`comp_syn`、`comp_key`，以及 `comptest.bat` |
+| + 阵容强度 | 第 11600 轮起 | 结束回合时引擎拿场面打 12 个同期高分阵容，胜率涨多少加多少（`combat_bonus 0.3`，势能差）；阵容成型奖励只留主种族纯度（`comp_bonus 0.03`）；模仿时打乱酒馆顺序防背题（`demo_shop_shuffle`）；模仿权重加引擎实测关键卡 / 好搭配（`simkey`、`simsyn`） | `cs_wr`、`cs_late`、`t_combat`、`pro_top1` 和 `pro_top1_train` 的差距，以及 `comptest.bat` 的阵容强度表 |
