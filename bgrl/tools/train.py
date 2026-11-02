@@ -4,7 +4,9 @@
   python train.py --smoke                    几轮极小规模训练，检查能跑通（CI / 装好后先跑这个）
   python train.py --bench [--size small|medium|large]   测速：每秒多少决策、采样/更新各多久、显存（不存检查点）
   python train.py --run runs/v1 [--iters 2000] [--resume]   正式训练
+  python train.py --recipe configs/v3.json --resume        按配方文件训练（train.bat 就是这样）
 其它参数见 --help（和 bgrl/rl/ppo.py 的 Config 一一对应）。
+优先级：Config 默认值 < 配方文件（--recipe）的 config < 命令行参数。配方里还可以写 run（训练目录）。
 """
 from __future__ import annotations
 
@@ -20,8 +22,29 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 
-def main() -> int:
-    from rl.ppo import Config, Trainer
+def load_recipe(path: str) -> dict:
+    """读配方文件：先按当前目录找，找不到再按 bgrl 目录找。config 里的每一项必须是 Config 的字段，类型按默认值转换。"""
+    from rl.ppo import Config
+    p = Path(path.replace("\\", "/"))                  # train.bat 写的是 configs\v3.json
+    if not p.exists() and not p.is_absolute():
+        p = HERE.parent / path
+    if not p.exists():
+        raise SystemExit(f"配方文件不存在：{path}")
+    r = json.loads(p.read_text(encoding="utf-8"))
+    fields = {f.name: f for f in dataclasses.fields(Config)}
+    out = {}
+    for k, v in (r.get("config") or {}).items():
+        if k not in fields or k == "run_dir":
+            raise SystemExit(f"配方 {p}：不认识的参数 {k}")
+        d = fields[k].default
+        out[k] = v if isinstance(d, bool) or d is None else type(d)(v)
+    r["config"] = out
+    return r
+
+
+def parse(argv=None):
+    """命令行 → (Config, 参数)。Config 默认值 < 配方 < 命令行；--smoke / --bench 的固定设置在 main 里再改。"""
+    from rl.ppo import Config
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--bench", action="store_true")
@@ -29,17 +52,29 @@ def main() -> int:
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--stage", action="store_true", help="新阶段：以当前策略为锚加 KL 约束")
     ap.add_argument("--init", default="", help="新训练从这个检查点 / 快照的参数开始（已有 latest.pt 时忽略）")
+    ap.add_argument("--recipe", default="", help="配方文件（JSON，例如 configs/v3.json）：训练目录和参数，命令行参数优先")
     for f in dataclasses.fields(Config):
         if f.name == "run_dir":
             continue
         ap.add_argument("--" + f.name.replace("_", "-"), type=type(f.default) if not isinstance(f.default, bool) else
                         (lambda s: s.lower() in ("1", "true", "yes")), default=None)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     cfg = Config()
+    recipe = load_recipe(a.recipe) if a.recipe else {}
+    for k, v in (recipe.get("config") or {}).items():
+        setattr(cfg, k, v)
+    if not a.run and recipe.get("run"):
+        a.run = recipe["run"]
     for f in dataclasses.fields(Config):
         v = getattr(a, f.name, None)
         if v is not None:
             setattr(cfg, f.name, v)
+    return cfg, a
+
+
+def main() -> int:
+    from rl.ppo import Trainer
+    cfg, a = parse()
     root = HERE.parent
     if a.smoke:
         cfg.games_bot, cfg.games_league, cfg.steps_per_iter = 4, 2, 64

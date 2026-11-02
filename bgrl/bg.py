@@ -1,6 +1,6 @@
 """bgrl 的统一入口：python bg.py <命令> [参数]（Windows 上双击对应的 .bat 即可）。
 
-  train     训练（train.bat 用它接着 runs/v2 练；参数同 tools/train.py：--smoke、--bench、--run、--iters …）
+  train     训练（train.bat = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
   shadow    影子模式：http://localhost:8766/ 显示模型建议和插件的 Bob's Buddy 模拟结果（参数同 tools/shadow.py：--ckpt、--device …）
   replay    A5 回放检查：用你的对局记录逐步检查模拟器（参数同 tools/tg_replay.py：--last N …）
   shadow-eval  影子模式评估：模型建议和你实际操作对得上多少（tools/shadow_eval.py）
@@ -46,7 +46,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 def _test() -> int:
     rc = 0
     for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
-              "test_layout.py"):
+              "test_layout.py", "test_recipe.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")
