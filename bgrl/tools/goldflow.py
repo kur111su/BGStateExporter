@@ -28,7 +28,7 @@ sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
 from tg.actions import A_BUY, A_END, A_SELL, action_family  # noqa: E402
 from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
-from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, tier, turn, up_cost  # noqa: E402
+from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, lobby, tier, turn, up_cost  # noqa: E402
 
 PROFILE = ROOT / "rl" / "pro_profile.json"
 COLS = ("upgrade", "buy", "refresh", "activate", "dark_gift", "hero_power", "other")
@@ -162,6 +162,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     done = [False] * env.n_slots
     places = {}
     last_cards = [None] * env.n_slots                  # 每局最后一次招募时的场面（最终阵容）
+    last_lobby = [None] * env.n_slots                  # 每局开放的种族（哪几套目标阵容凑得成）
     obs = env.observe()
     t0, shown = _t.time(), 0
     print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
@@ -186,6 +187,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 fi = f[k]
                 ci = obs["cards"][i]
                 last_cards[i] = ci[C_BOARD:C_BOARD + N_BOARD].copy()
+                last_lobby[i] = lobby(fi)
                 ak = int(a[k])
                 if A_BUY <= ak < A_BUY + N_SHOP:
                     picks.add(ci[C_SHOP:C_SHOP + N_SHOP], ak - A_BUY)
@@ -223,7 +225,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             continue
         ids = [card_id(int(x)) for x in row if x > 0]
         finals.append({"board": [base_id(x) for x in ids], "golden": sum(is_golden_id(x) for x in ids),
-                       "place": places.get(i, 0)})
+                       "place": places.get(i, 0), "lobby": last_lobby[i]})
     info["finals"] = finals
     info["phis"] = {i: v for i, v in phis.items()}
     info["places"] = places
@@ -460,7 +462,33 @@ def show_targets(finals: list[dict]) -> dict | None:
           f"平均接近程度 {np.mean(phis):.2f}（S 级凑齐 = 1）")
     print("    " + "、".join(f"{k} {r['n'] / n:.0%}" + (f"（平均 {np.mean(r['places']):.2f} 名）" if r["places"] else "")
                            for k, r in order))
-    return {"share": {t: round(v, 3) for t, v in tiers.items()}, "q": round(float(np.mean(phis)), 3),
+    # 只看本局凑得成的：核心卡的种族本局开了（训练的目标阵容奖励也只算这些）
+    from rl.comp import reachable
+    reach = {}
+    can_sa, got_sa, sa_places, other_places = 0, 0, [], []
+    for x in fb:
+        lob = x.get("lobby")
+        ok = [c for c in comps if reachable(c, lob)]
+        for c in ok:
+            r = reach.setdefault(f"{c['tier']} {c['name']}", [0, 0])
+            r[0] += 1
+            r[1] += len(c["core"] & set(x["board"])) / len(c["core"]) >= 0.5
+        if any(c["tier"] in "SA" for c in ok):
+            can_sa += 1
+            c, _ = nearest_comp(x["board"], comps, lob=lob)
+            hit = c is not None and c["tier"] in "SA"
+            got_sa += hit
+            if x.get("place"):
+                (sa_places if hit else other_places).append(x["place"])
+    sa = {"games": can_sa, "formed": round(got_sa / max(1, can_sa), 3),
+          "place_formed": round(float(np.mean(sa_places)), 2) if sa_places else None,
+          "place_other": round(float(np.mean(other_places)), 2) if other_places else None}
+    print(f"  本局凑得成 S / A 阵容的局 {can_sa / n:.0%}；这些局里最终成了 S / A 的 {sa['formed']:.0%}"
+          + (f"（平均 {sa['place_formed']:.2f} 名，没成的 {sa['place_other']:.2f} 名）" if sa_places and other_places else ""))
+    top = sorted(((k, v) for k, v in reach.items() if k[0] in "SA"), key=lambda kv: ("SA".index(kv[0][0]), -kv[1][0]))
+    print("    凑得成的局里成型的比例：" + "、".join(f"{k} {v[1] / max(1, v[0]):.0%}（{v[0]} 局能凑）" for k, v in top))
+    return {"share": {t: round(v, 3) for t, v in tiers.items()}, "q": round(float(np.mean(phis)), 3), "sa_reach": sa,
+            "reach": {k: {"games": v[0], "formed": round(v[1] / max(1, v[0]), 3)} for k, v in top},
             "comps": {k: {"share": round(r["n"] / n, 3), "place": round(float(np.mean(r["places"])), 2) if r["places"] else None}
                       for k, r in order}}
 

@@ -96,34 +96,64 @@ def load_comp_refs(root: Path = REFS) -> tuple[set, set]:
 
 # ---------------- 目标阵容（rl/target_comps.json：bgbuddy.gg 的 S / A / B 级终局阵容和核心卡） ----------------
 
-def load_target_comps(root: Path = REFS) -> list[dict]:
-    """[{name, tier, w（S 1.0 / A 0.8 / B 0.6）, core: {卡牌 ID}}]；没有文件时空列表。"""
+def parse_tier_weights(spec) -> dict:
+    """"S:1,A:0.85,B:0.4" → {"S": 1.0, …}；空 = 用 target_comps.json 里的。"""
+    out = {}
+    for part in str(spec or "").replace(" ", "").split(","):
+        if ":" in part:
+            k, v = part.split(":", 1)
+            out[k] = float(v)
+    return out
+
+
+def load_target_comps(root: Path = REFS, weights=None) -> list[dict]:
+    """[{name, tier, w（默认 S 1.0 / A 0.8 / B 0.6，weights 可以改）, core: {卡牌 ID}, need: [本局要开的种族]}]；没有文件时空列表。
+    need：每张核心卡一项，这张卡的种族（中立 / 全种族的不算）——这些种族本局都没开，这张卡就不会出现，这套凑不成。"""
     p = Path(root) / "target_comps.json"
     if not p.exists():
         return []
     v = json.loads(p.read_text(encoding="utf-8"))
-    tw = v.get("tiers") or {"S": 1.0, "A": 0.8, "B": 0.6}
-    return [{"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
-             "avg_place": c.get("avg_place")} for c in v.get("comps", [])]
+    tw = {**(v.get("tiers") or {"S": 1.0, "A": 0.8, "B": 0.6}), **parse_tier_weights(weights)}
+    det = catalog()
+    out = []
+    for c in v.get("comps", []):
+        need = []
+        for cid in c["core"]:
+            rs = set((det.get(cid) or {}).get("races") or [])
+            if rs and "ALL" not in rs:
+                need.append(frozenset(rs))
+        out.append({"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
+                    "avg_place": c.get("avg_place"), "need": need})
+    return out
 
 
-def target_score(ids, comps: list[dict]) -> tuple[float, dict | None, float]:
-    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比, 那一套, 核心卡占比)。"""
+def reachable(comp: dict, lob) -> bool:
+    """本局开放的种族 lob（集合；None = 不知道，算能凑成）下，这套阵容的核心卡都可能出现。"""
+    return lob is None or all(n & lob for n in comp.get("need") or [])
+
+
+def target_score(ids, comps: list[dict], lob=None) -> tuple[float, dict | None, float]:
+    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比, 那一套, 核心卡占比)。
+    lob：本局开放的种族——只算本局凑得成的那几套。"""
     have = set(ids)
     best, comp, frac = 0.0, None, 0.0
     for c in comps:
+        if not reachable(c, lob):
+            continue
         fr = len(c["core"] & have) / len(c["core"])
         if c["w"] * fr > best:
             best, comp, frac = c["w"] * fr, c, fr
     return best, comp, frac
 
 
-def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5) -> tuple[dict | None, float]:
+def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5, lob=None) -> tuple[dict | None, float]:
     """最终阵容算哪一套：核心卡占比最高的那套（一样高时等级高的优先），占比不到 min_frac 算“不像任何一套”。"""
     have = set(ids)
     order = {"S": 0, "A": 1, "B": 2}
     best = None
     for c in comps:
+        if not reachable(c, lob):
+            continue
         fr = len(c["core"] & have) / len(c["core"])
         key = (fr, -order.get(c["tier"], 3), -(c.get("avg_place") or 9))
         if fr >= min_frac and (best is None or key > best[0]):

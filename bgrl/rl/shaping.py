@@ -159,13 +159,16 @@ class ShapingMixin:
         if getattr(self, "_tgt", None) is None:
             from tg.catalog import base_of_index, n_cards
             from .comp import load_target_comps
-            self._tgt = ([base_of_index(i) if i else "" for i in range(n_cards())], load_target_comps())
+            self._tgt = ([base_of_index(i) if i else "" for i in range(n_cards())],
+                         load_target_comps(weights=getattr(self.cfg, "target_weights", "")))
         return self._tgt
 
     def _target_shape(self, slots, f, c, ak, r0):
         """目标阵容奖励（target_bonus）：第 target_from_turn 回合起结束回合时，Φ = max（等级权重 × 场上核心卡占比），
         奖励 = target_bonus × (Φ - 这局上次的 Φ)。例：场上放下布莱恩·铜须 → 喝茶流 1/3、野猪人·邪能野猪人 1/3 …… Φ = 0.33；
-        再凑齐巴琳达 → 0.67。整局加起来 = target_bonus × 最后一次的 Φ：最后成了 S 级阵容拿得最多。"""
+        再凑齐巴琳达 → 0.67。整局加起来 = target_bonus × 最后一次的 Φ：最后成了 S 级阵容拿得最多。
+        只算本局凑得成的那几套（核心卡的种族本局开了；tg/obs.lobby）：没开野猪人的局里不追邪能野猪人那套。"""
+        from tg.obs import lobby
         from .comp import target_score
         ends = np.flatnonzero(ak == A_END)
         if not len(ends):
@@ -178,7 +181,7 @@ class ShapingMixin:
             if t < getattr(self.cfg, "target_from_turn", 5):
                 continue
             ids = [base[int(x)] for x in np.asarray(c[j])[C_BOARD:C_BOARD + 7] if 0 < int(x) < len(base)]
-            phi = target_score(ids, comps)[0]
+            phi = target_score(ids, comps, lobby(f[j]))[0]
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
             prev = self.tg_prev[s] if self.tg_ep[s] == ep else 0.0

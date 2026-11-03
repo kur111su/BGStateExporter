@@ -238,7 +238,7 @@ def check_targets():
     t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
                         rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)),
                         tg_ep=np.full(1, -1, dtype=np.int64), tg_prev=np.zeros(1))
-    f = np.zeros((1, 16), np.float32)
+    f = np.zeros((1, 64), np.float32)                                   # 本局种族全没开：只剩喝茶流（中立 + 全种族）凑得成
     c = np.zeros((1, 124), np.int64)
     got = []
     for turn, board in ((4, ["BG_LOE_077"]), (6, ["BG_LOE_077"]), (7, list(tea["core"])), (8, ["BG26_135"])):
@@ -254,7 +254,46 @@ def check_targets():
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": cc, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "tgtS").tolist() == [True, True] and bought_in(d, "tgtB").tolist() == [True, True]
     assert bought_in(d, "tgtfit").tolist() == [False, True]
+
+    # 本局凑不成的阵容不算：没开野猪人时邪能野猪人那套（S）不追
+    from rl.comp import reachable
+    boar = next(c for c in comps if c["name"] == "野猪人·邪能野猪人")
+    apm = next(c for c in comps if c["name"] == "机械 APM")
+    assert reachable(tea, frozenset()) and not reachable(apm, frozenset({"BEAST"})) and reachable(apm, frozenset({"MECHANICAL"}))
+    assert reachable(boar, frozenset({"DEMON"})) and not reachable(boar, frozenset({"BEAST"}))   # 邪能野猪人是恶魔 / 野猪人
+    assert target_score(list(apm["core"]), comps, frozenset({"BEAST"}))[0] == 0.0
+    assert target_score(list(apm["core"]), comps, frozenset({"MECHANICAL"}))[0] == 1.0
+    w = load_target_comps(weights="S:1,A:0.85,B:0.4")
+    assert {c["tier"]: c["w"] for c in w} == {"S": 1.0, "A": 0.85, "B": 0.4}
     return got
+
+
+def check_lobby():
+    """观察里本局开放的种族（tg/obs.F_LOBBY）和 view()["lobby_races"] 一致；老师 KL 在“酒馆里有凑得成的 S / A 核心卡”时加权。"""
+    import taverngym
+    from rl.ppo import Trainer
+    from tg.catalog import card_id, n_cards
+    from tg.obs import F_LOBBY, lobby, lobby_bits
+    for seed in range(12):
+        g = taverngym.Game(seed=seed)
+        f = _obs(g)[0]
+        assert lobby(f) == frozenset(json.loads(g.view(0))["lobby_races"]), seed
+        assert lobby(np.log1p(f)) == lobby(f)                         # 训练数据里压缩过（soft_log）也认得
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    f = np.zeros((3, 64), np.float32)
+    f[0, F_LOBBY["MECHANICAL"]] = 1.0
+    f[2, F_LOBBY["MECHANICAL"]] = 0.69
+    c = np.zeros((3, 124), np.int32)
+    from rl.comp import load_target_comps
+    apm = next(x for x in load_target_comps() if x["name"] == "机械 APM")
+    core = sorted(apm["core"])[0]
+    c[:, 37] = idx[core]                                                # 酒馆第 2 格：机械 APM 的核心卡
+    t = SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0))
+    w = Trainer._teacher_rows(t, f, c)
+    assert w.tolist() == [3.0, 1.0, 3.0], w                            # 第 2 行本局没开机械：凑不成，不加权
+    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=1.0)), f, c) is None
+    assert lobby_bits(f).tolist()[1] == 0
+    return True
 
 
 def check_choose():
@@ -306,6 +345,7 @@ def main() -> int:
     tg = check_targets()
     check_choose()
     check_teacher()
+    check_lobby()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

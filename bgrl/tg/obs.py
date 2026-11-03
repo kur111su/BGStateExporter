@@ -11,6 +11,7 @@
   F_MAX_BONUS  金币上限额外加了几 / BONUS_SCALE（永久）
   F_BOARD   场上随从起点，每格 MINION_F 个；格内 MF_ATK / MF_HP = 攻 / 血 ÷ 10，MF_GOLDEN = 金色
   F_CHOICE  待选项起点，每格 ITEM_F 个
+  F_LOBBY   本局开放的种族（每个种族一位，1 / 0；训练数据压缩后是 0.69 / 0），见 lobby()
 卡牌编号（cards）：
   C_POWERS 英雄技能（2 格）、C_BOARD 场上（N_BOARD 格）、C_HAND 手牌（N_HAND）、C_SHOP 酒馆（N_SHOP）、C_CHOICE 待选（N_CHOICE）
 """
@@ -27,6 +28,10 @@ MF_ATK, MF_HP, MF_GOLDEN = 1, 2, 5
 F_CHOICE = 1005
 
 C_POWERS, C_BOARD, C_HAND, C_SHOP, C_CHOICE = 1, 19, 26, 36, 44
+# 本局开放的种族：40 个种子的 view()["lobby_races"] 和观察逐位比对找出来的（tests/test_boardsim.py check_lobby 核对）
+F_LOBBY = {"BEAST": 42, "DEMON": 43, "DRAGON": 44, "ELEMENTAL": 45, "MECHANICAL": 46, "MURLOC": 47, "PIRATE": 48,
+           "QUILBOAR": 49, "UNDEAD": 50, "ABERRATION": 51}
+LOBBY_IDX = np.array(list(F_LOBBY.values()))
 N_BOARD, N_HAND, N_SHOP, N_CHOICE, N_POS = 7, 10, 8, 16, 8
 
 
@@ -73,3 +78,15 @@ def gold_next(f):
 def max_gold_bonus(f):
     """金币上限额外加了几（永久）。"""
     return _scaled(f, F_MAX_BONUS, BONUS_SCALE)
+
+
+def lobby_bits(f):
+    """本局开放的种族 → 整数位图（第 k 位 = F_LOBBY 的第 k 个种族）；f 是一行或多行，原始或压缩过的都行。"""
+    on = np.asarray(f)[..., LOBBY_IDX] > 0.3
+    return (on * (1 << np.arange(len(LOBBY_IDX)))).sum(-1).astype(np.int64)
+
+
+def lobby(f) -> frozenset:
+    """本局开放的种族名字（一行观察）。"""
+    b = int(lobby_bits(f))
+    return frozenset(r for k, r in enumerate(F_LOBBY) if b >> k & 1)

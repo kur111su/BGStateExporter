@@ -182,6 +182,11 @@ class Config:
     teacher: str = ""
     teacher_coef: float = 0.0
     teacher_ramp: int = 200
+    # 酒馆里有本局凑得成的 S / A 级目标阵容（rl/target_comps.json）的核心卡时，这一步的老师 KL 再乘这么多：
+    # 该不该买那张核心卡是成型的关键一步，高手买卡里 16% 是 S / A 核心卡，模型 4%（第 14140 轮）。1 = 不加
+    teacher_core_mult: float = 1.0
+    # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
+    target_weights: str = ""
     # 阵容成型奖励 q 里三项的权重：主种族纯度、万三常见搭配、关键卡（加起来是 1 就是满分 1）。
     # 阵容测试（第 11600 轮）：模型玩龙 / 海盗，万三那些搭配一对都用不上（0.02 对）；关键卡前四名的局 0.50 张、
     # 后四名 0.70 张，和名次反着走；纯度前四 0.66、后四 0.57 是对的方向
@@ -632,8 +637,14 @@ class Trainer(ShapingMixin, ImitationMixin):
                     if tcoef > 0:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
                             tl = F.log_softmax(self.teacher(f, c, m, compressed=True)[0].float(), -1)
-                        kl_t = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1).mean()
-                        loss = loss + tcoef * kl_t
+                        kl_rows = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1)
+                        kl_t = kl_rows.mean()
+                        tw = self._teacher_rows(b["f"][j], b["c"][j])
+                        if tw is not None:
+                            stats["teacher_core"].append(float((tw > 1).mean()))
+                            loss = loss + tcoef * (kl_rows * t(tw, torch.float32)).mean()
+                        else:
+                            loss = loss + tcoef * kl_t
                         stats["kl_teacher"].append(kl_t.item())
                     self.scaler.scale(loss * w).backward()
                     with torch.no_grad():
@@ -877,7 +888,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             return None
         p = Path(str(cfg.teacher).replace("\\", "/"))
         if not p.exists():
-            print(f"没有老师模型 {cfg.teacher}（先运行 teacher.bat，约 10–20 分钟），这次不用", flush=True)
+            print(f"没有老师模型 {cfg.teacher}（先运行 teacher.bat，约 15–25 分钟），这次不用", flush=True)
             return None
         from .advisor import load_model
         try:
@@ -895,6 +906,33 @@ class Trainer(ShapingMixin, ImitationMixin):
         print(f"老师模型：{p}（{meta.get('created', '?')}，留出局命中率 {val.get('pro_top1', '?')}、交叉熵 {val.get('pro_nll', '?')}）；"
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
+
+    def _teacher_rows(self, f, c):
+        """每个局面的老师 KL 权重：酒馆里有本局凑得成的 S / A 级核心卡 → teacher_core_mult，否则 1。不加权时返回 None。"""
+        mult = float(getattr(self.cfg, "teacher_core_mult", 1.0))
+        if mult == 1.0:
+            return None
+        if getattr(self, "_core_tab", None) is None:
+            from tg.catalog import base_of_index, n_cards
+            from .comp import load_target_comps
+            comps = [x for x in load_target_comps() if x["tier"] in ("S", "A")]
+            ids = [base_of_index(i) if i else "" for i in range(n_cards())]
+            self._core_tab = np.array([[cid in x["core"] for x in comps] for cid in ids], dtype=bool)   # 卡牌编号 × 阵容
+            self._core_comps, self._reach = comps, {}
+        from tg.obs import C_SHOP, F_LOBBY, N_SHOP, lobby_bits
+        from .comp import reachable
+        bits = lobby_bits(f)
+        ok = np.zeros((len(bits), len(self._core_comps)), dtype=bool)
+        names = list(F_LOBBY)
+        for b_ in np.unique(bits):
+            r = self._reach.get(int(b_))
+            if r is None:
+                lob = frozenset(n for k, n in enumerate(names) if int(b_) >> k & 1)
+                r = self._reach[int(b_)] = np.array([reachable(x, lob) for x in self._core_comps], dtype=bool)
+            ok[bits == b_] = r
+        shop = np.clip(np.asarray(c)[:, C_SHOP:C_SHOP + N_SHOP], 0, len(self._core_tab) - 1)
+        has = (self._core_tab[shop] & ok[:, None, :]).any((1, 2))
+        return np.where(has, mult, 1.0).astype(np.float32)
 
     def _teacher_coef(self) -> float:
         """这一轮的老师 KL 系数：每次启动后从 0 线性加到 teacher_coef（teacher_ramp 轮）。"""
