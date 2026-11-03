@@ -194,6 +194,8 @@ class Config:
     # 第 14141–14240 轮用 kl：老师的分布本来就摊得开（只有 41% 猜中高手），系数才 0.005–0.015，熵 1.0 → 2.1、
     # 加强局承受的对手强度 0.69 → 0.32、考试 4.4 → 5.2，连续 3 次变乱退回——退回点本身已经乱了
     teacher_mode: str = "hard"
+    # 别卖正在做的阵容里该留的牌（见 _keep_shape，rl/target_comps.json 的 playbook.keep）：每卖一张扣这么多。0 = 不扣
+    keep_penalty: float = 0.0
     # “成型以后怎么玩”的课程（rl/calibrate.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
     # 招募开始时，场面换成同一回合高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打。0 = 不用。
     # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
@@ -1073,6 +1075,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                            cs_late=round(mx["cs_late_sum"] / mx["cs_late_n"], 3) if mx.get("cs_late_n") else None)
             if mx.get("tgt_n"):                        # 结束回合时离目标阵容多近（S 级凑齐 = 1）
                 rec["tgt_q"] = round(mx["tgt_sum"] / mx["tgt_n"], 3)
+            if mx.get("sells"):
+                rec["keep_sold"] = round(mx.get("keep_sold", 0) / mx["sells"], 4)   # 卖牌里卖掉“该留的牌”的比例（高手 5.2%）
             if mx.get("econ_n"):                       # 结束回合时平均存下的钱（下回合额外金币 + 2 × 金币上限加成）
                 rec["econ"] = round(mx["econ_sum"] / mx["econ_n"], 3)
             if mx.get("env_rebuild"):

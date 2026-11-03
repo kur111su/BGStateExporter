@@ -156,6 +156,25 @@ class ShapingMixin:
             ShapingMixin._target_shape(self, slots, f, c, ak, r0)
         if getattr(self.cfg, "econ_bonus", 0) > 0 and f.shape[1] > 9:
             self._econ_shape(slots, f, ak, r0, c)
+        if getattr(self.cfg, "keep_penalty", 0) > 0 and c is not None:
+            ShapingMixin._keep_shape(self, f, c, ak, r0)
+        return r0
+
+    def _keep_shape(self, f, c, ak, r0):
+        """别卖正在做的阵容里该留的牌（keep_penalty）：卖掉的是高手做这套时留着不卖的核心 / 配套卡
+        （bg.py playbook 的 keep：热气球测绘员、布莱恩·铜须、提图斯、断手被遗忘者……），而且没有第二张同名的 → 扣分。
+        尖利的鲨鱼、新锐植物学家这类买来就要卖的不在 keep 里，不扣。高手的卖牌里这种占 5.2%，第 15180 轮模型卖得最多的牌里
+        有布莱恩·铜须 48 次、热气球测绘员 47 次。"""
+        if getattr(self, "_keep_tab", None) is None:
+            from tg.catalog import base_of_index, n_cards
+            from .comp import CompTables, load_target_comps
+            self._keep_tab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())],
+                                        tiers="SA")
+        bad = self._keep_tab.keep_sold(c, f, ak)
+        if bad.any():
+            r0[bad] -= self.cfg.keep_penalty
+            self.mix["keep_sold"] += int(bad.sum())
+        self.mix["sells"] += int(((ak >= A_SELL) & (ak < A_SELL + 7)).sum())
         return r0
 
     def _target_tables(self):

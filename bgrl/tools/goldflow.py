@@ -158,6 +158,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     picks = PickStats()
     sells: dict[str, int] = {}
     buy_rows: list = []                                # 每次买：(当时的卡牌编号, 动作)，算“围绕种族 / 搭配”的买法
+    sell_rows: list = []                               # 每次卖：(观察, 卡牌编号, 动作)，算“卖掉正在做的阵容里该留的牌”
     logs = [TurnLog() for _ in range(env.n_slots)]
     done = [False] * env.n_slots
     places = {}
@@ -195,6 +196,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 elif A_SELL <= ak < A_SELL + N_BOARD and ci[C_BOARD + ak - A_SELL] > 0:
                     sid = picks._id(int(ci[C_BOARD + ak - A_SELL]))
                     sells[sid] = sells.get(sid, 0) + 1
+                    sell_rows.append((fi[:64].copy(), ci.copy(), ak))
                 logs[i].see(int(turn(fi)), int(gold(fi)), int(tier(fi)), int(up_cost(fi)), int(a[k]))
                 if judge is not None and ak == A_END and int(turn(fi)) >= 3:
                     g_, seat_ = env.slot(int(i))
@@ -218,7 +220,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
-    info["picks"], info["sells"], info["buy_rows"] = picks, sells, buy_rows
+    info["picks"], info["sells"], info["buy_rows"], info["sell_rows"] = picks, sells, buy_rows, sell_rows
     finals = []
     for i, row in enumerate(last_cards):
         if row is None:
@@ -403,6 +405,27 @@ def buy_style(buy_rows: list) -> dict:
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
     return out
+
+
+def keep_sold(sell_rows: list) -> dict | None:
+    """模型的卖牌里，卖掉“正在做的 S / A 阵容里该留的牌”（rl/comp.CompTables.keep_sold，训练的 keep_penalty 同一个判断）的比例。"""
+    if not sell_rows:
+        return None
+    from collections import Counter
+    from rl.comp import CompTables, load_target_comps
+    from tg.catalog import base_of_index, catalog, n_cards
+    comps = load_target_comps()
+    if not any(c.get("keep") for c in comps):
+        return None
+    ids = [base_of_index(i) if i else "" for i in range(n_cards())]
+    tab = CompTables(comps, ids, tiers="SA")
+    f = np.stack([r[0] for r in sell_rows])
+    c = np.stack([r[1] for r in sell_rows]).astype(np.int64)
+    a = np.array([r[2] for r in sell_rows], dtype=np.int64)
+    bad = tab.keep_sold(c, f, a)
+    det = catalog()
+    names = Counter((det.get(ids[int(c[i, C_BOARD + a[i] - A_SELL])]) or {}).get("name_zh", "?") for i in np.flatnonzero(bad))
+    return {"share": round(float(bad.mean()), 4), "n": int(bad.sum()), "top": names.most_common(6)}
 
 
 def show_picks(picks, sells: dict) -> dict | None:
@@ -611,6 +634,14 @@ def main() -> int:
                                   for w in zh if w in bs))
         if pk is not None:
             pk["style"] = bs
+        ks = keep_sold(info.get("sell_rows") or [])
+        if ks is not None:
+            pref = (pb or {}).get("pro_keep_sold_share")
+            print(f"  卖牌：卖掉正在做的 S / A 阵容里该留的牌（高手做这套时留着不卖的核心 / 配套卡，没有第二张） {ks['share']:.1%}"
+                  + (f"（高手 {pref:.1%}）" if pref is not None else "") +
+                  ("；卖得最多：" + "、".join(f"{k} {v}" for k, v in ks["top"]) if ks["top"] else ""))
+            if pk is not None:
+                pk["keep_sold"] = ks
     tg = show_targets(info.get("finals") or [])
     if comps is not None and tg:
         comps["targets"] = tg

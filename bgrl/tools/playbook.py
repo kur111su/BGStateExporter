@@ -1,5 +1,6 @@
 """目标阵容的“配套卡”：高手已经在做某一套（场上 + 手里核心卡过半、种族阵容场上本族随从 ≥ 2）时，比平时明显更爱买的卡。
 这些就是成型以后用来提升实力（养场面的卡）、倒转经济（发宝石 / 发牌 / 免费刷新）、卡牌联动（扩音机配机械、宰割配亡灵）的那些。
+另外找出高手做这套时留着不卖的核心 / 配套卡（keep：热气球测绘员、布莱恩·铜须、提图斯这类；尖利的鲨鱼这种买来就是要卖的不算）。
 
   bg.py playbook                 读配方里的 pro_data（runs/pro_demos + runs/h13_demos），写进 rl/target_comps.json 的 support
   bg.py playbook --min-lift 1.5  比平时多买多少倍才算（默认 1.5）
@@ -90,8 +91,49 @@ def build(d, min_lift: float = 1.5, min_off: int = 15, min_got: int = 5, top: in
     supp = {cp["name"]: set(out[cp["name"]]["support"]) for cp in tab.comps}
     hit = sum(ids[int(got_id[r])] in set().union(*(supp[tab.comps[k]["name"]] for k in np.flatnonzero(build_m[r] & sa)))
               for r in range(len(buy)) if (build_m[r] & sa).any())
+    keep = keepers(d, comps, ids, out)
     return {"comps": out, "buys": int(len(buy)), "sa_states": int((build_m & sa).any(1).sum()),
-            "pro_support_share": round(hit / max(1, len(buy)), 4)}
+            "pro_support_share": round(hit / max(1, len(buy)), 4), **keep}
+
+
+def keepers(d, comps, ids, sup: dict, min_expo: int = 60, ratio: float = 0.5) -> dict:
+    """高手留着不卖的核心 / 配套卡：正在做那套（核心卡开了头 / 配套卡时在做这套）时，这张卡在场上的每个局面里被卖掉的比例
+    不到所有随从平均的 ratio 倍。尖利的鲨鱼、新锐植物学家这类本来就是买了卖的（卖掉触发效果），不算。
+    也算高手卖掉“该留的牌”占他所有卖牌的比例（阵容测试拿模型的比例比）。"""
+    from rl.comp import CompTables
+    from rl.demos import KINDS
+    from tg.actions import A_SELL
+    from tg.obs import C_BOARD, C_HAND, N_BOARD, N_HAND, lobby_bits
+    comps = [dict(c, support=set(sup.get(c["name"], {}).get("support", []))) for c in comps]
+    tab = CompTables(comps, ids, tiers="SA")
+    c = d["c"]
+    bits = lobby_bits(d["f"])
+    frac, tribe = tab.progress(c)
+    started = ((frac > 0) | (tab.tribal & (tribe >= 2))) & tab.reach(bits)
+    bm = tab.building(c, bits)
+    board = np.clip(c[:, C_BOARD:C_BOARD + N_BOARD], 0, len(ids) - 1)
+    rel = (tab.core[board] & started[:, None, :]).any(2) | (tab.supp[board] & bm[:, None, :]).any(2)   # [行, 场上格]
+    sell = np.where(d["kind"] == KINDS.index("sell"), d["cand"][:, 0].astype(np.int64) - A_SELL, -1)
+    sold = (sell[:, None] == np.arange(N_BOARD)[None, :]) & (board > 0)
+    expo, got = Counter(), Counter()
+    for x, r_, s_ in zip(board[rel], np.ones(int(rel.sum())), sold[rel]):
+        expo[ids[int(x)]] += 1
+        got[ids[int(x)]] += int(s_)
+    occ = board > 0
+    base = float(sold[occ].sum() / max(1, occ.sum()))
+    keep = sorted(b for b in expo if expo[b] >= min_expo and got[b] / expo[b] < base * ratio)
+    kset = set(keep)
+    # 高手的卖牌里，卖掉“正在做的阵容里该留的牌”（而且手里 / 场上没有第二张）占多少
+    own = np.concatenate([c[:, C_BOARD:C_BOARD + N_BOARD], c[:, C_HAND:C_HAND + N_HAND]], 1)
+    rows = np.flatnonzero((sell >= 0) & (sell < N_BOARD))
+    bad = 0
+    for r in rows:
+        k = int(sell[r])
+        x = int(board[r, k])
+        if x and rel[r, k] and ids[x] in kset and sum(ids[int(y)] == ids[x] for y in own[r] if y > 0) < 2:
+            bad += 1
+    return {"keep": keep, "sell_base": round(base, 4), "pro_keep_sold_share": round(bad / max(1, len(rows)), 4),
+            "keep_rate": {b: round(got[b] / expo[b], 4) for b in keep}}
 
 
 def main(argv=None) -> int:
@@ -120,11 +162,15 @@ def main(argv=None) -> int:
         c["support_names"] = [name(x) for x in c["support"]]
         c["support_lift"] = s.get("lift", [])
         c["support_states"] = s.get("states", 0)
-    v["playbook"] = {"source": "高分示范（Firestone 6500+、万三）里高手正在做这套时比平时多买的卡（bg.py playbook，只有统计数字）",
+    v["playbook"] = {"source": "高分示范（Firestone 6500+、万三）里高手正在做这套时比平时多买的卡、留着不卖的卡（bg.py playbook，只有统计数字）",
                      "created": time.strftime("%Y-%m-%d"), "min_lift": a.min_lift, "buys": r["buys"],
-                     "sa_states": r["sa_states"], "pro_support_share": r["pro_support_share"]}
+                     "sa_states": r["sa_states"], "pro_support_share": r["pro_support_share"],
+                     "keep": r["keep"], "keep_names": [name(x) for x in r["keep"]], "sell_base": r["sell_base"],
+                     "pro_keep_sold_share": r["pro_keep_sold_share"]}
     p.write_text(json.dumps(v, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"{r['buys']} 次买卡，其中 {r['sa_states']} 次高手正在做 S / A 阵容；买配套卡占全部买卡 {r['pro_support_share']:.1%} → {p}")
+    print(f"留着不卖的核心 / 配套卡 {len(r['keep'])} 张（场上每个局面被卖的比例不到平均 {r['sell_base']:.3f} 的一半）："
+          + "、".join(name(x) for x in r["keep"][:30]) + f"；高手的卖牌里卖掉这些占 {r['pro_keep_sold_share']:.1%}")
     for c in v["comps"]:
         print(f"  {c['tier']} {c['name']}（{c['support_states']} 次）：" +
               ("、".join(f"{n} ×{l}" for n, l in zip(c["support_names"], c["support_lift"])) or "样本不够"))

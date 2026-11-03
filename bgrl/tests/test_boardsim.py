@@ -248,8 +248,10 @@ def check_targets():
     c, fr = nearest_comp(list(tea["core"]) + ["BG26_135"], comps)
     assert c["name"] == "喝茶流" and fr == 1.0
     assert nearest_comp(["BG26_135"], comps)[0] is None
-    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3)²
-    assert abs(q - 1 / 9) < 1e-9 and c2["name"] == "喝茶流"
+    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3)² × 0.7（配套卡没有）
+    assert abs(q - 0.7 / 9) < 1e-9 and c2["name"] == "喝茶流"
+    ks = sorted(tea["keep_support"])[0]                                   # 喝茶流留着用的配套卡（bg.py playbook）
+    assert abs(target_score(list(tea["core"]) + [ks], comps)[0] - 1.0) < 1e-9 and abs(target_score(list(tea["core"]), comps)[0] - 0.7) < 1e-9
 
     idx = {card_id(i): i for i in range(1, n_cards())}
     t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
@@ -263,7 +265,7 @@ def check_targets():
         c[0, 19:26] = 0
         c[0, 19:19 + len(board)] = [idx[x] for x in board]
         got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.016667, 0.133333, -0.15], got                    # 第 4 回合不算；整局和 = 0.15 × 最后的 0
+    assert got == [0.0, 0.011667, 0.093333, -0.105], got                   # 第 4 回合不算；整局和 = 0.15 × 最后的 0
 
     cc = np.zeros((2, 124), np.int32)
     cc[:, 36] = idx["BG_LOE_077"]
@@ -279,7 +281,7 @@ def check_targets():
     assert reachable(tea, frozenset()) and not reachable(apm, frozenset({"BEAST"})) and reachable(apm, frozenset({"MECHANICAL"}))
     assert reachable(boar, frozenset({"DEMON"})) and not reachable(boar, frozenset({"BEAST"}))   # 邪能野猪人是恶魔 / 野猪人
     assert target_score(list(apm["core"]), comps, frozenset({"BEAST"}))[0] == 0.0
-    assert target_score(list(apm["core"]), comps, frozenset({"MECHANICAL"}))[0] == 0.5   # 2 张核心卡都在，但只有 2 个机械（满 4 个）
+    assert abs(target_score(list(apm["core"]), comps, frozenset({"MECHANICAL"}))[0] - 0.35) < 1e-9   # 2 张核心卡，2 个机械（满 4 个），没有配套卡 0.7
     from rl.comp import formed
     from tg.catalog import catalog
     det = catalog()
@@ -332,6 +334,23 @@ def check_lobby():
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2, c2).tolist() == [3.0, 1.0]
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c2, "f": f2, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "tgtsup").tolist() == [True, False]
+    # 别卖该留的牌（keep_penalty）：在做喝茶流（布莱恩 + 巴琳达在场上）时卖布莱恩扣分；有两张布莱恩、或者卖的是别的牌不扣
+    from rl.comp import CompTables
+    from tg.actions import A_SELL
+    from tg.catalog import base_of_index
+    tea = next(x for x in load_target_comps() if x["name"] == "喝茶流")
+    assert "BG_LOE_077" in tea["keep"], tea["keep"]
+    tab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())], tiers="SA")
+    c3 = np.zeros((3, 124), np.int32)
+    c3[:, 19:22] = [idx["BG_LOE_077"], idx["BG35_883"], idx["BG26_135"]]   # 布莱恩、巴琳达、南海卖艺者
+    c3[1, 26] = idx["BG_LOE_077"]                                        # 第 2 行手里还有一张布莱恩
+    f3 = np.zeros((3, 64), np.float32)
+    acts = np.array([A_SELL, A_SELL, A_SELL + 2])
+    assert tab.keep_sold(c3, f3, acts).tolist() == [True, False, False]
+    sh = SimpleNamespace(cfg=SimpleNamespace(keep_penalty=0.05), mix=defaultdict(int), _keep_tab=tab)
+    from rl.shaping import ShapingMixin
+    r = ShapingMixin._keep_shape(sh, f3, c3, acts, np.zeros(3))
+    assert r.tolist() == [-0.05, 0.0, 0.0] and sh.mix["keep_sold"] == 1 and sh.mix["sells"] == 3
     assert lobby_bits(f).tolist()[1] == 0
     return True
 

@@ -115,6 +115,7 @@ def load_target_comps(root: Path = REFS, weights=None) -> list[dict]:
     v = json.loads(p.read_text(encoding="utf-8"))
     tw = {**(v.get("tiers") or {"S": 1.0, "A": 0.8, "B": 0.6}), **parse_tier_weights(weights)}
     det = catalog()
+    keep = set((v.get("playbook") or {}).get("keep") or [])
     out = []
     for c in v.get("comps", []):
         need = []
@@ -124,7 +125,9 @@ def load_target_comps(root: Path = REFS, weights=None) -> list[dict]:
                 need.append(frozenset(rs))
         tribes = frozenset().union(*need) if need else frozenset()
         out.append({"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
-                    "avg_place": c.get("avg_place"), "need": need, "tribes": tribes, "support": set(c.get("support") or [])})
+                    "avg_place": c.get("avg_place"), "need": need, "tribes": tribes, "support": set(c.get("support") or []),
+                    "keep": (set(c["core"]) | set(c.get("support") or [])) & keep,
+                    "keep_support": set(c.get("support") or []) & keep})
     return out
 
 
@@ -149,6 +152,18 @@ def comp_progress(ids, comp: dict) -> tuple[float, int, float]:
     return k / len(comp["core"]), k, sup
 
 
+SUPPORT_FULL = 2     # 场上有这么多张这套“留着用”的配套卡（bg.py playbook 的 keep ∩ support）算配齐
+
+
+def support_factor(ids, comp: dict) -> float:
+    """配套卡配齐的程度 → 0.7–1：成型以后场上还有高手留着用的配套卡（热气球测绘员配宝石、断手被遗忘者配宰割……）才是满分。
+    这套没有这种配套卡时算 1。"""
+    ks = comp.get("keep_support") or set()
+    if not ks:
+        return 1.0
+    return 0.7 + 0.3 * min(1.0, len(ks & set(ids)) / min(SUPPORT_FULL, len(ks)))
+
+
 def formed(ids, comp: dict) -> bool:
     """算成型：核心卡至少 2 张、至少 2/3；种族阵容场上还要有 3 个以上本族随从。
     第 14240 轮阵容测试按“核心卡一半”算，S 级 43%——其实是场上放一张提图斯（畸变亡语 2 张核心卡里的 1 张）、
@@ -163,7 +178,8 @@ def reachable(comp: dict, lob) -> bool:
 
 
 def target_score(ids, comps: list[dict], lob=None) -> tuple[float, dict | None, float]:
-    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比² × 本族随从撑起来的程度, 那一套, 核心卡占比)。
+    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比² × 本族随从撑起来的程度 × 配套卡配齐的程度,
+    那一套, 核心卡占比)。
     lob：本局开放的种族——只算本局凑得成的那几套。
     平方：凑齐最后几张值得最多（4 张核心卡：1 张 0.06、2 张 0.25、3 张 0.56、4 张 1）；本族程度：场上本族随从 / 4。
     第 14140–14240 轮用的是“等级权重 × 占比”：放一张提图斯就是畸变亡语的 0.5，模型学会了只放一张核心卡。"""
@@ -172,7 +188,7 @@ def target_score(ids, comps: list[dict], lob=None) -> tuple[float, dict | None, 
         if not reachable(c, lob):
             continue
         fr, _, sup = comp_progress(ids, c)
-        q = c["w"] * fr * fr * sup
+        q = c["w"] * fr * fr * sup * support_factor(ids, c)
         if q > best:
             best, comp, frac = q, c, fr
     return best, comp, frac
@@ -207,6 +223,7 @@ class CompTables:
         self.core = np.zeros((n, k), dtype=bool)
         self.supp = np.zeros((n, k), dtype=bool)
         self.trib = np.zeros((n, k), dtype=bool)
+        self.keep = np.zeros((n, k), dtype=bool)          # 高手做这套时留着不卖的核心 / 配套卡
         for i, cid in enumerate(ids):
             if not cid:
                 continue
@@ -214,8 +231,11 @@ class CompTables:
             for j, c in enumerate(self.comps):
                 self.core[i, j] = cid in c["core"]
                 self.supp[i, j] = cid in c.get("support", ())
+                self.keep[i, j] = cid in c.get("keep", ())
                 self.trib[i, j] = bool(c.get("tribes")) and bool(rs & c["tribes"] or "ALL" in rs)
         self.ncore = np.array([len(c["core"]) for c in self.comps], dtype=np.float32)
+        keys = {b: k for k, b in enumerate(sorted(set(ids)))}
+        self.base_key = np.array([keys[b] for b in ids], dtype=np.int64)     # 卡牌编号 → 同名（金色并到普通）的编号
         self.tribal = np.array([bool(c.get("tribes")) for c in self.comps])
         self._reach: dict[int, np.ndarray] = {}
 
@@ -266,3 +286,27 @@ class CompTables:
         from tg.obs import C_SHOP, N_SHOP
         shop = np.clip(np.asarray(c)[:, C_SHOP:C_SHOP + N_SHOP], 0, len(table) - 1)
         return (table[shop] & np.asarray(comps_mask)[:, None, :]).any((1, 2))
+
+    def keep_sold(self, c, f, actions) -> np.ndarray:
+        """[行]：这一步卖掉的是正在做的 S / A 阵容里高手留着不卖的牌（这套开了头时的核心卡 / 在做这套时的配套卡），
+        而且手里 / 场上没有第二张同名的。"""
+        from tg.actions import A_SELL
+        from tg.obs import C_BOARD, C_HAND, N_BOARD, N_HAND, lobby_bits
+        c = np.asarray(c)
+        a = np.asarray(actions).astype(np.int64) - A_SELL
+        out = np.zeros(len(c), dtype=bool)
+        rows = np.flatnonzero((a >= 0) & (a < N_BOARD))
+        if not len(rows):
+            return out
+        cr = c[rows]
+        card = np.clip(cr[np.arange(len(rows)), C_BOARD + a[rows]], 0, len(self.core) - 1)
+        bits = lobby_bits(np.asarray(f)[rows])
+        frac, tribe = self.progress(cr)
+        started = ((frac > 0) | (self.tribal & (tribe >= 2))) & self.reach(bits)
+        bm = self.building(cr, bits)
+        rel = (self.keep[card] & ((self.core[card] & started) | (self.supp[card] & bm))).any(1)
+        own = np.concatenate([cr[:, C_BOARD:C_BOARD + N_BOARD], cr[:, C_HAND:C_HAND + N_HAND]], 1)
+        same = (np.clip(own, 0, len(self.base_key) - 1) > 0) & (self.base_key[np.clip(own, 0, len(self.base_key) - 1)]
+                                                               == self.base_key[card][:, None])
+        out[rows] = rel & (same.sum(1) < 2)
+        return out
