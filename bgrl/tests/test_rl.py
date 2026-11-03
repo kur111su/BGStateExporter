@@ -106,7 +106,21 @@ def main() -> int:
     (vv.sum() + ref_m.last_comp_logits.sum()).backward()
     assert ref_m.comp_proj.weight.grad.abs().sum() > 0 and ref_m.comp_head.weight.grad.abs().sum() > 0
     torch.nn.init.zeros_(ref_m.comp_proj.weight)
-    print(f"体系感知：旧检查点兼容，阵容得分和 rl/comp 一致，{len(comps)} 套阵容")
+    # 旧检查点的优化器状态（少了 comp_proj / comp_head 这 4 个参数）也能接上
+    from rl.ppo import grow_opt_state
+    opt_new = torch.optim.Adam(m2.parameters(), lr=1e-4)
+    names = [k for k, _ in m2.named_parameters()]
+    assert names[-4:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias"], names[-4:]
+    opt_old = torch.optim.Adam([p_ for k, p_ in m2.named_parameters() if not k.startswith("comp_")], lr=1e-4)
+    m2.zero_grad()
+    m2(f, c, mk)[1].sum().backward()
+    opt_old.step()
+    od = opt_old.state_dict()
+    opt_new.load_state_dict(grow_opt_state(opt_new, od))
+    assert len(opt_new.state) == len(od["state"]) and torch.equal(opt_new.state[next(m2.parameters())]["exp_avg"],
+                                                                   od["state"][0]["exp_avg"])
+    opt_new.step()                                     # 新参数第一次更新时自己建 Adam 状态
+    print(f"体系感知：旧检查点兼容（模型和优化器），阵容得分和 rl/comp 一致，{len(comps)} 套阵容")
 
     # 训练数据按压缩后的半精度存：极大的数值也不会变成 inf
     from rl.ppo import Policy

@@ -276,6 +276,25 @@ class Policy:
         return out
 
 
+def grow_opt_state(opt, od: dict) -> dict:
+    """旧检查点的优化器状态比现在的模型少几个参数（第 15300 轮加了体系感知 comp_proj / comp_head，排在参数表最后）：
+    把新参数的编号接到参数组后面（它们没有 Adam 状态，第一次更新时从 0 开始），旧参数的状态原样保留。
+    数量一样时原样返回；新模型参数更少、或者有好几个参数组时也原样返回（让 load_state_dict 照常报错）。"""
+    import copy
+    groups = od.get("param_groups") or []
+    if len(groups) != 1 or len(opt.param_groups) != 1:
+        return od
+    have, want = len(groups[0]["params"]), len(opt.param_groups[0]["params"])
+    if have >= want:
+        return od
+    od = copy.deepcopy(od)
+    ids = list(od["param_groups"][0]["params"])
+    nxt = max(ids) + 1 if ids else 0
+    od["param_groups"][0]["params"] = ids + list(range(nxt, nxt + want - have))
+    print(f"优化器状态：检查点里 {have} 个参数，现在 {want} 个（新加的体系感知参数从 0 开始）", flush=True)
+    return od
+
+
 class Rollout:
     """学习者的决策按步成批存（numpy），名次奖励在对局结束时补到该座位最后一个决策上。
     槽位 = 全局座位编号（各环境的槽位依次排开）；ep = 这个槽位的第几局。"""
@@ -939,7 +958,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if ck.get("model_kwargs") and ck["model_kwargs"] != self.mkw:
             raise ValueError(f"检查点的模型大小 {ck['model_kwargs']} 和这次的 {self.mkw} 不一样")
         self.model.load_state_dict(ck["model"])
-        self.opt.load_state_dict(ck["opt"])
+        self.opt.load_state_dict(grow_opt_state(self.opt, ck["opt"]))
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
