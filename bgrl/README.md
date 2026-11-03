@@ -13,7 +13,8 @@
 | `shadow.bat` | 影子模式 http://localhost:8766/：模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮。换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `goldflow.bat` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` | 屏幕；`runs\v3\goldflow.json` |
 | `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）、挑卡（关键卡 / 经济卡 / 引擎实测关键卡）和每回合的阵容强度（场面打同期高分阵容的胜率，前四 / 后四 / 高分阵容自己） | 屏幕；`runs\v3\comptest.json` |
-| `prodemos.bat` | 从 Firestone 6500+ 分享包（默认 `data\firestone` 里的 5 个 zip，不用解压）生成高分决策样本，约 10–20 分钟 | `runs\pro_demos\`（只在本机） |
+| `prodemos.bat` | 从 Firestone 6500+ 分享包（默认 `data\firestone` 里的 4 个 zip，不用解压）生成高分决策样本，约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） | `runs\pro_demos\`（只在本机） |
+| `teacher.bat` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从 `runs\v3\latest.pt` 开始，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 10–20 分钟） | `runs\teacher.pt`（只在本机） |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 | `tavernbench.bat` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 | `reports\tavernbench\<模型>\report.txt` |
 | `arena.bat` | 竞技场：`check` 打包当前模型并核对竞技场契约、`practice` 一局不计分练习、`match` 一局计分对局。`check --ckpt …` 打包别的模型 | `arena\model_bundle\`、`arena\results\` |
@@ -42,6 +43,7 @@
 | `nativedemos` | `tools/native_demos.py` | 已经是 TavernGym 观察格式的别人对局（例如万三的 `human_native_v0.npz`）→ 决策样本 `runs\h13_demos\`、对手阵容库 `runs\h13_boards.json`、汇总 `rl/h13_profile.json`（升本节奏、最终阵容、常见搭配，只有统计数字） |
 | `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡、高手的买法比例 `rl/card_value.json`（只有统计数字） |
 | `simcards` | `tools/simcards.py` | 引擎实测的卡牌价值和配合：高分阵容库里的场面在 TavernGym 里拿掉一张 / 两张卡再打同期高分阵容，看胜率掉多少 → `rl/sim_value.json`（关键卡、好搭配，只有统计数字；约 2–3 分钟） |
+| `teacher` | `tools/teacher.py` | 老师模型（见上面 `teacher.bat`）：`--init none` 从头学、`--steps`、`--batch`、`--patience` |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
 | `tavernbench` | `tools/tavernbench.py` | C3 TavernBench 评测；`--ckpt` 指定模型、`--smoke` 冒烟 |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
@@ -137,3 +139,4 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | + 学得快一点、后期多刷 | 第 12370 轮起 | 学习率 1e-4 → 2e-4（每轮 KL 只有 0.002，第 5000 轮起成绩不动）；无效刷新只在第 6 回合以前扣（`refresh_waste_until`）；模仿权重加买引擎卡本身（`engcard`）、凑三连（`triple`） | `lr`、`kl`、`boost_strength`、`eval_boost_place`、`ref_turn`、`comp_golden`，以及 `comptest.bat` 的金色数、第 8–9 回合刷新、第 10–13 回合阵容强度 |
 | 退回 + 变乱检查 | 第 12700 轮 → 退回第 12450 轮 | 第 12490 轮起策略变乱（熵 1.0 → 1.9、无效操作 5% → 20–39%、白刷新 35–40%，考试 4.1 → 4.6–4.9）：后期不扣刷新退回去，学习率 1.5e-4；新增变乱检查（`drift_ent`、`drift_noop`，连续 10 轮自动退回、学习率减半）；`train.bat --restore runs\v3\snapshots\it12450.pt` 把模型退回快照、对手库里更新的快照删掉 | `ent`、`noop_frac`、`ref_waste`、`drift`、`boost_strength`、`eval_boost_place` |
 | + 目标阵容 | 第 12635 轮起 | `rl/target_comps.json`：bgbuddy.gg（补丁 255790）S / A / B 级 23 套终局阵容的核心卡。结束回合时离目标阵容多近（S 1 / A 0.8 / B 0.6 × 核心卡占比）涨多少加多少（`target_bonus 0.15`，整局 = 最后的接近程度）；模仿时买 S / A / B 核心卡 ×2 / ×1.5 / ×1.2、往同一套成型 ×1.5（`tgtS`、`tgtA`、`tgtB`、`tgtfit`）；comptest 统计最终阵容最像哪一套 | `tgt_q`，以及 `comptest.bat` 的“目标阵容”一行 |
+| + 选择示范 + 老师模型 | 第 12630 / 14140 轮起 | 高分示范里加上“选择”（打出 / 施法之后选目标、发现：每个选项在引擎里试，和回放结果比出高手选的，14608 条；法术 / 宝石打给吃法术的随从再 ×3，`choose`、`spelltgt`）。老师模型（`teacher.bat` → `runs\teacher.pt`）：只模仿高分示范、在留出局交叉熵最好时停下的模型；训练时在模型自己的局面上加 KL(老师 ‖ 模型) × `teacher_coef 0.03`（每次启动后 200 轮慢慢加上）——直接模仿高手从第 4450 轮起在背题（训练示范命中率 0.7–0.8、留出局 0.37–0.42，强度一直压在最低 0.25） | `pro_choose`、`kl_teacher`、`teacher_coef`、`tgt_q`，comptest 的挑卡倍率和卖入 |
