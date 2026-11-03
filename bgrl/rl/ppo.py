@@ -176,7 +176,8 @@ class Config:
     # 第 5 回合等级 2.8 → 1.8–2.1，落后差距 0.18 → 0.37——升本节奏主要靠模仿撑着
     pro_scale_min: float = 0.25
     # 老师模型（bg.py teacher：只模仿高分示范、按留出局的交叉熵挑最好的那一版，存成 runs/teacher.pt）：
-    # 在模型自己打出来的局面上加 KL(老师 ‖ 模型) × teacher_coef，每次启动后前 teacher_ramp 轮从 0 慢慢加上去。
+    # 在模型自己打出来的局面上加 KL(老师 ‖ 模型) × teacher_coef，开始用这个老师后的前 teacher_ramp 轮从 0 慢慢加上去
+    # （记在 latest.pt 里，重启接着爬；换了老师 / --restore 从头爬）。
     # 和 pro_coef 的区别：pro_* 只在高手回放的那些局面上学，8.4M 参数背 10 万条——第 4450 轮起训练示范命中率
     # 0.47 → 0.70–0.82、留出局一直 0.37–0.42、交叉熵 2.0 → 2.4–2.9，模仿强度被 pro_gap_cap 压在最低 0.25；
     # 老师在模型自己的局面上给“高手这时候会怎么做”，背不了题。阵容测试（第 14140 轮）：高手抢着买的
@@ -193,6 +194,11 @@ class Config:
     # 第 14141–14240 轮用 kl：老师的分布本来就摊得开（只有 41% 猜中高手），系数才 0.005–0.015，熵 1.0 → 2.1、
     # 加强局承受的对手强度 0.69 → 0.32、考试 4.4 → 5.2，连续 3 次变乱退回——退回点本身已经乱了
     teacher_mode: str = "hard"
+    # “成型以后怎么玩”的课程（rl/calibrate.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
+    # 招募开始时，场面换成同一回合高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打。0 = 不用。
+    # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
+    seed_comp_frac: float = 0.0
+    seed_comp_turns: str = "8,9"
     teacher_conf: float = 0.5
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
     target_weights: str = ""
@@ -380,6 +386,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         if self.booster is not None:
             self.booster.strength = self.adapt.strength if self.adapt else ramp(0, 0, cfg.boost_ramp_iters)
         self.boost_places: list[int] = []              # 这一轮打完的加强局名次（日志用）
+        self.seeder = self._make_seeder() if cfg.seed_comp_frac > 0 and cfg.games_bot else None
+        self.seed_places: list[int] = []
+        self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -436,6 +445,8 @@ class Trainer(ShapingMixin, ImitationMixin):
         if name == "bot" and self.booster is not None:
             self.booster.plan.clear()
             self.booster.last_turn.clear()
+        if name == "bot" and self.seeder is not None:
+            self.seeder.plan.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -533,9 +544,15 @@ class Trainer(ShapingMixin, ImitationMixin):
                         r_end = rewards[i] + (self._econ_close(off + int(i)) if dones[i] else 0.0)
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i])
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
-                            self.stats.append((name, int(info["placement"][i])))
+                            seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
+                            if seeded:                     # 换过场面的局单独记，不算进 place_bot / 加强强度
+                                self.seed_places.append(int(info["placement"][i]))
+                                if self.booster is not None:
+                                    self.booster.finish(int(i))
+                            else:
+                                self.stats.append((name, int(info["placement"][i])))
                             self.finished += 1
-                            if name == "bot" and self.booster is not None and self.booster.finish(int(i)):
+                            if not seeded and name == "bot" and self.booster is not None and self.booster.finish(int(i)):
                                 self.boost_places.append(int(info["placement"][i]))
                                 if self.adapt is not None:
                                     self.adapt.add(int(info["placement"][i]))
@@ -553,6 +570,18 @@ class Trainer(ShapingMixin, ImitationMixin):
                         self._rebuild_env(ei, ex)
                         continue
                     self.t_boost += time.time() - tc
+                if name == "bot" and self.seeder is not None:     # 成型阵容课程：学习者换成已经成型的 S / A 场面
+                    try:
+                        if self.seeder.seed(env, self.obs[name]["features"]):
+                            self.obs[name] = env.observe()
+                            for g in self.seeder.seeded_slots:
+                                self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
+                                self.tg_rebase.add(off + g)
+                    except BaseException as ex:            # noqa: BLE001
+                        if not is_panic(ex):
+                            raise
+                        self._rebuild_env(ei, ex)
+                        continue
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
                     for g in np.unique(np.flatnonzero(dones) // k):
@@ -841,6 +870,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.snap_cache.clear()
         self.active_snaps = []
         self.good = None
+        self.teacher_t0 = None                         # 老师的作用从退回的那一轮重新慢慢加
         self.log_f.write(json.dumps({"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "restored_from": str(path)}, ensure_ascii=False) + "\n")
         self.log_f.flush()
@@ -878,7 +908,8 @@ class Trainer(ShapingMixin, ImitationMixin):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
                     "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
-                    "bc_scale": self.bc_scale, "pro_scale": self.pro_scale}, self.run / "latest.pt")
+                    "bc_scale": self.bc_scale, "pro_scale": self.pro_scale,
+                    "teacher": {"t0": self.teacher_t0, "id": getattr(self, "teacher_id", None)}}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -891,6 +922,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
         self.pro_scale = float(ck.get("pro_scale", self.pro_scale))
+        tk = ck.get("teacher") or {}
+        if getattr(self, "teacher", None) is not None and tk.get("t0") is not None and tk.get("id") == getattr(self, "teacher_id", None):
+            self.teacher_t0 = int(tk["t0"])                 # 同一个老师：接着之前的爬坡，不是每次启动从 0 再爬（第 14240 轮那次重启又从 0 开始）
         if self.cfg.pro_gap_cap > 0:
             self.pro_scale = max(self.pro_scale, self.cfg.pro_scale_min)
         if self.adapt is not None:
@@ -900,6 +934,24 @@ class Trainer(ShapingMixin, ImitationMixin):
             else:
                 print(f"加强方式改为 {self.cfg.boost_kind}：强度从 {self.adapt.strength} 开始重新调", flush=True)
             self.booster.strength = self.adapt.strength
+
+    def _make_seeder(self):
+        """成型阵容课程（seed_comp_frac）：用和加强局同一个高分阵容库。"""
+        from .calibrate import CompSeeder
+        cfg = self.cfg
+        lib = getattr(self, "_pro_lib", None)
+        if not lib:
+            from paths import RUNS
+            paths = [Path(x) for x in str(cfg.pro_boards).split(";") if x.strip()] or [RUNS / "pro_boards.json"]
+            lib = merge_pro_boards(p for p in paths if p.exists())
+        if not lib:
+            print("没有高分阵容库（runs\\pro_boards.json），成型阵容课程不用", flush=True)
+            return None
+        turns = [int(x) for x in str(cfg.seed_comp_turns).split(",") if x.strip()]
+        sd = CompSeeder(lib, cfg.seed_comp_frac, turns, seed=cfg.seed)
+        print(f"成型阵容课程：{cfg.seed_comp_frac:.0%} 的机器人局在第 {cfg.seed_comp_turns} 回合把学习者的场面换成已经成型的 S / A 阵容"
+              f"（库里 {sd.size()} 个）", flush=True)
+        return sd if sd.size() else None
 
     def _load_teacher(self):
         """老师模型（teacher / teacher_coef）：读进来、冻住。没有文件或格式不对就不用，训练照常。"""
@@ -922,6 +974,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         for q in t.parameters():
             q.requires_grad_(False)
         meta = torch.load(p, map_location="cpu", weights_only=False).get("teacher") or {}
+        self.teacher_id = meta.get("created")
         val = meta.get("val") or {}
         print(f"老师模型：{p}（{meta.get('created', '?')}，留出局命中率 {val.get('pro_top1', '?')}、交叉熵 {val.get('pro_nll', '?')}）；"
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
@@ -953,7 +1006,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if self.teacher_t0 is None:
             self.teacher_t0 = self.iter
         ramp = max(1, int(self.cfg.teacher_ramp))
-        return float(self.cfg.teacher_coef) * min(1.0, (self.iter - self.teacher_t0 + 1) / ramp)
+        return float(self.cfg.teacher_coef) * min(1.0, max(0.0, (self.iter - self.teacher_t0 + 1) / ramp))
 
     def start_stage(self):
         """新阶段：以当前策略为锚，前 anchor_iters 轮加 KL 约束。"""
@@ -1036,6 +1089,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                     self.booster.strength = self.adapt.update()
                     rec["boost_place_avg"] = self.adapt.mean()
                 self.t_boost = 0.0
+            if self.seeder is not None:
+                rec.update(self.seeder.take_stats())
+                if self.seed_places:
+                    rec["place_seeded"] = round(float(np.mean(self.seed_places)), 3)
+                    rec["seeded_games"] = len(self.seed_places)
+                self.seed_places = []
             if cfg.snapshot_every and self.iter % cfg.snapshot_every == 0:
                 m = self.snapshot()
                 rec["snapshot"] = m.name

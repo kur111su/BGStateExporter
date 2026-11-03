@@ -357,10 +357,41 @@ def check_teacher():
         got.append(round(Trainer._teacher_coef(t), 4))
     assert got == [0.0075, 0.015, 0.03, 0.03], got
     assert Trainer._teacher_coef(SimpleNamespace(teacher=None)) == 0.0
+    t.iter = 5                                                          # 回退到爬坡开始之前：系数是 0，不是负的
+    assert Trainer._teacher_coef(t) == 0.0
     miss = SimpleNamespace(cfg=SimpleNamespace(teacher="runs\\_no_such_teacher.pt", teacher_coef=0.03, teacher_ramp=4))
     assert Trainer._load_teacher(miss) is None
     assert Trainer._load_teacher(SimpleNamespace(cfg=SimpleNamespace(teacher="x.pt", teacher_coef=0.0))) is None
     return got
+
+
+def check_seeder():
+    """成型阵容课程（rl/calibrate.CompSeeder）：学习者到了那一回合，场面换成库里成型的 S / A 阵容（喝茶流：布莱恩、巴琳达、守门融合怪）。"""
+    from taverngym import BatchEnv
+    from rl.calibrate import CompSeeder
+    from rl.comp import formed, load_target_comps
+    from tg.catalog import base_id, card_id
+    from tg.obs import C_BOARD, N_BOARD
+    tea = next(c for c in load_target_comps() if c["name"] == "喝茶流")
+    board = [[x, 10, 10] for x in sorted(tea["core"])]
+    env = BatchEnv(4, seed=5, controlled=(0,), threads=1)
+    rng = np.random.default_rng(1)
+    for _ in range(3000):
+        obs = env.observe()
+        if (np.rint(obs["features"][:, 0] * 20) >= 3).all():
+            break
+        m = obs["action_mask"].astype(bool)
+        env.step(np.array([rng.choice(np.flatnonzero(r)) for r in m]))
+    t = int(np.rint(obs["features"][0, 0] * 20))
+    sd = CompSeeder({t: [{"tier": 4, "board": board}]}, frac=1.0, turns=(t,), seed=0)
+    assert sd.size() == 1
+    assert sd.seed(env, obs["features"]) and 0 in sd.seeded_slots
+    obs = env.observe()
+    ids = [base_id(card_id(int(x))) for x in obs["cards"][0][C_BOARD:C_BOARD + N_BOARD] if x > 0]
+    assert formed(ids, tea) and sorted(ids) == sorted(tea["core"]), ids
+    assert not sd.seed(env, obs["features"])                            # 一局只换一次
+    assert sd.finish(0) and sd.take_stats()["seeded"] >= 1
+    return len(sd.seeded_slots)
 
 
 def main() -> int:
@@ -373,6 +404,7 @@ def main() -> int:
     check_choose()
     check_teacher()
     check_lobby()
+    check_seeder()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

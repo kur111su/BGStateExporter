@@ -185,6 +185,10 @@ class ShapingMixin:
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
             prev = self.tg_prev[s] if self.tg_ep[s] == ep else 0.0
+            rb = getattr(self, "tg_rebase", None)
+            if rb and s in rb:                         # 成型阵容课程刚换过场面：从新场面起算，不算学习者的功劳
+                rb.discard(s)
+                prev = phi
             r0[j] += self.cfg.target_bonus * (phi - prev)
             self.tg_ep[s], self.tg_prev[s] = ep, phi
             self.mix["tgt_sum"] += phi
