@@ -124,7 +124,7 @@ def load_target_comps(root: Path = REFS, weights=None) -> list[dict]:
                 need.append(frozenset(rs))
         tribes = frozenset().union(*need) if need else frozenset()
         out.append({"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
-                    "avg_place": c.get("avg_place"), "need": need, "tribes": tribes})
+                    "avg_place": c.get("avg_place"), "need": need, "tribes": tribes, "support": set(c.get("support") or [])})
     return out
 
 
@@ -193,3 +193,76 @@ def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5, lob=None, strict
         if ok and (best is None or key > best[0]):
             best = (key, c, fr)
     return (best[1], best[2]) if best else (None, 0.0)
+
+
+class CompTables:
+    """目标阵容的整批查表（训练每一步、模仿示范挑选、阵容测试都用）：卡牌编号 × 阵容 的核心卡 / 配套卡 / 本族表。
+    配套卡（support）：高手已经在做这套（场上 + 手里核心卡过半、本族随从 ≥ 2）时，比平时明显更爱买的卡
+    （bg.py playbook 从高分示范里算，存在 rl/target_comps.json）——成型以后拿来提升实力、倒转经济、卡牌联动的那些。"""
+
+    def __init__(self, comps: list[dict], ids: list[str], tiers: str = "SAB"):
+        self.comps = [c for c in comps if c["tier"] in tiers]
+        det = catalog()
+        n, k = len(ids), len(self.comps)
+        self.core = np.zeros((n, k), dtype=bool)
+        self.supp = np.zeros((n, k), dtype=bool)
+        self.trib = np.zeros((n, k), dtype=bool)
+        for i, cid in enumerate(ids):
+            if not cid:
+                continue
+            rs = set((det.get(cid) or {}).get("races") or [])
+            for j, c in enumerate(self.comps):
+                self.core[i, j] = cid in c["core"]
+                self.supp[i, j] = cid in c.get("support", ())
+                self.trib[i, j] = bool(c.get("tribes")) and bool(rs & c["tribes"] or "ALL" in rs)
+        self.ncore = np.array([len(c["core"]) for c in self.comps], dtype=np.float32)
+        self.tribal = np.array([bool(c.get("tribes")) for c in self.comps])
+        self._reach: dict[int, np.ndarray] = {}
+
+    def reach(self, bits) -> np.ndarray:
+        """本局种族位图（tg/obs.lobby_bits）→ [行, 阵容] 凑得成。"""
+        from tg.obs import F_LOBBY
+        bits = np.asarray(bits)
+        out = np.zeros((len(bits), len(self.comps)), dtype=bool)
+        names = list(F_LOBBY)
+        for b in np.unique(bits):
+            r = self._reach.get(int(b))
+            if r is None:
+                lob = frozenset(x for k, x in enumerate(names) if int(b) >> k & 1)
+                r = self._reach[int(b)] = np.array([reachable(c, lob) for c in self.comps], dtype=bool)
+            out[bits == b] = r
+        return out
+
+    def progress(self, c) -> tuple[np.ndarray, np.ndarray]:
+        """([行, 阵容] 场上 + 手里核心卡占比（同名只算一张）, [行, 阵容] 场上本族随从个数)。"""
+        from tg.obs import C_BOARD, C_HAND, N_BOARD, N_HAND
+        c = np.asarray(c)
+        own = np.concatenate([c[:, C_BOARD:C_BOARD + N_BOARD], c[:, C_HAND:C_HAND + N_HAND]], 1)
+        own = np.clip(own, 0, len(self.core) - 1)
+        pres = np.zeros((len(c), len(self.core)), dtype=bool)
+        pres[np.arange(len(c))[:, None], own] = True
+        pres[:, 0] = False
+        frac = (pres.astype(np.float32) @ self.core.astype(np.float32)) / self.ncore
+        board = np.clip(c[:, C_BOARD:C_BOARD + N_BOARD], 0, len(self.core) - 1)
+        return frac, self.trib[board].sum(1)
+
+    def building(self, c, bits=None, min_frac: float = 0.5, best: bool = False) -> np.ndarray:
+        """[行, 阵容]：正在做这套——场上 + 手里的核心卡 ≥ min_frac，种族阵容场上本族随从 ≥ 2，本局凑得成。
+        best：每行只留最像的那一套（等级权重 × 占比² × 本族程度最高；喝茶流和元素都有布莱恩、巴琳达时分得开）。"""
+        frac, tribe = self.progress(c)
+        ok = (frac >= min_frac - 1e-6) & (~self.tribal | (tribe >= 2))
+        if bits is not None:
+            ok &= self.reach(bits)
+        if best:
+            w = np.array([c_["w"] for c_ in self.comps], dtype=np.float32)
+            sup = np.where(self.tribal, np.minimum(1.0, tribe / TRIBE_FULL), 1.0)
+            sc = np.where(ok, w * frac * frac * sup + 1e-3 * w, -1.0)
+            top = sc.argmax(1)
+            ok = ok & (np.arange(len(self.comps))[None, :] == top[:, None])
+        return ok
+
+    def shop_hit(self, c, comps_mask, table) -> np.ndarray:
+        """[行]：酒馆里有 table（core / supp）里属于 comps_mask 那几套的卡。"""
+        from tg.obs import C_SHOP, N_SHOP
+        shop = np.clip(np.asarray(c)[:, C_SHOP:C_SHOP + N_SHOP], 0, len(table) - 1)
+        return (table[shop] & np.asarray(comps_mask)[:, None, :]).any((1, 2))

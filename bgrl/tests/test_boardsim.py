@@ -307,6 +307,18 @@ def check_lobby():
     w = Trainer._teacher_rows(t, f, c)
     assert w.tolist() == [3.0, 1.0, 3.0], w                            # 第 2 行本局没开机械：凑不成，不加权
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=1.0)), f, c) is None
+    # 配套卡（bg.py playbook）：正在做机械 APM（两张核心卡都在场上），酒馆里有它的配套卡 → 老师加权、模仿 tgtsup
+    from rl.demos import KINDS, bought_in
+    from tg.actions import A_BUY
+    sup = sorted(apm["support"])[0]
+    c2 = np.zeros((2, 124), np.int32)
+    c2[:, 36] = idx[sup]
+    c2[0, 19:21] = [idx[x] for x in sorted(apm["core"])]                 # 第 1 行在做机械 APM，第 2 行场上空的
+    f2 = np.zeros((2, 64), np.float32)
+    f2[:, F_LOBBY["MECHANICAL"]] = 1.0
+    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2, c2).tolist() == [3.0, 1.0]
+    d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c2, "f": f2, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
+    assert bought_in(d, "tgtsup").tolist() == [True, False]
     assert lobby_bits(f).tolist()[1] == 0
     return True
 

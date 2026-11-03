@@ -164,6 +164,8 @@ def bought_in(d, which: str, root: Path | None = None):
                  地卜大师鲁古格（宝石连锁）、暮光猎潮者（手牌随从 +8/+8）
       tgtS / tgtA / tgtB  买的是 S / A / B 级目标阵容（rl/target_comps.json，bgbuddy.gg）的核心卡
       tgtfit     买的核心卡和场上 / 手里已有的核心卡属于同一套目标阵容——在往那套阵容成型
+      tgtsup     正在做一套 S / A 阵容（核心卡过半、本族 ≥ 2），买的是这套的配套卡（rl/target_comps.json 的 support，
+                 bg.py playbook：高手做这套时比平时多买的卡）——成型以后提升实力、倒转经济、卡牌联动
       engcard    买的是引擎卡本身（布莱恩·铜须、提图斯·瑞文戴尔）
       triple     买的随从场上或手里已经有同名的（不是金色）——凑三连
       engine     买的卡被场上的“引擎卡”放大：场上有布莱恩·铜须时买战吼随从、有提图斯·瑞文戴尔时买亡语随从——
@@ -191,6 +193,19 @@ def bought_in(d, which: str, root: Path | None = None):
     buy, slot = buy[ok], slot[ok]
     cards = d["c"][buy, C_SHOP + slot]
     sel = np.zeros(len(d["kind"]), dtype=bool)
+    if which == "tgtsup":
+        from .comp import CompTables, load_target_comps
+        from tg.obs import lobby_bits
+        comps = load_target_comps(root)
+        if not comps or not any(c["support"] for c in comps):
+            return None
+        tab = CompTables(comps, [base_of_index(i) if i else "" for i in range(n_cards())], tiers="SA")
+        if not len(buy):
+            return sel
+        bm = tab.building(d["c"][buy], lobby_bits(d["f"][buy]) if "f" in d else None)
+        hit = (tab.supp[np.clip(cards.astype(np.int64), 0, len(tab.supp) - 1)] & bm).any(1)
+        sel[buy[hit]] = True
+        return sel
     if which in ("tgtS", "tgtA", "tgtB", "tgtfit"):
         from .comp import load_target_comps
         from tg.obs import C_HAND, N_HAND

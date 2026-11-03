@@ -44,6 +44,7 @@
 | `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡、高手的买法比例 `rl/card_value.json`（只有统计数字） |
 | `simcards` | `tools/simcards.py` | 引擎实测的卡牌价值和配合：高分阵容库里的场面在 TavernGym 里拿掉一张 / 两张卡再打同期高分阵容，看胜率掉多少 → `rl/sim_value.json`（关键卡、好搭配，只有统计数字；约 2–3 分钟） |
 | `teacher` | `tools/teacher.py` | 老师模型（见上面 `teacher.bat`）：`--init` 从某个检查点开始（默认从头学：从训练中的模型开始时它已经背过示范，再学只会更差）、`--steps`、`--batch`、`--patience` |
+| `playbook` | `tools/playbook.py` | 目标阵容的配套卡：高手正在做某一套（核心卡过半、本族 ≥ 2）时比平时多买 1.5 倍以上的卡 → `rl/target_comps.json` 的 `support`（只有统计数字；几秒） |
 | `replay` | `tools/tg_replay.py` | A5 回放检查；不给文件时读插件的 games 目录 |
 | `tavernbench` | `tools/tavernbench.py` | C3 TavernBench 评测；`--ckpt` 指定模型、`--smoke` 冒烟 |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
@@ -142,3 +143,4 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | + 选择示范 + 老师模型 | 第 12630 / 14140 轮起 | 高分示范里加上“选择”（打出 / 施法之后选目标、发现：每个选项在引擎里试，和回放结果比出高手选的，14608 条；法术 / 宝石打给吃法术的随从再 ×3，`choose`、`spelltgt`）。老师模型（`teacher.bat` → `runs\teacher.pt`）：只模仿高分示范、在留出局交叉熵最好时停下的模型；训练时在模型自己的局面上加 KL(老师 ‖ 模型) × `teacher_coef 0.03`（每次启动后 200 轮慢慢加上）——直接模仿高手从第 4450 轮起在背题（训练示范命中率 0.7–0.8、留出局 0.37–0.42，强度一直压在最低 0.25） | `pro_choose`、`kl_teacher`、`teacher_coef`、`tgt_q`，comptest 的挑卡倍率和卖入 |
 | + 必须学会 S / A 阵容 | 第 14140 轮起 | 目标阵容只算本局凑得成的（核心卡的种族本局开了，观察里的 `tg/obs.F_LOBBY`；每局平均 10 套 S / A 凑得成）；`target_bonus` 0.15 → 0.3，等级权重 S 1 / A 0.85 / B 0.4（`target_weights`）；酒馆里有凑得成的 S / A 核心卡时老师 KL ×3（`teacher_core_mult`）；模仿权重 `tgtS` ×3、`tgtA` ×2.5、`tgtfit` ×2（老师用新权重重学）；comptest 加“本局凑得成 S / A 的局里成了 S / A 的比例”和每套的成型率 | `tgt_q`、`teacher_core`，comptest 的“凑得成的局里成型的比例” |
 | 退回 + 老师改成只教有把握的动作 | 第 14240 轮 → 退回第 14100 轮 | 第 14141–14240 轮老师用 KL：熵 1.0 → 2.1、加强局承受的对手强度 0.69 → 0.32、考试 5.2，连续 3 次变乱退回。老师改成只在它有把握（概率 ≥ 0.5）的局面教那个动作（`teacher_mode hard`、`teacher_conf 0.5`、`teacher_coef 0.02`、300 轮加上）；熵的绝对上限 1.6（`drift_ent_max`）；目标阵容 Φ = 权重 × 核心卡占比² × 本族随从 / 4（一张提图斯不再算半个畸变亡语）；comptest 按“核心卡 ≥ 2 张且 ≥ 2/3、种族阵容 ≥ 3 个本族随从”算成型 | `ent`、`teacher_sure`、`teacher_agree`、`tgt_q`、`boost_strength` |
+| + 成型以后怎么用 | 第 14240 轮起 | `bg.py playbook`：从高分示范里找每套阵容的配套卡（高手做这套时比平时多买的卡，例如机械 APM 的扩音机、宰割流亡灵的友善的恶鬼 / 断手被遗忘者，高手买卡里 12.4% 是这种）；酒馆里有正在做的 S / A 阵容的配套卡时老师 ×3、模仿 `tgtsup` ×2.5；comptest 的买法里加“正在做 S / A 阵容时买它的配套卡” | comptest 的买法一行 |

@@ -185,7 +185,7 @@ class Config:
     teacher: str = ""
     teacher_coef: float = 0.0
     teacher_ramp: int = 200
-    # 酒馆里有本局凑得成的 S / A 级目标阵容（rl/target_comps.json）的核心卡时，这一步的老师 KL 再乘这么多：
+    # 酒馆里有本局凑得成的 S / A 级目标阵容（rl/target_comps.json）的核心卡、或者正在做的 S / A 阵容的配套卡时，这一步的老师再乘这么多：
     # 该不该买那张核心卡是成型的关键一步，高手买卡里 16% 是 S / A 核心卡，模型 4%（第 14140 轮）。1 = 不加
     teacher_core_mult: float = 1.0
     # 老师怎么教：hard = 只在老师有把握（最想做的那个动作概率 ≥ teacher_conf）的局面上，让模型提高“做老师那个动作”的概率
@@ -928,30 +928,22 @@ class Trainer(ShapingMixin, ImitationMixin):
         return t.eval()
 
     def _teacher_rows(self, f, c):
-        """每个局面的老师 KL 权重：酒馆里有本局凑得成的 S / A 级核心卡 → teacher_core_mult，否则 1。不加权时返回 None。"""
+        """每个局面的老师权重：酒馆里有本局凑得成的 S / A 级核心卡，或者正在做的 S / A 阵容的配套卡（rl/target_comps.json
+        的 support，bg.py playbook）→ teacher_core_mult，否则 1。不加权时返回 None。"""
         mult = float(getattr(self.cfg, "teacher_core_mult", 1.0))
         if mult == 1.0:
             return None
-        if getattr(self, "_core_tab", None) is None:
+        if getattr(self, "_comp_tab", None) is None:
             from tg.catalog import base_of_index, n_cards
-            from .comp import load_target_comps
-            comps = [x for x in load_target_comps() if x["tier"] in ("S", "A")]
-            ids = [base_of_index(i) if i else "" for i in range(n_cards())]
-            self._core_tab = np.array([[cid in x["core"] for x in comps] for cid in ids], dtype=bool)   # 卡牌编号 × 阵容
-            self._core_comps, self._reach = comps, {}
-        from tg.obs import C_SHOP, F_LOBBY, N_SHOP, lobby_bits
-        from .comp import reachable
+            from .comp import CompTables, load_target_comps
+            self._comp_tab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())],
+                                        tiers="SA")
+        from tg.obs import lobby_bits
+        tab = self._comp_tab
         bits = lobby_bits(f)
-        ok = np.zeros((len(bits), len(self._core_comps)), dtype=bool)
-        names = list(F_LOBBY)
-        for b_ in np.unique(bits):
-            r = self._reach.get(int(b_))
-            if r is None:
-                lob = frozenset(n for k, n in enumerate(names) if int(b_) >> k & 1)
-                r = self._reach[int(b_)] = np.array([reachable(x, lob) for x in self._core_comps], dtype=bool)
-            ok[bits == b_] = r
-        shop = np.clip(np.asarray(c)[:, C_SHOP:C_SHOP + N_SHOP], 0, len(self._core_tab) - 1)
-        has = (self._core_tab[shop] & ok[:, None, :]).any((1, 2))
+        has = tab.shop_hit(c, tab.reach(bits), tab.core)
+        if tab.supp.any():
+            has |= tab.shop_hit(c, tab.building(c, bits), tab.supp)
         return np.where(has, mult, 1.0).astype(np.float32)
 
     def _teacher_coef(self) -> float:
