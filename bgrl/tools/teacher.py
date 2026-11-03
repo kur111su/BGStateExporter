@@ -2,14 +2,18 @@
 按留出局的交叉熵挑最好的那一版，存成 runs/teacher.pt。训练时（configs/v3.json 的 teacher / teacher_coef）
 在模型自己打出来的局面上加 KL(老师 ‖ 模型)：告诉它“高手在这个局面会怎么做”。
 
-  bg.py teacher                          从 runs/v3/latest.pt 开始学（默认），约 10–20 分钟（显卡）
-  bg.py teacher --init none              从头学
+  bg.py teacher                          从头学（默认），约 15–25 分钟（显卡）
+  bg.py teacher --init runs/v3/latest.pt 从训练中的模型开始学（不推荐：见下）
   bg.py teacher --steps 3000 --batch 256 学多少步、每步多少条
 
 为什么要老师（rl/ppo.py 的 teacher 注释里有数）：训练里直接模仿高手（pro_coef）只能在回放里的那些局面上学，
 8.4M 参数背 10 万条，第 4450 轮以后训练示范命中率涨到 0.7–0.8、留出局一直 0.37–0.42——背题；
 老师先在留出局最好的时候停下来，再到模型自己的局面上去教，背不了题。
 老师只用在训练里，不进 Git、不上传（runs/ 不在 Git 里）。
+
+第一次（2026-11-03）从 runs/v3/latest.pt（第 14140 轮）开始学：一开始留出局 0.405 / 交叉熵 2.45 就是最好，
+再学只会更差——它已经把训练示范背下来了（命中率 0.70），接着学只是背得更熟。所以默认从头学；
+最好的一版如果就是开始时那一版（什么都没学到），不存。
 """
 from __future__ import annotations
 
@@ -67,14 +71,14 @@ def main(argv=None) -> int:
     from tools.train import load_recipe
     ap = argparse.ArgumentParser()
     ap.add_argument("--recipe", default=str(DEFAULT_RECIPE), help="读 pro_data、pro_weights、模型大小（默认 configs/v3.json）")
-    ap.add_argument("--init", default=str(RUNS / "v3" / "latest.pt"), help="从这个检查点开始（none = 从头学）")
+    ap.add_argument("--init", default="none", help="从这个检查点开始（默认 none = 从头学）")
     ap.add_argument("--out", default=str(RUNS / "teacher.pt"))
     ap.add_argument("--pro-data", default="", help="默认用配方里的 pro_data")
-    ap.add_argument("--steps", type=int, default=6000)
+    ap.add_argument("--steps", type=int, default=15000)
     ap.add_argument("--batch", type=int, default=256)
-    ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-every", type=int, default=250)
-    ap.add_argument("--patience", type=int, default=5, help="留出局交叉熵连续几次不再变好就停")
+    ap.add_argument("--patience", type=int, default=6, help="留出局交叉熵连续几次不再变好就停")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
@@ -128,6 +132,10 @@ def main(argv=None) -> int:
                 print(f"  连续 {bad} 次没变好，停", flush=True)
                 break
     nll, step, sd, pe = best
+    if step == 0:
+        print(f"最好的一版就是开始时那一版（留出局交叉熵 {nll}），等于什么都没学到，不存老师模型。"
+              f"{'从头学试试：teacher.bat --init none' if str(a.init).lower() != 'none' else '把这段输出发给 Claude'}", flush=True)
+        return 1
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model": sd, "model_kwargs": kw, "iter": None,
