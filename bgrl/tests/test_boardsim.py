@@ -120,6 +120,17 @@ def check_combat_shape():
     f[0, 0] = 5 / 20
     assert Trainer._combat_shape(t, FakeEnv(), 0, np.array([0]), f, np.array([A_END]), np.zeros(1))[0] == 0.0
     assert Trainer._combat_shape(t, FakeEnv(), 0, np.array([0]), f, np.array([A_BUY]), np.zeros(1))[0] == 0.0
+    # 后期加倍（combat_late_from / combat_late_mult）：第 10 回合起 Φ ×2，整局 = 系数 × (2 × 最后一次 - 第一次)
+    t2 = SimpleNamespace(cfg=SimpleNamespace(combat_bonus=0.5, combat_from_turn=4, combat_frac=1.0, combat_late_from=10,
+                                             combat_late_mult=2.0), judge=FakeJudge(),
+                         rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)), mix=defaultdict(float),
+                         cs_ep=np.full(1, -1, dtype=np.int64), cs_prev=np.zeros(1))
+    late = []
+    for turn in (8, 9, 10, 11):                        # Φ 0.2、0.5、0.4×2、0.9×2
+        f[0, 0] = turn / 20
+        late.append(round(float(Trainer._combat_shape(t2, FakeEnv(), 0, np.array([0]), f, np.array([A_END]), np.zeros(1))[0]), 6))
+    assert late == [0.0, 0.15, 0.15, 0.5], late
+    assert abs(t2.mix["cs_sum"] - (0.2 + 0.5 + 0.4 + 0.9)) < 1e-9            # 日志里记的还是原始胜率
     return tot
 
 
@@ -304,6 +315,8 @@ def check_lobby():
     core = sorted(apm["core"])[0]
     c[:, 37] = idx[core]                                                # 酒馆第 2 格：机械 APM 的核心卡
     t = SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0))
+    assert Trainer._teacher_rows(t, f, c).tolist() == [1.0, 1.0, 1.0]  # 这套还没开头（手里 / 场上没有它的核心卡）：不加权
+    c[:, 26] = idx[sorted(apm["core"])[1]]                              # 手里有另一张核心卡：开了头
     w = Trainer._teacher_rows(t, f, c)
     assert w.tolist() == [3.0, 1.0, 3.0], w                            # 第 2 行本局没开机械：凑不成，不加权
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=1.0)), f, c) is None

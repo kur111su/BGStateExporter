@@ -214,6 +214,10 @@ class Config:
     combat_boards: int = 12
     combat_fights: int = 3
     combat_frac: float = 1.0
+    # 后期阵容强度更值钱：第 combat_late_from 回合起 Φ 乘 combat_late_mult（势能 = 系数 × 胜率，仍是势能差）。
+    # 第 14350 / 15180 轮阵容测试：第 3–9 回合模型的胜率和高手阵容一样甚至更高，第 12 / 13 回合 0.52 / 0.40（高手 0.67 / 0.60）。1 = 不加
+    combat_late_from: int = 10
+    combat_late_mult: float = 1.0
     # 经济奖励（见 _econ_shape）：结束回合时存下的资源（下回合额外金币 + 2 × 永久金币上限加成 + 手牌价值）每多 1 块加这么多，
     # 下回合钱到手 / 牌打出去时扣回来，一局结束时扣回最后的存款（纯势能差）。布莱恩·铜须让南海卖艺者、
     # 剃刀沼泽地卜师（鲜血宝石）、竞技表演者（发现法术）之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
@@ -981,7 +985,8 @@ class Trainer(ShapingMixin, ImitationMixin):
         return t.eval()
 
     def _teacher_rows(self, f, c):
-        """每个局面的老师权重：酒馆里有本局凑得成的 S / A 级核心卡，或者正在做的 S / A 阵容的配套卡（rl/target_comps.json
+        """每个局面的老师权重：酒馆里有本局凑得成、而且已经开了头（有一张核心卡 / 场上 2 个本族随从）的 S / A 阵容的核心卡，
+        或者正在做的 S / A 阵容的配套卡（rl/target_comps.json
         的 support，bg.py playbook）→ teacher_core_mult，否则 1。不加权时返回 None。"""
         mult = float(getattr(self.cfg, "teacher_core_mult", 1.0))
         if mult == 1.0:
@@ -994,7 +999,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         from tg.obs import lobby_bits
         tab = self._comp_tab
         bits = lobby_bits(f)
-        has = tab.shop_hit(c, tab.reach(bits), tab.core)
+        frac, tribe = tab.progress(c)
+        started = (frac > 0) | (tab.tribal & (tribe >= 2))         # 这套已经开了头（有一张核心卡 / 场上 2 个本族）
+        has = tab.shop_hit(c, tab.reach(bits) & started, tab.core)
         if tab.supp.any():
             has |= tab.shop_hit(c, tab.building(c, bits), tab.supp)
         return np.where(has, mult, 1.0).astype(np.float32)

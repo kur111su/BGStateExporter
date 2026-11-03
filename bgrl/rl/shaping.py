@@ -92,15 +92,18 @@ class ShapingMixin:
             phi = self.judge.judge(env.game(int(g)), int(seat), int(t))
             if phi is None:
                 continue
+            raw = phi
+            if t >= getattr(cfg, "combat_late_from", 10):
+                phi = phi * getattr(cfg, "combat_late_mult", 1.0)
             s = off + i
             ep = int(self.rollout.ep[s])
             if self.cs_ep[s] == ep:
                 r0[j] += cfg.combat_bonus * (phi - self.cs_prev[s])
             self.cs_ep[s], self.cs_prev[s] = ep, phi
-            self.mix["cs_sum"] += phi
+            self.mix["cs_sum"] += raw
             self.mix["cs_n"] += 1
             if t >= 9:
-                self.mix["cs_late_sum"] += phi
+                self.mix["cs_late_sum"] += raw
                 self.mix["cs_late_n"] += 1
         self.mix["t_combat"] += time.time() - t0
         return r0
