@@ -305,16 +305,20 @@ class ProBoardBooster(BotBooster):
 class CompSeeder:
     """“成型以后怎么玩”的课程：一部分机器人局里，学习者（0 号座位）到了第 t 回合（turns 里随机一个）招募开始时，
     场面直接换成同一回合高分阵容库里一套已经成型的 S / A 级目标阵容（rl/comp.formed：核心卡 ≥ 2 张且 ≥ 2/3、
-    种族阵容 ≥ 3 个本族随从），而且这套在本局凑得成、场上每张卡的种族本局都开了；酒馆等级提到那位玩家当时的等级（不降）。
+    种族阵容 ≥ 3 个本族随从；t < formed_from 时换成做到一半的：核心卡过半、场上 2 个本族随从，学怎么做完），而且这套在本局凑得成、场上每张卡的种族本局都开了；酒馆等级提到那位玩家当时的等级（不降）。
     之后学习者自己接着打：买配套卡、施法养场面、倒转经济、升本做后期。
 
     为什么：模型自己几乎走不到成型的局面（第 14350 轮阵容测试按严格标准 S / A 只有 3%），没见过就学不会成型以后怎么用；
     高手的场面第 9 / 10 / 11 回合分别有 28% / 46% / 51% 是成型的 S / A。
     换场面后这一局的阵容强度 / 目标阵容奖励从新场面重新起算（不把换来的强度算成学习者的功劳），见 ppo 的 seeded。"""
 
-    def __init__(self, lib: dict, frac: float = 0.15, turns=(8, 9), seed: int = 0):
+    def __init__(self, lib: dict, frac: float = 0.15, turns=(8, 9), seed: int = 0, formed_from: int = 8):
         from tg.catalog import catalog
-        from .comp import formed, load_target_comps, reachable
+        from .comp import comp_progress, formed, load_target_comps, reachable
+
+        def half(ids, c):                                  # 做到一半：核心卡过半，种族阵容场上 2 个本族
+            fr, k, sup = comp_progress(ids, c)
+            return k >= 1 and fr >= 0.5 - 1e-9 and (not c.get("tribes") or sup >= 0.5)
         self.frac, self.turns = frac, tuple(int(t) for t in turns)
         self.rng = random.Random(seed + 4243)
         det = catalog()
@@ -324,7 +328,7 @@ class CompSeeder:
             out = []
             for e in lib.get(t, []):
                 ids = [base_id(x[0]) for x in e["board"][:7]]
-                hit = [c for c in comps if formed(ids, c)]
+                hit = [c for c in comps if (formed(ids, c) if t >= formed_from else half(ids, c))]
                 if not hit:
                     continue
                 races = set()

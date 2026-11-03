@@ -201,6 +201,7 @@ class Config:
     # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
     seed_comp_frac: float = 0.0
     seed_comp_turns: str = "8,9"
+    seed_comp_formed_from: int = 8     # 早于这一回合换的是“做到一半”的场面（核心卡过半、场上 2 个本族随从），学怎么做完
     teacher_conf: float = 0.5
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
     target_weights: str = ""
@@ -954,9 +955,10 @@ class Trainer(ShapingMixin, ImitationMixin):
             print("没有高分阵容库（runs\\pro_boards.json），成型阵容课程不用", flush=True)
             return None
         turns = [int(x) for x in str(cfg.seed_comp_turns).split(",") if x.strip()]
-        sd = CompSeeder(lib, cfg.seed_comp_frac, turns, seed=cfg.seed)
-        print(f"成型阵容课程：{cfg.seed_comp_frac:.0%} 的机器人局在第 {cfg.seed_comp_turns} 回合把学习者的场面换成已经成型的 S / A 阵容"
-              f"（库里 {sd.size()} 个）", flush=True)
+        sd = CompSeeder(lib, cfg.seed_comp_frac, turns, seed=cfg.seed, formed_from=cfg.seed_comp_formed_from)
+        print(f"成型阵容课程：{cfg.seed_comp_frac:.0%} 的机器人局在第 {cfg.seed_comp_turns} 回合把学习者的场面换成 S / A 阵容"
+              f"（第 {cfg.seed_comp_formed_from} 回合以前是做到一半的，之后是成型的；库里 {sd.size()} 个："
+              + "、".join(f"第 {t} 回合 {len(v)}" for t, v in sorted(sd.pool.items())) + "）", flush=True)
         return sd if sd.size() else None
 
     def _load_teacher(self):

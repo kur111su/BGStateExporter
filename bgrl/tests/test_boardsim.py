@@ -423,6 +423,10 @@ def check_seeder():
     assert formed(ids, tea) and sorted(ids) == sorted(tea["core"]), ids
     assert not sd.seed(env, obs["features"])                            # 一局只换一次
     assert sd.finish(0) and sd.take_stats()["seeded"] >= 1
+    half = [[sorted(tea["core"])[0], 5, 5], [sorted(tea["core"])[1], 5, 5]]          # 喝茶流 3 张核心卡里的 2 张：做到一半
+    assert CompSeeder({t: [{"tier": 3, "board": half}]}, 1.0, (t,), formed_from=t + 1).size() == 1
+    assert CompSeeder({t: [{"tier": 3, "board": half[:1]}]}, 1.0, (t,), formed_from=t + 1).size() == 0
+    assert CompSeeder({t: [{"tier": 3, "board": half}]}, 1.0, (t,), formed_from=t).size() == 1      # 2/3 也算成型
     return len(sd.seeded_slots)
 
 
