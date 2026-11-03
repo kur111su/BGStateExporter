@@ -11,6 +11,7 @@
   nativedemos  别人的对局（TavernGym 观察格式 .npz）→ 决策样本 runs/h13_demos + 阵容库 runs/h13_boards.json
   cardvalue 高手怎么挑卡：每张卡的挑中倍率、关键卡、经济卡 → rl/card_value.json（tools/cardvalue.py）
   simcards  引擎实测的卡牌价值和配合：高分场面拿掉一 / 两张卡再打 → rl/sim_value.json（tools/simcards.py）
+  teacher   老师模型：只模仿高分示范、按留出局挑最好的一版 → runs/teacher.pt（训练时在模型自己的局面上教；tools/teacher.py）
   goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
@@ -34,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 
 TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
          "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
-         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards",
+         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher",
          "profile": "opp_profile", "bench": "tg_bench"}
 
 

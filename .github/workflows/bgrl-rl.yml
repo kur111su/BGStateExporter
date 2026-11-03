@@ -52,3 +52,5 @@ jobs:
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,end:2"
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,simkey:2,simsyn:2,engine:3,tgtS:2,tgtfit:2" --target-bonus 0.15 --demo-shop-shuffle true --combat-bonus 0.3 --combat-from-turn 2 --econ-bonus 0.01 --comp-bonus 0.03 --comp-weights "1,0,0"
           python -X utf8 bgrl/bg.py simcards --per-turn 3 --out bgrl/runs/_sim_value_ci.json
+          python -X utf8 bgrl/bg.py teacher --init bgrl/runs/_smoke/latest.pt --pro-data bgrl/runs/pro_demos --steps 6 --eval-every 3 --batch 16 --out bgrl/runs/_teacher_ci.pt
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --teacher bgrl/runs/_teacher_ci.pt --teacher-coef 0.03 --teacher-ramp 2

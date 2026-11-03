@@ -281,6 +281,22 @@ def check_choose():
     return True
 
 
+def check_teacher():
+    """老师 KL 系数每次启动后从 0 线性加上去；没有老师文件时训练照常（不用老师）。"""
+    from rl.ppo import Trainer
+    t = SimpleNamespace(teacher=object(), teacher_t0=None, iter=10, cfg=SimpleNamespace(teacher_coef=0.03, teacher_ramp=4))
+    got = []
+    for it in (10, 11, 13, 20):
+        t.iter = it
+        got.append(round(Trainer._teacher_coef(t), 4))
+    assert got == [0.0075, 0.015, 0.03, 0.03], got
+    assert Trainer._teacher_coef(SimpleNamespace(teacher=None)) == 0.0
+    miss = SimpleNamespace(cfg=SimpleNamespace(teacher="runs\\_no_such_teacher.pt", teacher_coef=0.03, teacher_ramp=4))
+    assert Trainer._load_teacher(miss) is None
+    assert Trainer._load_teacher(SimpleNamespace(cfg=SimpleNamespace(teacher="x.pt", teacher_coef=0.0))) is None
+    return got
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -289,6 +305,7 @@ def main() -> int:
     dr = check_drift()
     tg = check_targets()
     check_choose()
+    check_teacher()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

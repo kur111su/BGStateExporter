@@ -172,6 +172,16 @@ class Config:
     # 模仿高手强度最低降到多少倍（不让它完全消失）：第 5400–5770 轮降到 0.01 以后，第 2 回合升本率 0.47 → 0.24–0.40、
     # 第 5 回合等级 2.8 → 1.8–2.1，落后差距 0.18 → 0.37——升本节奏主要靠模仿撑着
     pro_scale_min: float = 0.25
+    # 老师模型（bg.py teacher：只模仿高分示范、按留出局的交叉熵挑最好的那一版，存成 runs/teacher.pt）：
+    # 在模型自己打出来的局面上加 KL(老师 ‖ 模型) × teacher_coef，每次启动后前 teacher_ramp 轮从 0 慢慢加上去。
+    # 和 pro_coef 的区别：pro_* 只在高手回放的那些局面上学，8.4M 参数背 10 万条——第 4450 轮起训练示范命中率
+    # 0.47 → 0.70–0.82、留出局一直 0.37–0.42、交叉熵 2.0 → 2.4–2.9，模仿强度被 pro_gap_cap 压在最低 0.25；
+    # 老师在模型自己的局面上给“高手这时候会怎么做”，背不了题。阵容测试（第 14140 轮）：高手抢着买的
+    # 竞技表演者、安静的投递员、刷新畸体、圈套陷阱师、翩飞蝙蝠、狼宝宝倍率 0.0–0.3，第 9 回合卖随从 / 法术进账 2.3 块（高手 8.3）。
+    # 空 / 0 = 不用
+    teacher: str = ""
+    teacher_coef: float = 0.0
+    teacher_ramp: int = 200
     # 阵容成型奖励 q 里三项的权重：主种族纯度、万三常见搭配、关键卡（加起来是 1 就是满分 1）。
     # 阵容测试（第 11600 轮）：模型玩龙 / 海盗，万三那些搭配一对都用不上（0.02 对）；关键卡前四名的局 0.50 张、
     # 后四名 0.70 张，和名次反着走；纯度前四 0.66、后四 0.57 是对的方向
@@ -370,6 +380,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.anchor = None
         self._init_imitation()                         # 示范数据和模仿强度（rl/imitation.py）
         self._init_shaping()                           # 升本曲线和每个座位的塑形状态（rl/shaping.py）
+        self.teacher, self.teacher_t0 = self._load_teacher(), None
         self.mix = defaultdict(int)
         self.anchor_until = 0
         self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
@@ -575,6 +586,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         idx = np.random.permutation(n)
         stats = defaultdict(list)
         use_anchor = self.anchor is not None and self.iter < self.anchor_until
+        tcoef = self._teacher_coef()
+        if tcoef > 0:
+            stats["teacher_coef"].append(tcoef)
         stop = False
         A_N = self.model.L.actions
         if self.dev.type == "cuda":
@@ -615,6 +629,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                         kl_anchor = (ref.exp() * (ref - logp_all)).masked_fill(~m, 0).sum(-1).mean()
                         loss = loss + cfg.anchor_coef * kl_anchor
                         stats["kl_anchor"].append(kl_anchor.item())
+                    if tcoef > 0:
+                        with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+                            tl = F.log_softmax(self.teacher(f, c, m, compressed=True)[0].float(), -1)
+                        kl_t = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1).mean()
+                        loss = loss + tcoef * kl_t
+                        stats["kl_teacher"].append(kl_t.item())
                     self.scaler.scale(loss * w).backward()
                     with torch.no_grad():
                         kl = ((ratio - 1) - torch.log(ratio)).mean().item()
@@ -849,6 +869,41 @@ class Trainer(ShapingMixin, ImitationMixin):
             else:
                 print(f"加强方式改为 {self.cfg.boost_kind}：强度从 {self.adapt.strength} 开始重新调", flush=True)
             self.booster.strength = self.adapt.strength
+
+    def _load_teacher(self):
+        """老师模型（teacher / teacher_coef）：读进来、冻住。没有文件或格式不对就不用，训练照常。"""
+        cfg = self.cfg
+        if getattr(cfg, "teacher_coef", 0) <= 0 or not getattr(cfg, "teacher", ""):
+            return None
+        p = Path(str(cfg.teacher).replace("\\", "/"))
+        if not p.exists():
+            print(f"没有老师模型 {cfg.teacher}（先运行 teacher.bat，约 10–20 分钟），这次不用", flush=True)
+            return None
+        from .advisor import load_model
+        try:
+            t, info = load_model(p, str(self.dev))
+        except Exception as ex:                        # noqa: BLE001
+            print(f"老师模型 {p} 读不了（{type(ex).__name__}: {ex}），这次不用", flush=True)
+            return None
+        if t.L.actions != self.model.L.actions:
+            print(f"老师模型 {p} 和当前环境的格式不一样（TavernGym 换过版本？），重新运行 teacher.bat", flush=True)
+            return None
+        for q in t.parameters():
+            q.requires_grad_(False)
+        meta = torch.load(p, map_location="cpu", weights_only=False).get("teacher") or {}
+        val = meta.get("val") or {}
+        print(f"老师模型：{p}（{meta.get('created', '?')}，留出局命中率 {val.get('pro_top1', '?')}、交叉熵 {val.get('pro_nll', '?')}）；"
+              f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
+        return t.eval()
+
+    def _teacher_coef(self) -> float:
+        """这一轮的老师 KL 系数：每次启动后从 0 线性加到 teacher_coef（teacher_ramp 轮）。"""
+        if getattr(self, "teacher", None) is None:
+            return 0.0
+        if self.teacher_t0 is None:
+            self.teacher_t0 = self.iter
+        ramp = max(1, int(self.cfg.teacher_ramp))
+        return float(self.cfg.teacher_coef) * min(1.0, (self.iter - self.teacher_t0 + 1) / ramp)
 
     def start_stage(self):
         """新阶段：以当前策略为锚，前 anchor_iters 轮加 KL 约束。"""

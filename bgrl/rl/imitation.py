@@ -73,7 +73,7 @@ class ImitationMixin:
             d["compressed"] = True
             d["meta"] = {"games": sum(int(p["meta"].get("games") or 0) for p in parts)}
         path = ";".join(str(p) for p in paths)
-        if d["m"].shape[1] != self.model.L.actions or d["f"].shape[1:] != self.obs[self.envs[0][0]]["features"].shape[1:]:
+        if not self._demo_format_ok(d):
             print(f"高分决策样本 {path} 和当前环境的格式不一样，重新运行 bg.py prodemos", flush=True)
             return None
         d["train_idx"] = np.flatnonzero(d["split"] == 0)
@@ -81,6 +81,10 @@ class ImitationMixin:
         print(f"高分决策样本：{d['meta'].get('games')} 局，训练 {len(d['train_idx'])} 条、验证 {len(d['val_idx'])} 条；"
               f"模仿系数 {self.cfg.pro_coef}", flush=True)
         return d
+
+    def _demo_format_ok(self, d) -> bool:
+        """示范的动作数、观察长度和当前环境一样（老师训练 tools/teacher.py 没有环境，只比动作数）。"""
+        return d["m"].shape[1] == self.model.L.actions and d["f"].shape[1:] == self.obs[self.envs[0][0]]["features"].shape[1:]
 
     def _demo_tensors(self, j, d=None, shuffle: bool = False):
         """示范第 j 条（数组）→ 张量。shuffle：酒馆顺序随机打乱（demo_shop_shuffle，只在训练时用，考试不打乱）。"""
