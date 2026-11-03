@@ -65,6 +65,49 @@ def main() -> int:
     assert torch.allclose(v0, v1, atol=1e-4) and torch.allclose(p0, p2, atol=2e-4)
     print("优化后的前向和原写法一致（最大差 %.2e）" % float((l0[legal] - l1[legal]).abs().max()))
 
+    # 体系感知（第 15300 轮起）：旧检查点没有 comp_* 参数也能读，读进来结果和原来一样；模型自己算的阵容得分和 rl/comp 的一样
+    from rl.comp import CompTables, load_target_comps
+    from rl.model import COMP_F, K_MAX
+    from tg.catalog import base_of_index, card_id, n_cards
+    from tg.obs import C_BOARD, F_LOBBY, lobby_bits
+    old = {k: v for k, v in ref_m.state_dict().items() if not k.startswith("comp_")}
+    m2 = build_model(64, 2, 2, 32).eval()
+    m2.load_state_dict(old)
+    with torch.no_grad():
+        l3, v3, _ = m2(f, c, mk)
+    assert torch.allclose(l1[legal], l3[legal], atol=1e-5) and torch.allclose(v1, v3, atol=1e-6), "旧检查点读进来结果变了"
+    comps = load_target_comps()
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    apm = next(x for x in comps if x["name"] == "机械 APM")
+    cc = c.clone()
+    cc[:, C_BOARD:C_BOARD + 2] = torch.tensor([idx[x] for x in sorted(apm["core"])])
+    ff = f.clone()
+    ff[:, list(F_LOBBY.values())] = 0.0
+    ff[:, F_LOBBY["MECHANICAL"]] = 1.0
+    with torch.no_grad():
+        feats = ref_m.comp(soft_log(ff), cc)
+    assert feats.shape == (len(cc), K_MAX, COMP_F)
+    tab = CompTables(comps, [base_of_index(i) if i else "" for i in range(n_cards())])
+    want = tab.scores(cc.numpy(), lobby_bits(ff.numpy()))
+    got = feats[:, :len(comps), 5].numpy()
+    assert np.allclose(got, want, atol=1e-5), np.abs(got - want).max()
+    k_apm = [x["name"] for x in comps].index("机械 APM")
+    assert (feats[:, k_apm, 6] == 1).all(), "机械 APM 应该是主选"
+    # 体系感知的输入层不是 0 以后：优化前向和原写法仍然一致，梯度能传到 comp_proj
+    torch.nn.init.normal_(ref_m.comp_proj.weight, std=0.05)
+    with torch.no_grad():
+        ref_m.pack = False
+        l4, _, _ = ref_m(ff, cc, mk, slow=True)
+        ref_m.pack = True
+        l5, _, _ = ref_m(ff, cc, mk)
+    assert torch.allclose(l4[legal], l5[legal], atol=2e-4, rtol=1e-4)
+    ref_m.zero_grad()
+    lg, vv, _ = ref_m(ff, cc, mk)
+    (vv.sum() + ref_m.last_comp_logits.sum()).backward()
+    assert ref_m.comp_proj.weight.grad.abs().sum() > 0 and ref_m.comp_head.weight.grad.abs().sum() > 0
+    torch.nn.init.zeros_(ref_m.comp_proj.weight)
+    print(f"体系感知：旧检查点兼容，阵容得分和 rl/comp 一致，{len(comps)} 套阵容")
+
     # 训练数据按压缩后的半精度存：极大的数值也不会变成 inf
     from rl.ppo import Policy
     pol = Policy(ref_m, torch.device("cpu"))
@@ -78,11 +121,12 @@ def main() -> int:
     for i in range(3):
         r.add([0, 1], np.zeros((2, 3), np.float32), np.zeros((2, 2), np.int32), np.zeros((2, 8), bool),
               np.zeros(2, np.int64), np.zeros(2, np.float32), np.full(2, 0.1 * i, np.float32))
-    r.reward(0, 1.0, True, 1)
+    r.reward(0, 1.0, True, 1, comp=4)
     b = r.collect(1.0, 1.0, np.asarray([0.0, 0.5], np.float32))
     s0, s1 = b["slot"] == 0, b["slot"] == 1
     assert np.allclose(b["adv"][s0], [1.0, 0.9, 0.8]) and np.allclose(b["ret"][s0], 1.0), b
     assert np.allclose(b["ret"][s1], 0.5) and list(b["place"][s0]) == [1, 1, 1] and list(b["place"][s1]) == [0, 0, 0]
+    assert list(b["comp"][s0]) == [4, 4, 4] and list(b["comp"][s1]) == [-1, -1, -1]          # 局末成了哪一套（体系感知辅助头）
     print("GAE 检查通过")
 
     # 混合精度：GPU 上用 float16，CPU 上用 bfloat16 走一遍前向和反向（之前 float16 下屏蔽值溢出）

@@ -51,6 +51,8 @@ class ShapingMixin:
         self.tg_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.ec_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 经济（econ_bonus）：每个座位上次的存款
         self.ec_prev = np.zeros(self.n_slots, dtype=np.float64)
+        self.fc_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 体系感知辅助头的标签：每个座位最近一次结束回合时成型的阵容
+        self.fc_idx = np.full(self.n_slots, -1, dtype=np.int64)  # （rl/target_comps.json 里的序号；-1 = 没成型）
         if cfg.combat_bonus > 0:
             self.judge = self._make_judge()
 
@@ -191,7 +193,7 @@ class ShapingMixin:
         再凑齐巴琳达 → 0.67。整局加起来 = target_bonus × 最后一次的 Φ：最后成了 S 级阵容拿得最多。
         只算本局凑得成的那几套（核心卡的种族本局开了；tg/obs.lobby）：没开野猪人的局里不追邪能野猪人那套。"""
         from tg.obs import lobby
-        from .comp import target_score
+        from .comp import nearest_comp, target_score
         ends = np.flatnonzero(ak == A_END)
         if not len(ends):
             return r0
@@ -203,9 +205,13 @@ class ShapingMixin:
             if t < getattr(self.cfg, "target_from_turn", 5):
                 continue
             ids = [base[int(x)] for x in np.asarray(c[j])[C_BOARD:C_BOARD + 7] if 0 < int(x) < len(base)]
-            phi = target_score(ids, comps, lobby(f[j]))[0]
+            lob = lobby(f[j])
+            phi = target_score(ids, comps, lob)[0]
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
+            if hasattr(self, "fc_ep"):                 # 局末成了哪一套（体系感知辅助头的标签，ppo.collect 在对局结束时取）
+                fc, _ = nearest_comp(ids, comps, lob=lob, strict=True)
+                self.fc_ep[s], self.fc_idx[s] = ep, (comps.index(fc) if fc is not None else -1)
             prev = self.tg_prev[s] if self.tg_ep[s] == ep else 0.0
             rb = getattr(self, "tg_rebase", None)
             if rb and s in rb:                         # 成型阵容课程刚换过场面：从新场面起算，不算学习者的功劳

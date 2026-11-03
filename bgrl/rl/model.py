@@ -112,11 +112,71 @@ class CardEmbed(nn.Module):
         return self.ident(idx) + self.proj(self.static[idx])
 
 
+K_MAX, COMP_F = 32, 10          # 和 rl/comp.py 一样（这里不 import rl/comp：竞技场按文件路径单独导入本文件）
+
+
+class CompSense(nn.Module):
+    """阵容进度（体系感知）：从卡牌编号和观察里算每套目标阵容（rl/target_comps.json，最多 K_MAX 套）做到几成，
+    给模型当输入——“我在做哪套、做到几成、还有哪几套备选、酒馆里有没有它的核心卡 / 配套卡”。
+    查表（rl/comp.model_tables）不是参数，不进检查点；没有查表时全是 0（输入层是 0 起步，模型行为不变）。"""
+
+    def __init__(self, tables: dict | None, cs: dict):
+        super().__init__()
+        self.cs = cs
+        self.on = tables is not None
+        if not self.on:
+            return
+        t = lambda k, dt: torch.as_tensor(np.asarray(tables[k]), dtype=dt)          # noqa: E731
+        for k in ("core_b", "ks_b", "w", "ncore", "nks"):
+            self.register_buffer(k, t(k, torch.float32), persistent=False)
+        for k in ("core_c", "supp_c", "trib_c", "need", "need_valid", "tribal", "valid"):
+            self.register_buffer(k, t(k, torch.bool), persistent=False)
+        for k in ("base_key", "lobby_idx"):
+            self.register_buffer(k, t(k, torch.long), persistent=False)
+
+    def forward(self, x_in: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        """x_in：soft_log 过的浮点；c：卡牌编号。返回 [B, K_MAX, COMP_F]。"""
+        B = c.shape[0]
+        if not self.on:
+            return torch.zeros(B, K_MAX, COMP_F, device=c.device)
+        cs = self.cs
+        nc = self.core_c.shape[0]
+        cl = c.clamp(0, nc - 1)
+        board = cl[:, cs["board"][0]:cs["board"][1]]
+        own = torch.cat([board, cl[:, cs["hand"][0]:cs["hand"][1]]], 1)
+        shop = cl[:, cs["shop"][0]:cs["shop"][1]]
+        nb = self.core_b.shape[0]
+        pres = torch.zeros(B, nb, device=c.device)
+        pres.scatter_(1, self.base_key[own], 1.0)
+        pres[:, 0] = 0.0
+        presb = torch.zeros(B, nb, device=c.device)
+        presb.scatter_(1, self.base_key[board], 1.0)
+        presb[:, 0] = 0.0
+        frac = (pres @ self.core_b) / self.ncore                            # 场上 + 手里核心卡占比（同名算一张）
+        tribe = self.trib_c[board].float().sum(1)                         # 场上本族随从个数
+        sup = torch.where(self.tribal, (tribe / 4).clamp(max=1.0), torch.ones_like(tribe))
+        ksn = presb @ self.ks_b                                            # 场上“留着用”的配套卡张数
+        supf = torch.where(self.nks > 0, (ksn / self.nks.clamp(min=1).clamp(max=2)).clamp(max=1.0), torch.ones_like(ksn))
+        lob = x_in[:, self.lobby_idx] > 0.3                               # 本局开放的种族
+        hit = (self.need.unsqueeze(0) & lob[:, None, None, :]).any(-1)    # [B,K,需要几组]
+        reach = ((hit | ~self.need_valid.unsqueeze(0)).all(-1) & self.valid).float()
+        score = self.w * frac * frac * sup * (0.7 + 0.3 * supf) * reach
+        top = torch.topk(score, 3, dim=1)
+        rank = torch.zeros_like(score).scatter(1, top.indices, torch.tensor([1.0, 2.0, 3.0], device=c.device).expand(B, 3))
+        rank = rank * (score > 0)
+        main = (rank == 1).float()
+        backup = ((rank == 2) | (rank == 3)).float()
+        shop_core = self.core_c[shop].any(1).float()
+        shop_supp = self.supp_c[shop].any(1).float()
+        return torch.stack([reach, frac, frac * frac, sup, supf, score, main, backup, shop_core, shop_supp], -1) * \
+            self.valid.float()[None, :, None]
+
+
 class EntityTransformer(nn.Module):
     N_TYPES = 12
 
     def __init__(self, layout: Layout, static: np.ndarray, d: int = 192, layers: int = 4, heads: int = 4,
-                 dc: int = 64):
+                 dc: int = 64, comp_tables: dict | None = None):
         super().__init__()
         self.L = layout
         self.fs = layout.fslices()
@@ -151,12 +211,31 @@ class EntityTransformer(nn.Module):
         # 价值 / 名次
         self.v_head = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 1))
         self.p_head = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 8))
+        # 体系感知（第 15300 轮起）：每套目标阵容的进度 → 加到全局词上（0 起步：旧检查点接着用，行为不变）；
+        # 辅助头：预测这局最后成了哪一套（K_MAX 类）或没成（第 K_MAX 类），训练时用局末结果当标签
+        self.comp = CompSense(comp_tables, self.cs)
+        self.comp_proj = nn.Linear(K_MAX * COMP_F, d)
+        nn.init.zeros_(self.comp_proj.weight)
+        nn.init.zeros_(self.comp_proj.bias)
+        self.comp_head = nn.Linear(d, K_MAX + 1)
+        self.last_comp_logits = None
+        self._register_load_state_dict_pre_hook(self._fill_new_keys, with_module=False)
         # 每个词的类型和槽位序号（不是参数，不进检查点）
         groups = [(0, 1), (1, 1), (2, L.NPW), (3, 2), (4, L.NQ), (5, 1), (6, 8), (7, L.NB), (8, L.NH), (9, L.NS),
                   (10, L.NC), (11, L.NOPP)]
         self.register_buffer("type_ids", torch.tensor([t for t, n in groups for _ in range(n)]), persistent=False)
         self.register_buffer("slot_ids", torch.tensor([i for t, n in groups for i in range(n)]), persistent=False)
         self.pack = True          # 只把有内容的词送进 Transformer（结果不变，省约一半计算）
+
+    def _fill_new_keys(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        """旧检查点（第 15300 轮以前）没有体系感知的参数：用现在的初始值补上（输入层是 0，行为和原来一样）。"""
+        for name in ("comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias"):
+            if prefix + name not in state_dict:
+                mod, attr = name.split(".")
+                state_dict[prefix + name] = getattr(getattr(self, mod), attr).detach().clone()
+
+    def comp_input(self, x_in: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        return self.comp_proj(self.comp(x_in, c).reshape(c.shape[0], -1)).unsqueeze(1)
 
     # ---------------- 编码 ----------------
 
@@ -169,7 +248,7 @@ class EntityTransformer(nn.Module):
         D = self.card_to_d(E)                                  # [B,124,d]
         bias = self.card_to_d.bias
         sl = lambda T, a, b=None: T[:, cs[a][0]:cs[b or a][1]]   # noqa: E731
-        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1)
+        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + self.comp_input(f, c).to(D.dtype)
         nq = cs["quests"][1] - cs["quests"][0]
         ns = cs["secrets"][1] - cs["secrets"][0]
         # 任务、奥秘：原来是先把卡嵌入加起来再过线性层，线性层的偏置只算一次
@@ -212,7 +291,7 @@ class EntityTransformer(nn.Module):
             pres.append(p)
             types.append(t)
 
-        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1)
+        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + self.comp_input(f, c)
         add(g, torch.ones(B, 1, dtype=torch.bool, device=dev), 0)
         hero = self.card_to_d(cardv("hero"))
         add(hero, c[:, cs["hero"][0]:cs["hero"][1]] > 0, 1)
@@ -301,6 +380,7 @@ class EntityTransformer(nn.Module):
         pooled = h.sum(1) / present.sum(1, keepdim=True).clamp(min=1)
         z = g + pooled
         v = torch.nan_to_num(torch.tanh(self.v_head(z).float()).squeeze(-1), nan=0.0)
+        self.last_comp_logits = self.comp_head(z).float()          # 训练的辅助损失用（ppo.update 读）
         return logits, v, torch.nan_to_num(self.p_head(z).float(), nan=0.0)
 
     @torch.no_grad()
@@ -322,11 +402,28 @@ SIZES = {
 }
 
 
-def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64) -> EntityTransformer:
+_COMP_TABLES: list = []
+
+
+def comp_tables():
+    """rl/target_comps.json 的阵容查表（rl/comp.model_tables，进程里只算一次）；读不了时 None（体系感知输入全是 0）。"""
+    if _COMP_TABLES:
+        return _COMP_TABLES[0]
+    try:
+        from .comp import model_tables
+        _COMP_TABLES.append(model_tables())
+        return _COMP_TABLES[0]
+    except Exception as ex:                             # noqa: BLE001
+        print(f"阵容查表读不了（{type(ex).__name__}: {ex}），体系感知输入全是 0", flush=True)
+        return None
+
+
+def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64, tables="auto") -> EntityTransformer:
     import taverngym._core as c
     n, raw = c.card_static()
     static = np.frombuffer(raw, dtype="<f4").reshape(-1, n).copy()
-    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads, dc=dc)
+    tables = comp_tables() if isinstance(tables, str) else tables
+    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads, dc=dc, comp_tables=tables)
 
 
 def n_params(m: nn.Module) -> int:

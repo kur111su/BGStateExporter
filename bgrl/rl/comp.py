@@ -224,6 +224,7 @@ class CompTables:
         self.supp = np.zeros((n, k), dtype=bool)
         self.trib = np.zeros((n, k), dtype=bool)
         self.keep = np.zeros((n, k), dtype=bool)          # 高手做这套时留着不卖的核心 / 配套卡
+        self.ksup = np.zeros((n, k), dtype=bool)          # 其中的配套卡（目标阵容得分的“配套卡配齐的程度”）
         for i, cid in enumerate(ids):
             if not cid:
                 continue
@@ -232,8 +233,11 @@ class CompTables:
                 self.core[i, j] = cid in c["core"]
                 self.supp[i, j] = cid in c.get("support", ())
                 self.keep[i, j] = cid in c.get("keep", ())
+                self.ksup[i, j] = cid in c.get("keep_support", ())
                 self.trib[i, j] = bool(c.get("tribes")) and bool(rs & c["tribes"] or "ALL" in rs)
         self.ncore = np.array([len(c["core"]) for c in self.comps], dtype=np.float32)
+        self.w = np.array([c["w"] for c in self.comps], dtype=np.float32)
+        self.nks = np.array([len(c.get("keep_support") or ()) for c in self.comps], dtype=np.float32)
         keys = {b: k for k, b in enumerate(sorted(set(ids)))}
         self.base_key = np.array([keys[b] for b in ids], dtype=np.int64)     # 卡牌编号 → 同名（金色并到普通）的编号
         self.tribal = np.array([bool(c.get("tribes")) for c in self.comps])
@@ -281,6 +285,35 @@ class CompTables:
             ok = ok & (np.arange(len(self.comps))[None, :] == top[:, None])
         return ok
 
+    def scores(self, c, bits=None) -> np.ndarray:
+        """[行, 阵容] 目标阵容得分（和 target_score 同一个算法：等级权重 × 占比² × 本族程度 × 配套卡程度；本局凑不成的 0）。"""
+        from tg.obs import C_BOARD, N_BOARD
+        frac, tribe = self.progress(c)
+        sup = np.where(self.tribal, np.minimum(1.0, tribe / TRIBE_FULL), 1.0)
+        board = np.clip(np.asarray(c)[:, C_BOARD:C_BOARD + N_BOARD], 0, len(self.core) - 1)
+        ks = np.zeros((len(board), len(self.comps)), dtype=np.float32)
+        for r in range(len(board)):                     # 场上“留着用”的配套卡（同名算一张）
+            seen = {}
+            for x in board[r]:
+                if x > 0:
+                    seen[int(self.base_key[x])] = int(x)
+            if seen:
+                ks[r] = self.ksup[list(seen.values())].sum(0)
+        supf = np.where(self.nks > 0, np.minimum(1.0, ks / np.minimum(np.maximum(self.nks, 1), SUPPORT_FULL)), 1.0)
+        sc = self.w * frac * frac * sup * (0.7 + 0.3 * supf)
+        if bits is not None:
+            sc = sc * self.reach(bits)
+        return sc
+
+    def main_backup(self, c, bits=None, n_backup: int = 2) -> tuple[np.ndarray, np.ndarray]:
+        """([行, 阵容] 主选, [行, 阵容] 备选)：得分最高的那套是主选，接下来 n_backup 套（得分 > 0）是备选。"""
+        sc = self.scores(c, bits)
+        order = np.argsort(-sc, 1)
+        rank = np.empty_like(order)
+        rank[np.arange(len(sc))[:, None], order] = np.arange(sc.shape[1])[None, :]
+        pos = sc > 0
+        return pos & (rank == 0), pos & (rank >= 1) & (rank <= n_backup)
+
     def shop_hit(self, c, comps_mask, table) -> np.ndarray:
         """[行]：酒馆里有 table（core / supp）里属于 comps_mask 那几套的卡。"""
         from tg.obs import C_SHOP, N_SHOP
@@ -310,3 +343,63 @@ class CompTables:
                                                                == self.base_key[card][:, None])
         out[rows] = rel & (same.sum(1) < 2)
         return out
+
+
+K_MAX = 32          # 模型里阵容进度输入的格数（target_comps.json 现在 23 套；多出来的格子全是 0，换阵容表不用改模型形状）
+COMP_F = 10         # 每套阵容的输入：凑得成、核心卡占比、占比²、本族程度、配套卡程度、得分、主选、备选、酒馆有核心卡、酒馆有配套卡
+
+
+def model_tables(comps: list[dict] | None = None, ids: list[str] | None = None) -> dict:
+    """给模型（rl/model.CompSense）用的查表，全是 numpy 数组：模型自己从卡牌编号和观察里算每套阵容做到几成，
+    训练、影子模式、竞技场都一样（竞技场的打包里存一份 comp.npz，不用装 TavernGym）。"""
+    from tg.catalog import base_of_index, n_cards
+    from tg.obs import F_LOBBY, LOBBY_IDX
+    comps = load_target_comps() if comps is None else comps
+    ids = [base_of_index(i) if i else "" for i in range(n_cards())] if ids is None else ids
+    comps = comps[:K_MAX]
+    det = catalog()
+    bases = sorted(set(ids))                                   # "" 排第一 → 编号 0 = 空
+    bk = {b: k for k, b in enumerate(bases)}
+    base_key = np.array([bk[b] for b in ids], dtype=np.int64)
+    nb, n = len(bases), len(ids)
+    core_b = np.zeros((nb, K_MAX), np.float32)
+    ks_b = np.zeros((nb, K_MAX), np.float32)
+    core_c = np.zeros((n, K_MAX), bool)
+    supp_c = np.zeros((n, K_MAX), bool)
+    trib_c = np.zeros((n, K_MAX), bool)
+    races = list(F_LOBBY)
+    nmax = max([len(c.get("need") or []) for c in comps] + [1])
+    need = np.zeros((K_MAX, nmax, len(races)), bool)
+    need_valid = np.zeros((K_MAX, nmax), bool)
+    w = np.zeros(K_MAX, np.float32)
+    ncore = np.ones(K_MAX, np.float32)
+    nks = np.zeros(K_MAX, np.float32)
+    tribal = np.zeros(K_MAX, bool)
+    valid = np.zeros(K_MAX, bool)
+    for j, c in enumerate(comps):
+        valid[j], w[j], ncore[j] = True, c["w"], len(c["core"])
+        tribal[j] = bool(c.get("tribes"))
+        ks = c.get("keep_support") or set()
+        nks[j] = len(ks)
+        for b in c["core"]:
+            if b in bk:
+                core_b[bk[b], j] = 1
+        for b in ks:
+            if b in bk:
+                ks_b[bk[b], j] = 1
+        for q, ns in enumerate(c.get("need") or []):
+            need_valid[j, q] = True
+            for r in ns:
+                if r in races:
+                    need[j, q, races.index(r)] = True
+    for i, cid in enumerate(ids):
+        if not cid:
+            continue
+        rs = set((det.get(cid) or {}).get("races") or [])
+        for j, c in enumerate(comps):
+            core_c[i, j] = cid in c["core"]
+            supp_c[i, j] = cid in c.get("support", ())
+            trib_c[i, j] = bool(c.get("tribes")) and bool(rs & c["tribes"] or "ALL" in rs)
+    return {"base_key": base_key, "core_b": core_b, "ks_b": ks_b, "core_c": core_c, "supp_c": supp_c, "trib_c": trib_c,
+            "need": need, "need_valid": need_valid, "w": w, "ncore": ncore, "nks": nks, "tribal": tribal, "valid": valid,
+            "lobby_idx": np.asarray(LOBBY_IDX, np.int64), "names": np.array([c["name"] for c in comps])}

@@ -65,7 +65,9 @@ def _load():
         raise SystemExit("模型换过了，重新运行 arena.bat check")
     L = Layout.from_dict(meta["layout"], meta["floats"], meta["cards"], meta["actions"])
     ck = torch.load(bundle / "model.pt", map_location="cpu", weights_only=True)
-    model = EntityTransformer(L, np.load(bundle / "static.npy"), **ck["model_kwargs"]).eval()
+    comp = bundle / "comp.npz"                     # 体系感知的阵容查表（arena/export.py 打包；旧的打包没有 → 输入全是 0）
+    tables = dict(np.load(comp)) if comp.exists() else None
+    model = EntityTransformer(L, np.load(bundle / "static.npy"), **ck["model_kwargs"], comp_tables=tables).eval()
     model.load_state_dict(ck["model"])
     torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
     remap = np.load(HERE / "remap.npy")

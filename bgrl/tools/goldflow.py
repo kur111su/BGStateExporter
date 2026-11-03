@@ -164,6 +164,11 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     places = {}
     last_cards = [None] * env.n_slots                  # 每局最后一次招募时的场面（最终阵容）
     last_lobby = [None] * env.n_slots                  # 每局开放的种族（哪几套目标阵容凑得成）
+    plan8 = [None] * env.n_slots                       # 第 8 回合结束时的主选 / 备选体系（S / A）
+    from rl.comp import CompTables, load_target_comps
+    from tg.catalog import base_of_index, n_cards
+    from tg.obs import lobby_bits
+    _ctab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())], tiers="SA")
     obs = env.observe()
     t0, shown = _t.time(), 0
     print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
@@ -198,6 +203,10 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                     sells[sid] = sells.get(sid, 0) + 1
                     sell_rows.append((fi[:64].copy(), ci.copy(), ak))
                 logs[i].see(int(turn(fi)), int(gold(fi)), int(tier(fi)), int(up_cost(fi)), int(a[k]))
+                if ak == A_END and int(turn(fi)) == 8 and _ctab.comps:
+                    mn, bk = _ctab.main_backup(ci[None], lobby_bits(fi[None]))
+                    plan8[i] = ([_ctab.comps[k]["name"] for k in np.flatnonzero(mn[0])],
+                                [_ctab.comps[k]["name"] for k in np.flatnonzero(bk[0])])
                 if judge is not None and ak == A_END and int(turn(fi)) >= 3:
                     g_, seat_ = env.slot(int(i))
                     v = judge.judge(env.game(int(g_)), int(seat_), int(turn(fi)))
@@ -227,7 +236,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             continue
         ids = [card_id(int(x)) for x in row if x > 0]
         finals.append({"board": [base_id(x) for x in ids], "golden": sum(is_golden_id(x) for x in ids),
-                       "place": places.get(i, 0), "lobby": last_lobby[i]})
+                       "place": places.get(i, 0), "lobby": last_lobby[i], "plan8": plan8[i]})
     info["finals"] = finals
     info["phis"] = {i: v for i, v in phis.items()}
     info["places"] = places
@@ -510,7 +519,26 @@ def show_targets(finals: list[dict]) -> dict | None:
           + (f"（平均 {sa['place_formed']:.2f} 名，没成的 {sa['place_other']:.2f} 名）" if sa_places and other_places else ""))
     top = sorted(((k, v) for k, v in reach.items() if k[0] in "SA"), key=lambda kv: ("SA".index(kv[0][0]), -kv[1][0]))
     print("    凑得成的局里成型的比例：" + "、".join(f"{k} {v[1] / max(1, v[0]):.0%}（{v[0]} 局能凑）" for k, v in top))
-    return {"share": {t: round(v, 3) for t, v in tiers.items()}, "q": round(float(np.mean(phis)), 3), "sa_reach": sa,
+    # 体系选手：第 8 回合的主选 / 备选，最后做成了哪个
+    pl = [x for x in fb if x.get("plan8")]
+    plan = None
+    if pl:
+        cnt = {"main": 0, "backup": 0, "other": 0, "none": 0, "no_plan": 0}
+        for x in pl:
+            mn, bk = x["plan8"]
+            c, _ = nearest_comp(x["board"], comps, lob=x.get("lobby"), strict=True)
+            if not mn:
+                cnt["no_plan"] += 1
+            elif c is None:
+                cnt["none"] += 1
+            else:
+                cnt["main" if c["name"] in mn else "backup" if c["name"] in bk else "other"] += 1
+        n8 = len(pl)
+        withp = n8 - cnt["no_plan"]
+        plan = {k: round(v / n8, 3) for k, v in cnt.items()}
+        print(f"  体系：第 8 回合有主选 S / A 体系的局 {withp / n8:.0%}；这些局最后做成主选 {cnt['main'] / max(1, withp):.0%}、"
+              f"备选 {cnt['backup'] / max(1, withp):.0%}、别的 {cnt['other'] / max(1, withp):.0%}、没成型 {cnt['none'] / max(1, withp):.0%}")
+    return {"share": {t: round(v, 3) for t, v in tiers.items()}, "q": round(float(np.mean(phis)), 3), "sa_reach": sa, "plan8": plan,
             "reach": {k: {"games": v[0], "formed": round(v[1] / max(1, v[0]), 3)} for k, v in top},
             "comps": {k: {"share": round(r["n"] / n, 3), "place": round(float(np.mean(r["places"])), 2) if r["places"] else None}
                       for k, r in order}}

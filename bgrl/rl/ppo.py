@@ -194,6 +194,8 @@ class Config:
     # 第 14141–14240 轮用 kl：老师的分布本来就摊得开（只有 41% 猜中高手），系数才 0.005–0.015，熵 1.0 → 2.1、
     # 加强局承受的对手强度 0.69 → 0.32、考试 4.4 → 5.2，连续 3 次变乱退回——退回点本身已经乱了
     teacher_mode: str = "hard"
+    # 体系感知辅助头（rl/model.py 的 comp_head）：预测这局最后成了哪一套 / 没成，交叉熵 × 这个系数。0 = 不训练这个头
+    aux_comp_coef: float = 0.0
     # 别卖正在做的阵容里该留的牌（见 _keep_shape，rl/target_comps.json 的 playbook.keep）：每卖一张扣这么多。0 = 不扣
     keep_penalty: float = 0.0
     # “成型以后怎么玩”的课程（rl/calibrate.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
@@ -282,6 +284,7 @@ class Rollout:
         self.n_slots = n_slots
         self.ep = np.zeros(n_slots, dtype=np.int64)
         self.place: dict[tuple, int] = {}
+        self.comp: dict[tuple, int] = {}               # 局末成了哪一套（体系感知辅助头的标签）
         self.reset()
 
     def reset(self):
@@ -304,7 +307,7 @@ class Rollout:
         self.done.extend([False] * k)
         self.n += k
 
-    def reward(self, slot, r, done, placement):
+    def reward(self, slot, r, done, placement, comp=None):
         i = self.last[slot]
         if i >= 0:
             self.r[i] += float(r)
@@ -312,6 +315,8 @@ class Rollout:
                 self.done[i] = True
         if done:
             self.place[(int(slot), int(self.ep[slot]))] = int(placement)
+            if comp is not None:
+                self.comp[(int(slot), int(self.ep[slot]))] = int(comp)
             self.ep[slot] += 1
             self.last[slot] = -1
 
@@ -346,7 +351,9 @@ class Rollout:
         b["adv"] = adv
         b["ret"] = adv + v
         b["place"] = np.asarray([self.place.get((int(s), int(e)), 0) for s, e in zip(slot, ep)], dtype=np.int64)
+        b["comp"] = np.asarray([self.comp.get((int(s), int(e)), -1) for s, e in zip(slot, ep)], dtype=np.int64)
         self.place.clear()                 # 之后的决策只会属于还没结束的局，旧的名次用不到了
+        self.comp.clear()
         self.reset()
         return b
 
@@ -549,7 +556,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
                         r_end = rewards[i] + (self._econ_close(off + int(i)) if dones[i] else 0.0)
-                        self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i])
+                        self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i],
+                                            self._final_comp(off + int(i)) if dones[i] else None)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
                             if seeded:                     # 换过场面的局单独记，不算进 place_bot / 加强强度
@@ -673,6 +681,14 @@ class Trainer(ShapingMixin, ImitationMixin):
                     aux = F.cross_entropy(pl.float()[has_p], P[has_p] - 1) if has_p.any() else \
                         torch.zeros((), device=self.dev)
                     loss = pg + cfg.vf_coef * vf - cfg.ent_coef * ent + cfg.aux_coef * aux
+                    if getattr(cfg, "aux_comp_coef", 0) > 0 and "comp" in b and self.model.last_comp_logits is not None:
+                        K = t(b["comp"][j], torch.long)
+                        has_k = K >= 0
+                        if has_k.any():                # 体系感知辅助头：预测这局最后成了哪一套
+                            aux_c = F.cross_entropy(self.model.last_comp_logits[has_k], K[has_k])
+                            loss = loss + cfg.aux_comp_coef * aux_c
+                            stats["aux_comp"].append(aux_c.item())
+                            stats["comp_acc"].append(float((self.model.last_comp_logits[has_k].argmax(-1) == K[has_k]).float().mean()))
                     if use_anchor:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
                             ref = F.log_softmax(self.anchor(f, c, m, compressed=True)[0].float(), -1)
@@ -988,10 +1004,17 @@ class Trainer(ShapingMixin, ImitationMixin):
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
 
+    def _final_comp(self, s: int) -> int:
+        """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""
+        from .model import K_MAX
+        ep = int(self.rollout.ep[s])
+        k = int(self.fc_idx[s]) if getattr(self, "fc_ep", None) is not None and self.fc_ep[s] == ep else -1
+        return k if 0 <= k < K_MAX else K_MAX
+
     def _teacher_rows(self, f, c):
-        """每个局面的老师权重：酒馆里有本局凑得成、而且已经开了头（有一张核心卡 / 场上 2 个本族随从）的 S / A 阵容的核心卡，
-        或者正在做的 S / A 阵容的配套卡（rl/target_comps.json
-        的 support，bg.py playbook）→ teacher_core_mult，否则 1。不加权时返回 None。"""
+        """每个局面的老师权重（体系选手）：先认出主选体系（S / A 里目标阵容得分最高、本局凑得成的那套）和 2 套备选；
+        酒馆里有主选的核心卡 / 配套卡 → teacher_core_mult，有备选的 → (1 + teacher_core_mult) / 2，否则 1。
+        还没有任何一套开头（前几回合）时不加权。不加权时返回 None。"""
         mult = float(getattr(self.cfg, "teacher_core_mult", 1.0))
         if mult == 1.0:
             return None
@@ -1002,13 +1025,10 @@ class Trainer(ShapingMixin, ImitationMixin):
                                         tiers="SA")
         from tg.obs import lobby_bits
         tab = self._comp_tab
-        bits = lobby_bits(f)
-        frac, tribe = tab.progress(c)
-        started = (frac > 0) | (tab.tribal & (tribe >= 2))         # 这套已经开了头（有一张核心卡 / 场上 2 个本族）
-        has = tab.shop_hit(c, tab.reach(bits) & started, tab.core)
-        if tab.supp.any():
-            has |= tab.shop_hit(c, tab.building(c, bits), tab.supp)
-        return np.where(has, mult, 1.0).astype(np.float32)
+        main, backup = tab.main_backup(c, lobby_bits(f))
+        hit_m = tab.shop_hit(c, main, tab.core) | tab.shop_hit(c, main, tab.supp)
+        hit_b = tab.shop_hit(c, backup, tab.core) | tab.shop_hit(c, backup, tab.supp)
+        return np.where(hit_m, mult, np.where(hit_b, (1.0 + mult) / 2, 1.0)).astype(np.float32)
 
     def _teacher_coef(self) -> float:
         """这一轮的老师 KL 系数：每次启动后从 0 线性加到 teacher_coef（teacher_ramp 轮）。"""

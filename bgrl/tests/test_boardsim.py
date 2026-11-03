@@ -317,8 +317,8 @@ def check_lobby():
     core = sorted(apm["core"])[0]
     c[:, 37] = idx[core]                                                # 酒馆第 2 格：机械 APM 的核心卡
     t = SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0))
-    assert Trainer._teacher_rows(t, f, c).tolist() == [1.0, 1.0, 1.0]  # 这套还没开头（手里 / 场上没有它的核心卡）：不加权
-    c[:, 26] = idx[sorted(apm["core"])[1]]                              # 手里有另一张核心卡：开了头
+    assert Trainer._teacher_rows(t, f, c).tolist() == [1.0, 1.0, 1.0]  # 还没有任何一套开头：没有主选，不加权
+    c[:, 19] = idx[sorted(apm["core"])[1]]                              # 场上有另一张核心卡（机械）：机械 APM 是主选
     w = Trainer._teacher_rows(t, f, c)
     assert w.tolist() == [3.0, 1.0, 3.0], w                            # 第 2 行本局没开机械：凑不成，不加权
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=1.0)), f, c) is None
@@ -332,6 +332,15 @@ def check_lobby():
     f2 = np.zeros((2, 64), np.float32)
     f2[:, F_LOBBY["MECHANICAL"]] = 1.0
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2, c2).tolist() == [3.0, 1.0]
+    # 备选：主选机械 APM，手里有炫彩机器人流机械的一张核心卡（备选），酒馆里出现它的另一张核心卡 → (1 + 3) / 2
+    chroma = next(x for x in load_target_comps() if x["name"] == "炫彩机器人流机械")
+    cid = {n_: i_ for c_ in json.loads((Path(__file__).resolve().parent.parent / "rl" / "target_comps.json").read_text(encoding="utf-8"))["comps"]
+           for n_, i_ in zip(c_["core_names"], c_["core"])}
+    c4 = c2[:1].copy()
+    c4[0, 36] = idx[cid["炫彩机器人"]]
+    c4[0, 26] = idx[cid["多面辅助无人机"]]
+    assert {cid["炫彩机器人"], cid["多面辅助无人机"]} <= chroma["core"]
+    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2[:1], c4).tolist() == [2.0]
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c2, "f": f2, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "tgtsup").tolist() == [True, False]
     # 别卖该留的牌（keep_penalty）：在做喝茶流（布莱恩 + 巴琳达在场上）时卖布莱恩扣分；有两张布莱恩、或者卖的是别的牌不扣

@@ -74,6 +74,10 @@ def main() -> int:
             "vocab": [[x["index"], x["id"]] for x in cat["cards"]]}
     torch.save({"model": model.state_dict(), "model_kwargs": info["size"]}, out / "model.pt")
     np.save(out / "static.npy", static)
+    from rl.model import comp_tables
+    tab = comp_tables()                                # 体系感知的阵容查表（竞技场那边没有 TavernGym，算不了）
+    if tab is not None:
+        np.savez(out / "comp.npz", **{k: v for k, v in tab.items() if k != "names"})
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"已打包 {meta['model_version']}（{a.ckpt}）→ {out}；观察 {meta['floats']} 浮点 + {meta['cards']} 卡牌编号，"
           f"{len(meta['vocab'])} 张卡，词表哈希 {meta['catalog_sha256'][:12]}…", flush=True)
