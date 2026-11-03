@@ -84,6 +84,9 @@ class Config:
     drift_ent: float = 0.35
     drift_noop: float = 0.15
     drift_iters: int = 10
+    # 熵的绝对上限：连续 drift_iters 轮高于它也算变乱（0 = 不看）。上面的 drift_ent 跟着最近 300 轮的中位数走，
+    # 熵慢慢涨的时候中位数也跟着涨（第 14240 轮中位数已经是 1.69），等它报警时回退点也早就乱了
+    drift_ent_max: float = 0.0
     # 每回合最多几个操作（第 1、2、3… 回合，最后一个数用于之后所有回合）。TavernGym 默认不限：
     # 调站位、冻结不推进游戏，策略可能一直点下去，对局永远结束不了（训练第 50 轮卡住就是这个原因）。
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
@@ -185,6 +188,12 @@ class Config:
     # 酒馆里有本局凑得成的 S / A 级目标阵容（rl/target_comps.json）的核心卡时，这一步的老师 KL 再乘这么多：
     # 该不该买那张核心卡是成型的关键一步，高手买卡里 16% 是 S / A 核心卡，模型 4%（第 14140 轮）。1 = 不加
     teacher_core_mult: float = 1.0
+    # 老师怎么教：hard = 只在老师有把握（最想做的那个动作概率 ≥ teacher_conf）的局面上，让模型提高“做老师那个动作”的概率
+    # （交叉熵，不逼模型把概率摊开）；kl = KL(老师 ‖ 模型)，把模型的整个概率分布往老师拉。
+    # 第 14141–14240 轮用 kl：老师的分布本来就摊得开（只有 41% 猜中高手），系数才 0.005–0.015，熵 1.0 → 2.1、
+    # 加强局承受的对手强度 0.69 → 0.32、考试 4.4 → 5.2，连续 3 次变乱退回——退回点本身已经乱了
+    teacher_mode: str = "hard"
+    teacher_conf: float = 0.5
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
     target_weights: str = ""
     # 阵容成型奖励 q 里三项的权重：主种族纯度、万三常见搭配、关键卡（加起来是 1 就是满分 1）。
@@ -642,9 +651,18 @@ class Trainer(ShapingMixin, ImitationMixin):
                         tw = self._teacher_rows(b["f"][j], b["c"][j])
                         if tw is not None:
                             stats["teacher_core"].append(float((tw > 1).mean()))
-                            loss = loss + tcoef * (kl_rows * t(tw, torch.float32)).mean()
-                        else:
-                            loss = loss + tcoef * kl_t
+                        tw_t = t(tw, torch.float32) if tw is not None else torch.ones_like(kl_rows)
+                        if getattr(cfg, "teacher_mode", "hard") == "kl":
+                            loss = loss + tcoef * (kl_rows * tw_t).mean()
+                        else:                                            # 只在老师有把握的局面，学老师最想做的那个动作
+                            tp, ta = tl.max(-1)
+                            sure = (tp.exp() >= cfg.teacher_conf).float()
+                            nll_t = -logp_all.gather(1, ta.unsqueeze(1)).squeeze(1).clamp(max=20)
+                            loss = loss + tcoef * (nll_t * sure * tw_t).mean()
+                            stats["teacher_sure"].append(float(sure.mean()))
+                            if sure.any():
+                                agree = (logp_all.argmax(-1) == ta).float()
+                                stats["teacher_agree"].append(float((agree * sure).sum() / sure.sum()))
                         stats["kl_teacher"].append(kl_t.item())
                     self.scaler.scale(loss * w).backward()
                     with torch.no_grad():
@@ -785,12 +803,14 @@ class Trainer(ShapingMixin, ImitationMixin):
         cfg = self.cfg
         if not hasattr(self, "ent_hist"):
             self.ent_hist, self.drift_n = deque(maxlen=300), 0
-        if ent is None or (cfg.drift_ent <= 0 and cfg.drift_noop <= 0):
+        if ent is None or (cfg.drift_ent <= 0 and cfg.drift_noop <= 0 and getattr(cfg, "drift_ent_max", 0) <= 0):
             return ""
         base = float(np.median(self.ent_hist)) if len(self.ent_hist) >= 100 else None
         bad = []
         if cfg.drift_ent > 0 and base is not None and ent > base + cfg.drift_ent:
             bad.append(f"熵 {ent:.2f}（最近中位数 {base:.2f}）")
+        if getattr(cfg, "drift_ent_max", 0) > 0 and ent > cfg.drift_ent_max:
+            bad.append(f"熵 {ent:.2f}（上限 {cfg.drift_ent_max}）")
         if cfg.drift_noop > 0 and len(self.ent_hist) >= 100 and noop > cfg.drift_noop:
             bad.append(f"无效操作 {noop:.0%}")
         if not bad:

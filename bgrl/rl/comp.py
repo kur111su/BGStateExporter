@@ -122,9 +122,39 @@ def load_target_comps(root: Path = REFS, weights=None) -> list[dict]:
             rs = set((det.get(cid) or {}).get("races") or [])
             if rs and "ALL" not in rs:
                 need.append(frozenset(rs))
+        tribes = frozenset().union(*need) if need else frozenset()
         out.append({"name": c["name"], "tier": c["tier"], "w": float(tw.get(c["tier"], 0.5)), "core": set(c["core"]),
-                    "avg_place": c.get("avg_place"), "need": need})
+                    "avg_place": c.get("avg_place"), "need": need, "tribes": tribes})
     return out
+
+
+TRIBE_FULL = 4       # 种族阵容：场上这么多个本族（或全种族）随从才算撑起来了
+
+
+def _tribe_count(ids, tribes) -> int:
+    det = catalog()
+    n = 0
+    for cid in ids:
+        rs = set((det.get(cid) or {}).get("races") or [])
+        n += bool(rs & tribes or "ALL" in rs)
+    return n
+
+
+def comp_progress(ids, comp: dict) -> tuple[float, int, float]:
+    """(核心卡占比, 核心卡张数, 本族随从撑起来的程度 0–1)。中立阵容（喝茶流这种，核心卡没有种族）撑起来的程度算 1。"""
+    have = set(ids)
+    k = len(comp["core"] & have)
+    tribes = comp.get("tribes") or frozenset()
+    sup = min(1.0, _tribe_count(ids, tribes) / TRIBE_FULL) if tribes else 1.0
+    return k / len(comp["core"]), k, sup
+
+
+def formed(ids, comp: dict) -> bool:
+    """算成型：核心卡至少 2 张、至少 2/3；种族阵容场上还要有 3 个以上本族随从。
+    第 14240 轮阵容测试按“核心卡一半”算，S 级 43%——其实是场上放一张提图斯（畸变亡语 2 张核心卡里的 1 张）、
+    一张守门融合怪就算数，这些局平均 4.57 名，没成的 4.65 名，几乎没区别。"""
+    fr, k, sup = comp_progress(ids, comp)
+    return k >= 2 and fr >= 2 / 3 - 1e-9 and sup >= 0.75 - 1e-9
 
 
 def reachable(comp: dict, lob) -> bool:
@@ -133,21 +163,24 @@ def reachable(comp: dict, lob) -> bool:
 
 
 def target_score(ids, comps: list[dict], lob=None) -> tuple[float, dict | None, float]:
-    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比, 那一套, 核心卡占比)。
-    lob：本局开放的种族——只算本局凑得成的那几套。"""
-    have = set(ids)
+    """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比² × 本族随从撑起来的程度, 那一套, 核心卡占比)。
+    lob：本局开放的种族——只算本局凑得成的那几套。
+    平方：凑齐最后几张值得最多（4 张核心卡：1 张 0.06、2 张 0.25、3 张 0.56、4 张 1）；本族程度：场上本族随从 / 4。
+    第 14140–14240 轮用的是“等级权重 × 占比”：放一张提图斯就是畸变亡语的 0.5，模型学会了只放一张核心卡。"""
     best, comp, frac = 0.0, None, 0.0
     for c in comps:
         if not reachable(c, lob):
             continue
-        fr = len(c["core"] & have) / len(c["core"])
-        if c["w"] * fr > best:
-            best, comp, frac = c["w"] * fr, c, fr
+        fr, _, sup = comp_progress(ids, c)
+        q = c["w"] * fr * fr * sup
+        if q > best:
+            best, comp, frac = q, c, fr
     return best, comp, frac
 
 
-def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5, lob=None) -> tuple[dict | None, float]:
-    """最终阵容算哪一套：核心卡占比最高的那套（一样高时等级高的优先），占比不到 min_frac 算“不像任何一套”。"""
+def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5, lob=None, strict: bool = False) -> tuple[dict | None, float]:
+    """最终阵容算哪一套：核心卡占比最高的那套（一样高时等级高的优先），占比不到 min_frac 算“不像任何一套”。
+    strict：按 formed() 算（核心卡至少 2 张、2/3，种族阵容还要 3 个本族随从）。"""
     have = set(ids)
     order = {"S": 0, "A": 1, "B": 2}
     best = None
@@ -156,6 +189,7 @@ def nearest_comp(ids, comps: list[dict], min_frac: float = 0.5, lob=None) -> tup
             continue
         fr = len(c["core"] & have) / len(c["core"])
         key = (fr, -order.get(c["tier"], 3), -(c.get("avg_place") or 9))
-        if fr >= min_frac and (best is None or key > best[0]):
+        ok = formed(ids, c) if strict else fr >= min_frac
+        if ok and (best is None or key > best[0]):
             best = (key, c, fr)
     return (best[1], best[2]) if best else (None, 0.0)

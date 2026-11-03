@@ -214,6 +214,12 @@ def check_drift():
     assert Trainer._drift(t, 1.0, 0.05) == "" and t.drift_n == 0          # 中间好了一轮：重新数
     msgs = [Trainer._drift(t, 1.0, 0.3) for _ in range(10)]
     assert msgs[-1].startswith("策略连续 10 轮变乱") and not any(msgs[:-1]), msgs
+    # 熵的绝对上限：中位数慢慢涨上去也拦得住（第 14240 轮中位数已经 1.69）
+    t2 = SimpleNamespace(cfg=SimpleNamespace(drift_ent=0.35, drift_noop=0.15, drift_iters=3, drift_ent_max=1.6), mix=defaultdict(int))
+    for k in range(150):
+        assert Trainer._drift(t2, 1.0 + k * 0.004, 0.05) == ""                # 1.0 → 1.6 慢慢涨，跟着中位数走的检查不报
+    m2 = [Trainer._drift(t2, 1.7, 0.05) for _ in range(3)]
+    assert m2[-1].endswith("熵 1.70（上限 1.6）") and not any(m2[:-1]), m2
     return msgs[-1]
 
 
@@ -231,8 +237,8 @@ def check_targets():
     c, fr = nearest_comp(list(tea["core"]) + ["BG26_135"], comps)
     assert c["name"] == "喝茶流" and fr == 1.0
     assert nearest_comp(["BG26_135"], comps)[0] is None
-    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：S 级三张里的一张
-    assert abs(q - 1 / 3) < 1e-9 and c2["tier"] == "S"
+    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3)²
+    assert abs(q - 1 / 9) < 1e-9 and c2["name"] == "喝茶流"
 
     idx = {card_id(i): i for i in range(1, n_cards())}
     t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
@@ -246,7 +252,7 @@ def check_targets():
         c[0, 19:26] = 0
         c[0, 19:19 + len(board)] = [idx[x] for x in board]
         got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.05, 0.1, -0.15], got                             # 第 4 回合不算；整局和 = 0.15 × 最后的 0
+    assert got == [0.0, 0.016667, 0.133333, -0.15], got                    # 第 4 回合不算；整局和 = 0.15 × 最后的 0
 
     cc = np.zeros((2, 124), np.int32)
     cc[:, 36] = idx["BG_LOE_077"]
@@ -262,7 +268,16 @@ def check_targets():
     assert reachable(tea, frozenset()) and not reachable(apm, frozenset({"BEAST"})) and reachable(apm, frozenset({"MECHANICAL"}))
     assert reachable(boar, frozenset({"DEMON"})) and not reachable(boar, frozenset({"BEAST"}))   # 邪能野猪人是恶魔 / 野猪人
     assert target_score(list(apm["core"]), comps, frozenset({"BEAST"}))[0] == 0.0
-    assert target_score(list(apm["core"]), comps, frozenset({"MECHANICAL"}))[0] == 1.0
+    assert target_score(list(apm["core"]), comps, frozenset({"MECHANICAL"}))[0] == 0.5   # 2 张核心卡都在，但只有 2 个机械（满 4 个）
+    from rl.comp import formed
+    from tg.catalog import catalog
+    det = catalog()
+    extra = next(k for k, v in det.items() if "MECHANICAL" in (v.get("races") or []) and k not in apm["core"]
+                 and v.get("kind") == "minion" and not k.endswith("_G"))
+    assert not formed(list(apm["core"]), apm) and formed(list(apm["core"]) + [extra], apm)    # 3 个机械才算撑起来
+    titus = next(c for c in comps if c["name"] == "畸变亡语")
+    assert not formed(["BG25_354"], titus)                                # 只放一张提图斯不算畸变亡语
+    assert nearest_comp(["BG25_354", "BG26_135"], comps, strict=True)[0] is None
     w = load_target_comps(weights="S:1,A:0.85,B:0.4")
     assert {c["tier"]: c["w"] for c in w} == {"S": 1.0, "A": 0.85, "B": 0.4}
     return got

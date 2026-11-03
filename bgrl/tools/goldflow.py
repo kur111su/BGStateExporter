@@ -448,7 +448,7 @@ def show_targets(finals: list[dict]) -> dict | None:
         return None
     rows, phis = {}, []
     for x in fb:
-        c, fr = nearest_comp(x["board"], comps)
+        c, fr = nearest_comp(x["board"], comps, strict=True)
         phis.append(target_score(x["board"], comps)[0])
         key = f"{c['tier']} {c['name']}" if c else "不像任何一套"
         r = rows.setdefault(key, {"n": 0, "places": [], "tier": c["tier"] if c else "-"})
@@ -458,12 +458,12 @@ def show_targets(finals: list[dict]) -> dict | None:
     n = len(fb)
     tiers = {t: sum(r["n"] for r in rows.values() if r["tier"] == t) / n for t in "SAB"}
     order = sorted(rows.items(), key=lambda kv: ("SAB-".index(kv[1]["tier"]), -kv[1]["n"]))
-    print(f"  目标阵容（bgbuddy.gg S / A / B，核心卡占一半以上才算）：S {tiers['S']:.0%}、A {tiers['A']:.0%}、B {tiers['B']:.0%}，"
-          f"平均接近程度 {np.mean(phis):.2f}（S 级凑齐 = 1）")
+    print(f"  目标阵容（bgbuddy.gg S / A / B；核心卡至少 2 张、2/3，种族阵容还要 3 个本族随从才算）：S {tiers['S']:.0%}、A {tiers['A']:.0%}、"
+          f"B {tiers['B']:.0%}，平均接近程度 {np.mean(phis):.2f}（S 级凑齐、本族 4 个 = 1）")
     print("    " + "、".join(f"{k} {r['n'] / n:.0%}" + (f"（平均 {np.mean(r['places']):.2f} 名）" if r["places"] else "")
                            for k, r in order))
     # 只看本局凑得成的：核心卡的种族本局开了（训练的目标阵容奖励也只算这些）
-    from rl.comp import reachable
+    from rl.comp import formed, reachable
     reach = {}
     can_sa, got_sa, sa_places, other_places = 0, 0, [], []
     for x in fb:
@@ -472,10 +472,10 @@ def show_targets(finals: list[dict]) -> dict | None:
         for c in ok:
             r = reach.setdefault(f"{c['tier']} {c['name']}", [0, 0])
             r[0] += 1
-            r[1] += len(c["core"] & set(x["board"])) / len(c["core"]) >= 0.5
+            r[1] += formed(x["board"], c)
         if any(c["tier"] in "SA" for c in ok):
             can_sa += 1
-            c, _ = nearest_comp(x["board"], comps, lob=lob)
+            c, _ = nearest_comp(x["board"], comps, lob=lob, strict=True)
             hit = c is not None and c["tier"] in "SA"
             got_sa += hit
             if x.get("place"):
