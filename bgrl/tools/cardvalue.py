@@ -60,7 +60,7 @@ class PickStats:
                 for cid, o in self.offered.items() if o >= min_offered}
 
 
-STYLE = ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "tgtsup")
+STYLE = ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "tgtsup", "engfuel")
 
 
 def from_demos(dirs: list[Path], style: dict | None = None) -> tuple[PickStats, PickStats]:

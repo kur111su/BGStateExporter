@@ -314,11 +314,11 @@ def check_lobby():
     c = np.zeros((3, 124), np.int32)
     from rl.comp import load_target_comps
     apm = next(x for x in load_target_comps() if x["name"] == "机械 APM")
-    core = sorted(apm["core"])[0]
-    c[:, 37] = idx[core]                                                # 酒馆第 2 格：机械 APM 的核心卡
+    core = sorted(apm["core"])[1]
+    c[:, 37] = idx[core]                                                # 酒馆第 2 格：机械 APM 的核心卡（火花破坏机）
     t = SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0))
     assert Trainer._teacher_rows(t, f, c).tolist() == [1.0, 1.0, 1.0]  # 还没有任何一套开头：没有主选，不加权
-    c[:, 19] = idx[sorted(apm["core"])[1]]                              # 场上有另一张核心卡（机械）：机械 APM 是主选
+    c[:, 19] = idx[sorted(apm["core"])[0]]                              # 场上有另一张核心卡（机械）：机械 APM 是主选
     w = Trainer._teacher_rows(t, f, c)
     assert w.tolist() == [3.0, 1.0, 3.0], w                            # 第 2 行本局没开机械：凑不成，不加权
     assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=1.0)), f, c) is None
@@ -340,7 +340,9 @@ def check_lobby():
     c4[0, 36] = idx[cid["炫彩机器人"]]
     c4[0, 26] = idx[cid["多面辅助无人机"]]
     assert {cid["炫彩机器人"], cid["多面辅助无人机"]} <= chroma["core"]
-    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2[:1], c4).tolist() == [2.0]
+    no_eng = {"engine": np.zeros((n_cards(), 0), bool), "fuel": np.zeros((n_cards(), 0), bool), "ids": [], "names": []}
+    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0), _eng_tab=no_eng), f2[:1], c4).tolist() == [2.0]
+    assert Trainer._teacher_rows(SimpleNamespace(cfg=SimpleNamespace(teacher_core_mult=3.0)), f2[:1], c4).tolist() == [3.0]   # 场上火花破坏机（引擎）+ 酒馆里的机械（燃料）
     d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c2, "f": f2, "cand": np.array([[A_BUY] + [-1] * 7] * 2, np.int16)}
     assert bought_in(d, "tgtsup").tolist() == [True, False]
     # 别卖该留的牌（keep_penalty）：在做喝茶流（布莱恩 + 巴琳达在场上）时卖布莱恩扣分；有两张布莱恩、或者卖的是别的牌不扣
@@ -439,6 +441,47 @@ def check_seeder():
     return len(sd.seeded_slots)
 
 
+def check_engine():
+    """引擎联动（engine_bonus）：布莱恩·铜须 + 战吼随从（南海卖艺者）；燃料 3 张配齐；老师在“酒馆里有引擎、手里已有燃料”时加权。"""
+    from rl.comp import engine_score, engine_tables
+    from rl.ppo import Trainer
+    from rl.shaping import ShapingMixin
+    from tg.actions import A_END
+    from tg.catalog import base_of_index, card_id, n_cards
+    ids = [base_of_index(i) if i else "" for i in range(n_cards())]
+    tab = engine_tables(ids)
+    idx = {card_id(i): i for i in range(1, n_cards())}
+    brann, busk = idx["BG_LOE_077"], idx["BG26_135"]
+    jb = tab["ids"].index("BG_LOE_077")
+    assert tab["engine"][brann, jb] and tab["fuel"][busk, jb] and not tab["fuel"][brann, jb]
+    assert engine_score([brann, busk], [brann, busk], tab)[0] == 1 / 3
+    assert engine_score([busk, busk], [busk, busk], tab)[0] == 0.0                    # 没有引擎：燃料不算
+    assert engine_score([brann, busk], [brann, busk, busk, busk, busk], tab)[0] == 1.0   # 最多算配齐
+    t = SimpleNamespace(cfg=SimpleNamespace(engine_bonus=0.3, engine_from_turn=5), mix=defaultdict(float), _eng_tab=tab,
+                        rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)), eg_ep=np.full(1, -1, dtype=np.int64),
+                        eg_prev=np.zeros(1))
+    f = np.zeros((1, 64), np.float32)
+    got = []
+    for turn, board in ((4, [brann, busk]), (6, [brann, busk]), (7, [brann, busk, busk, busk]), (8, [busk])):
+        c = np.zeros((1, 124), np.int64)
+        c[0, 19:19 + len(board)] = board
+        f[0, 0] = turn / 20
+        got.append(round(float(ShapingMixin._engine_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
+    assert got == [0.0, 0.1, 0.2, -0.3], got                                        # 第 4 回合不算；卖掉布莱恩扣回来
+    c = np.zeros((2, 124), np.int64)
+    c[:, 36] = brann                                                                  # 酒馆里有布莱恩
+    c[0, 26:28] = busk                                                                # 第 1 行手里已有 2 张战吼随从
+    tr = SimpleNamespace(_eng_tab=tab)
+    assert Trainer._engine_hits(tr, c).tolist() == [True, False]
+    from rl.demos import KINDS, bought_in
+    c5 = np.zeros((2, 124), np.int64)
+    c5[:, 36] = busk                                                                  # 买南海卖艺者（战吼）
+    c5[0, 19] = brann                                                                 # 第 1 行场上有布莱恩
+    d = {"kind": np.array([KINDS.index("buy")] * 2, np.int8), "c": c5, "cand": np.array([[8] + [-1] * 7] * 2, np.int16)}
+    assert bought_in(d, "engfuel").tolist() == [True, False]
+    return got
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -450,6 +493,7 @@ def main() -> int:
     check_teacher()
     check_lobby()
     check_seeder()
+    check_engine()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

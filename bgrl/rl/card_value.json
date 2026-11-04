@@ -119,7 +119,8 @@
   "tgtA": 0.093,
   "tgtB": 0.028,
   "tgtfit": 0.092,
-  "tgtsup": 0.124
+  "tgtsup": 0.124,
+  "engfuel": 0.178
  },
  "cards": {
   "BG36_345": {

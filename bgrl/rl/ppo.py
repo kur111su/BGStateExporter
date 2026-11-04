@@ -198,6 +198,9 @@ class Config:
     aux_comp_coef: float = 0.0
     # 别卖正在做的阵容里该留的牌（见 _keep_shape，rl/target_comps.json 的 playbook.keep）：每卖一张扣这么多。0 = 不扣
     keep_penalty: float = 0.0
+    # 引擎联动（见 _engine_shape，rl/comp.ENGINE_RULES）：场上引擎卡配上燃料随从的程度涨多少加 engine_bonus × 涨的。0 = 不用
+    engine_bonus: float = 0.0
+    engine_from_turn: int = 5
     # “成型以后怎么玩”的课程（rl/calibrate.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
     # 招募开始时，场面换成同一回合高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打。0 = 不用。
     # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
@@ -422,6 +425,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.seeder = self._make_seeder() if cfg.seed_comp_frac > 0 and cfg.games_bot else None
         self.seed_places: list[int] = []
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
+        self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -611,6 +615,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                             for g in self.seeder.seeded_slots:
                                 self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
                                 self.tg_rebase.add(off + g)
+                                self.eg_rebase.add(off + g)
                     except BaseException as ex:            # noqa: BLE001
                         if not is_panic(ex):
                             raise
@@ -1047,7 +1052,21 @@ class Trainer(ShapingMixin, ImitationMixin):
         main, backup = tab.main_backup(c, lobby_bits(f))
         hit_m = tab.shop_hit(c, main, tab.core) | tab.shop_hit(c, main, tab.supp)
         hit_b = tab.shop_hit(c, backup, tab.core) | tab.shop_hit(c, backup, tab.supp)
+        hit_m |= Trainer._engine_hits(self, c)                  # 引擎联动：酒馆里有引擎（手里 / 场上已有 2 张燃料）或者场上有引擎、酒馆里有燃料
         return np.where(hit_m, mult, np.where(hit_b, (1.0 + mult) / 2, 1.0)).astype(np.float32)
+
+    def _engine_hits(self, c) -> np.ndarray:
+        """[行]：酒馆里有引擎卡、而且场上 + 手里已经有 ≥ 2 张它的燃料；或者场上有引擎、酒馆里有它的燃料（rl/comp.ENGINE_RULES）。"""
+        from tg.obs import C_BOARD, C_HAND, C_SHOP, N_BOARD, N_HAND, N_SHOP
+        tab = ShapingMixin._engine_tab(self)
+        eng, fuel = tab["engine"], tab["fuel"]
+        c = np.clip(np.asarray(c), 0, len(eng) - 1)
+        board = c[:, C_BOARD:C_BOARD + N_BOARD]
+        own = np.concatenate([board, c[:, C_HAND:C_HAND + N_HAND]], 1)
+        shop = c[:, C_SHOP:C_SHOP + N_SHOP]
+        nf = (fuel[own] & (own > 0)[:, :, None]).sum(1)
+        on = (eng[board] & (board > 0)[:, :, None]).any(1)
+        return ((eng[shop].any(1) & (nf >= 2)) | (on & fuel[shop].any(1))).any(1)
 
     def _teacher_coef(self) -> float:
         """这一轮的老师 KL 系数：每次启动后从 0 线性加到 teacher_coef（teacher_ramp 轮）。"""
@@ -1116,6 +1135,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                            cs_late=round(mx["cs_late_sum"] / mx["cs_late_n"], 3) if mx.get("cs_late_n") else None)
             if mx.get("tgt_n"):                        # 结束回合时离目标阵容多近（S 级凑齐 = 1）
                 rec["tgt_q"] = round(mx["tgt_sum"] / mx["tgt_n"], 3)
+            if mx.get("eng_n"):                        # 结束回合时引擎联动的程度（一个引擎配齐 3 张燃料 = 1）
+                rec["eng_q"] = round(mx["eng_sum"] / mx["eng_n"], 3)
             if mx.get("sells"):
                 rec["keep_sold"] = round(mx.get("keep_sold", 0) / mx["sells"], 4)   # 卖牌里卖掉“该留的牌”的比例（高手 5.2%）
             if mx.get("econ_n"):                       # 结束回合时平均存下的钱（下回合额外金币 + 2 × 金币上限加成）

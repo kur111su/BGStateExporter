@@ -404,3 +404,61 @@ def model_tables(comps: list[dict] | None = None, ids: list[str] | None = None) 
     return {"base_key": base_key, "core_b": core_b, "ks_b": ks_b, "core_c": core_c, "supp_c": supp_c, "trib_c": trib_c,
             "need": need, "need_valid": need_valid, "w": w, "ncore": ncore, "nks": nks, "tribal": tribal, "valid": valid,
             "lobby_idx": np.asarray(LOBBY_IDX, np.int64), "names": np.array([c["name"] for c in comps])}
+
+
+# ---------------- 引擎联动（engine_bonus）：引擎卡 + 它放大的“燃料”随从 ----------------
+# 引擎卡 → 它放大哪些随从（按卡牌英文说明里的关键词 / 种族判断；金色并到普通）。只列这个版本的强力引擎。
+ENGINE_RULES = {
+    "BG_LOE_077": ("布莱恩·铜须", {"text": ("Battlecry",)}),                       # 战吼触发两次
+    "BG25_354": ("提图斯·瑞文戴尔", {"text": ("Deathrattle",)}),                   # 亡语多触发一次
+    "BG35_883": ("巴琳达·斯通赫尔斯", {"text": ("spell on this", "Blood Gem is played on this")}),   # 指向友方的法术施放两次
+    "BG30_121": ("热气球测绘员", {"text": ("Blood Gem",)}),                         # 手牌里的鲜血宝石多放一次
+    "BG26_ICC_901": ("达卡莱附魔师", {"text": ("end of your turn",)}),             # 回合结束效果触发两次
+    "BG22_403": ("小瞎眼", {"text": ("Battlecry",)}),                               # 回合结束触发相邻随从的战吼
+    "BG36_208": ("逐亡陆行鸟", {"text": ("Rally", "Deathrattle")}),                 # 进击后触发最左边的亡语
+    "BG28_633": ("邪能野猪人", {"text": ("Blood Gem", "spell")}),                   # 施放 3 个法术后吞酒馆随从
+    "BG28_707": ("活化艾泽里特", {"text": ("spell",)}),                             # 施放酒馆法术时养酒馆元素
+    "BG36_851": ("火花破坏机", {"race": ("MECHANICAL",)}),                          # 打出机械时磁力吸附
+}
+ENGINE_FUEL_FULL = 3       # 一个引擎配上这么多张燃料（场上 + 手里）算配齐
+
+
+def engine_tables(ids: list[str]) -> dict:
+    """卡牌编号 → 是哪个引擎（engine [n, E]）/ 是哪些引擎的燃料（fuel [n, E]）。"""
+    det = catalog()
+    eng = [e for e in ENGINE_RULES if e in det]
+    n = len(ids)
+    is_eng = np.zeros((n, len(eng)), dtype=bool)
+    fuel = np.zeros((n, len(eng)), dtype=bool)
+    for i, cid in enumerate(ids):
+        if not cid:
+            continue
+        d = det.get(cid) or {}
+        text = str(d.get("text") or "")
+        races = set(d.get("races") or [])
+        for j, e in enumerate(eng):
+            if cid == e:
+                is_eng[i, j] = True
+                continue
+            if d.get("kind") != "minion":
+                continue
+            rule = ENGINE_RULES[e][1]
+            if any(k.lower() in text.lower() for k in rule.get("text", ())) or races & set(rule.get("race", ())) \
+                    or ("ALL" in races and rule.get("race")):
+                fuel[i, j] = True
+    return {"ids": eng, "names": [ENGINE_RULES[e][0] for e in eng], "engine": is_eng, "fuel": fuel}
+
+
+def engine_score(board_idx, own_idx, tab: dict, cap: float = 2.0) -> tuple[float, list]:
+    """场上的每个引擎：min(1, 场上 + 手里的燃料张数 / ENGINE_FUEL_FULL)，加起来（最多 cap）。返回 (Φ, [(引擎名, 燃料张数)])。
+    board_idx / own_idx：卡牌编号（不是 ID）。同一个引擎在场上两张只算一次。"""
+    eng, fuel = tab["engine"], tab["fuel"]
+    b = [int(x) for x in board_idx if 0 < int(x) < len(eng)]
+    o = [int(x) for x in own_idx if 0 < int(x) < len(eng)]
+    on = eng[b].any(0) if b else np.zeros(eng.shape[1], dtype=bool)
+    if not on.any():
+        return 0.0, []
+    nf = fuel[o].sum(0) if o else np.zeros(eng.shape[1])
+    parts = [(tab["names"][j], int(nf[j])) for j in np.flatnonzero(on)]
+    phi = float(sum(min(1.0, nf[j] / ENGINE_FUEL_FULL) for j in np.flatnonzero(on)))
+    return min(cap, phi), parts

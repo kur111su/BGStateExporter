@@ -51,6 +51,8 @@ class ShapingMixin:
         self.tg_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.ec_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 经济（econ_bonus）：每个座位上次的存款
         self.ec_prev = np.zeros(self.n_slots, dtype=np.float64)
+        self.eg_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 引擎联动（engine_bonus）：每个座位上次的 Φ
+        self.eg_prev = np.zeros(self.n_slots, dtype=np.float64)
         self.fc_ep = np.full(self.n_slots, -1, dtype=np.int64)  # 体系感知辅助头的标签：每个座位最近一次结束回合时成型的阵容
         self.fc_idx = np.full(self.n_slots, -1, dtype=np.int64)  # （rl/target_comps.json 里的序号；-1 = 没成型）
         if cfg.combat_bonus > 0:
@@ -160,7 +162,46 @@ class ShapingMixin:
             self._econ_shape(slots, f, ak, r0, c)
         if getattr(self.cfg, "keep_penalty", 0) > 0 and c is not None:
             ShapingMixin._keep_shape(self, f, c, ak, r0)
+        if getattr(self.cfg, "engine_bonus", 0) > 0 and c is not None:
+            ShapingMixin._engine_shape(self, slots, f, c, ak, r0)
         return r0
+
+    def _engine_shape(self, slots, f, c, ak, r0):
+        """引擎联动奖励（engine_bonus，rl/comp.ENGINE_RULES）：第 engine_from_turn 回合起结束回合时，
+        Φ = 场上每个引擎卡（布莱恩·铜须、提图斯、巴琳达、热气球测绘员、达卡莱附魔师、小瞎眼、逐亡陆行鸟、邪能野猪人、
+        活化艾泽里特、火花破坏机）配上的燃料（场上 + 手里被它放大的随从：战吼 / 亡语 / 鲜血宝石 / 回合结束 / 进击 / 法术 / 机械）
+        min(1, 张数 / 3) 加起来（最多 2），奖励 = engine_bonus × (Φ - 这局上次的 Φ)。有引擎没燃料、有燃料没引擎都不算。
+        第 16420 轮阵容测试：布莱恩·铜须 / 提图斯上场 0% / 0%（万三 17% / 16%），被引擎放大的买卡 0%（高手 8%）。"""
+        from .comp import engine_score
+        ends = np.flatnonzero(ak == A_END)
+        if not len(ends):
+            return r0
+        tab = ShapingMixin._engine_tab(self)
+        turns = np.rint(f[ends, 0] * 20).astype(int)
+        for j, t in zip(ends, turns):
+            if t < getattr(self.cfg, "engine_from_turn", 5):
+                continue
+            row = np.asarray(c[j])
+            phi, _ = engine_score(row[C_BOARD:C_BOARD + 7], np.concatenate([row[C_BOARD:C_BOARD + 7], row[C_HAND:C_HAND + 10]]), tab)
+            s = int(slots[j])
+            ep = int(self.rollout.ep[s])
+            prev = self.eg_prev[s] if self.eg_ep[s] == ep else 0.0
+            rb = getattr(self, "eg_rebase", None)
+            if rb and s in rb:                         # 成型阵容课程刚换过场面：从新场面起算
+                rb.discard(s)
+                prev = phi
+            r0[j] += self.cfg.engine_bonus * (phi - prev)
+            self.eg_ep[s], self.eg_prev[s] = ep, phi
+            self.mix["eng_sum"] += phi
+            self.mix["eng_n"] += 1
+        return r0
+
+    def _engine_tab(self):
+        if getattr(self, "_eng_tab", None) is None:
+            from tg.catalog import base_of_index, n_cards
+            from .comp import engine_tables
+            self._eng_tab = engine_tables([base_of_index(i) if i else "" for i in range(n_cards())])
+        return self._eng_tab
 
     def _keep_shape(self, f, c, ak, r0):
         """别卖正在做的阵容里该留的牌（keep_penalty）：卖掉的是高手做这套时留着不卖的核心 / 配套卡

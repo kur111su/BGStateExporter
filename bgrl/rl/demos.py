@@ -167,6 +167,7 @@ def bought_in(d, which: str, root: Path | None = None):
       tgtsup     正在做一套 S / A 阵容（核心卡过半、本族 ≥ 2），买的是这套的配套卡（rl/target_comps.json 的 support，
                  bg.py playbook：高手做这套时比平时多买的卡）——成型以后提升实力、倒转经济、卡牌联动
       engcard    买的是引擎卡本身（布莱恩·铜须、提图斯·瑞文戴尔）
+      engfuel    引擎联动（rl/comp.ENGINE_RULES 的 10 个引擎）：买的是场上引擎的燃料，或者买引擎时手里 / 场上已有 ≥ 2 张它的燃料
       triple     买的随从场上或手里已经有同名的（不是金色）——凑三连
       engine     买的卡被场上的“引擎卡”放大：场上有布莱恩·铜须时买战吼随从、有提图斯·瑞文戴尔时买亡语随从——
                  布莱恩让战吼触发两次（南海卖艺者下回合 2 块钱、各种加攻防的战吼翻倍），打战吼随从换经济 / 换身材"""
@@ -240,6 +241,22 @@ def bought_in(d, which: str, root: Path | None = None):
             own = [int(y) for y in list(d["c"][row, C_BOARD:C_BOARD + 7]) + list(d["c"][row, C_HAND:C_HAND + N_HAND])
                    if y > 0 and int(y) not in golden]
             sel[row] = any(base.get(y) == base.get(x) for y in own)
+        return sel
+    if which == "engfuel":
+        from .comp import engine_tables
+        from tg.obs import C_HAND, N_HAND
+        tab = engine_tables([base_of_index(i) if i else "" for i in range(n_cards())])
+        eng, fuel = tab["engine"], tab["fuel"]
+        if not len(buy):
+            return sel
+        cc = np.clip(d["c"][buy].astype(np.int64), 0, len(eng) - 1)
+        board = cc[:, C_BOARD:C_BOARD + 7]
+        own = np.concatenate([board, cc[:, C_HAND:C_HAND + N_HAND]], 1)
+        x = np.clip(cards.astype(np.int64), 0, len(eng) - 1)
+        on = (eng[board] & (board > 0)[:, :, None]).any(1)
+        nf = (fuel[own] & (own > 0)[:, :, None]).sum(1)
+        hit = (fuel[x] & on).any(1) | (eng[x] & (nf >= 2)).any(1)
+        sel[buy[hit]] = True
         return sel
     if which == "engine":
         det = catalog()

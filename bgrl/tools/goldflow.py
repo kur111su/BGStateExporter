@@ -409,7 +409,7 @@ def buy_style(buy_rows: list) -> dict:
     d = {"kind": np.full(n, KINDS.index("buy"), np.int8), "c": np.stack([r[0] for r in buy_rows]).astype(np.int64),
          "cand": np.array([[a] + [-1] * 7 for _, a in buy_rows], np.int16)}
     out = {}
-    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "tgtsup"):
+    for w in ("tribe", "syn", "key", "eco", "simkey", "simsyn", "engine", "engcard", "triple", "tgtS", "tgtA", "tgtB", "tgtfit", "tgtsup", "engfuel"):
         sel = bought_in(d, w)
         if sel is not None:
             out[w] = round(float(sel.mean()), 3)
@@ -566,6 +566,26 @@ def show_engines(finals: list[dict]) -> dict | None:
         parts.append(f"{zh} 上场 {len(with_e) / len(fb):.0%}（万三 {ref:.0%}）" +
                      (f"，这些局场上{eff}随从平均 {np.mean(n_amp):.1f} 个" if n_amp else ""))
     print("  引擎卡：" + "；".join(parts))
+    # 所有引擎（rl/comp.ENGINE_RULES，训练的 engine_bonus 同一张表）：上场比例、上场时配了几张燃料（最终场上）
+    from rl.comp import ENGINE_FUEL_FULL, engine_tables
+    ids = sorted({c for x in fb for c in x["board"]})
+    tab = engine_tables(ids)
+    row = {c: i for i, c in enumerate(ids)}
+    eng_rows, all_eng = [], {}
+    for j, (eid, zh) in enumerate(zip(tab["ids"], tab["names"])):
+        with_e = [x for x in fb if eid in x["board"]]
+        if not with_e and not h13.get(eid):
+            continue
+        nf = [int(tab["fuel"][[row[c] for c in x["board"]], j].sum()) for x in with_e]
+        full = sum(v >= ENGINE_FUEL_FULL for v in nf)
+        all_eng[zh] = {"share": round(len(with_e) / len(fb), 3), "fuel": round(float(np.mean(nf)), 2) if nf else None,
+                       "full": round(full / len(fb), 3), "h13": h13.get(eid, 0)}
+        eng_rows.append(f"{zh} {len(with_e) / len(fb):.0%}（万三 {h13.get(eid, 0):.0%}）" + (f" 燃料 {np.mean(nf):.1f}" if nf else ""))
+    anyfull = sum(any(int(tab["fuel"][[row[c] for c in x["board"]], j].sum()) >= ENGINE_FUEL_FULL
+                      for j, eid in enumerate(tab["ids"]) if eid in x["board"]) for x in fb)
+    print(f"  引擎联动（场上有引擎、配齐 {ENGINE_FUEL_FULL} 张它放大的随从的局 {anyfull / len(fb):.0%}）：" + "、".join(eng_rows))
+    out["all"] = all_eng
+    out["full_share"] = round(anyfull / len(fb), 3)
     return out
 
 
@@ -653,7 +673,8 @@ def main() -> int:
               "simkey": "引擎实测关键卡", "simsyn": "和场上是引擎实测好搭配",
               "engine": "被场上引擎卡放大（有布莱恩买战吼 / 有提图斯买亡语）", "engcard": "买引擎卡本身",
               "triple": "凑三连（场上 / 手里已有同名）", "tgtS": "S 级阵容核心卡", "tgtA": "A 级核心卡", "tgtB": "B 级核心卡",
-              "tgtfit": "核心卡和场上 / 手里的核心卡同属一套", "tgtsup": "正在做 S / A 阵容时买它的配套卡"}
+              "tgtfit": "核心卡和场上 / 手里的核心卡同属一套", "tgtsup": "正在做 S / A 阵容时买它的配套卡",
+              "engfuel": "引擎联动（买场上引擎的燃料 / 有燃料时买引擎）"}
         tcp = ROOT / "rl" / "target_comps.json"
         pb = (json.loads(tcp.read_text(encoding="utf-8")).get("playbook") if tcp.exists() else None) or {}
         if "pro_support_share" in pb and "tgtsup" not in ps:
