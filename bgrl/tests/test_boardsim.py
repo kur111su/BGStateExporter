@@ -248,8 +248,8 @@ def check_targets():
     c, fr = nearest_comp(list(tea["core"]) + ["BG26_135"], comps)
     assert c["name"] == "喝茶流" and fr == 1.0
     assert nearest_comp(["BG26_135"], comps)[0] is None
-    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3)² × 0.7（配套卡没有）
-    assert abs(q - 0.7 / 9) < 1e-9 and c2["name"] == "喝茶流"
+    q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3 + 1/9) / 2 × 0.7（配套卡没有）
+    assert abs(q - 0.7 * (0.5 / 3 + 0.5 / 9)) < 1e-9 and c2["name"] == "喝茶流"
     ks = sorted(tea["keep_support"])[0]                                   # 喝茶流留着用的配套卡（bg.py playbook）
     assert abs(target_score(list(tea["core"]) + [ks], comps)[0] - 1.0) < 1e-9 and abs(target_score(list(tea["core"]), comps)[0] - 0.7) < 1e-9
 
@@ -265,7 +265,7 @@ def check_targets():
         c[0, 19:26] = 0
         c[0, 19:19 + len(board)] = [idx[x] for x in board]
         got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.011667, 0.093333, -0.105], got                   # 第 4 回合不算；整局和 = 0.15 × 最后的 0
+    assert got == [0.0, 0.023333, 0.081667, -0.105], got                   # 第 4 回合不算；整局和 = 0.15 × 最后的 0
 
     cc = np.zeros((2, 124), np.int32)
     cc[:, 36] = idx["BG_LOE_077"]

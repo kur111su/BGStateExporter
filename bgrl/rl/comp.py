@@ -181,14 +181,15 @@ def target_score(ids, comps: list[dict], lob=None) -> tuple[float, dict | None, 
     """场面（卡牌 ID，金色已去掉 _G）离目标阵容多近：(最高的 等级权重 × 核心卡占比² × 本族随从撑起来的程度 × 配套卡配齐的程度,
     那一套, 核心卡占比)。
     lob：本局开放的种族——只算本局凑得成的那几套。
-    平方：凑齐最后几张值得最多（4 张核心卡：1 张 0.06、2 张 0.25、3 张 0.56、4 张 1）；本族程度：场上本族随从 / 4。
+    核心卡这一项 = (占比 + 占比²) / 2：开头就有分（4 张核心卡：1 张 0.16、2 张 0.38、3 张 0.66、4 张 1），凑齐最后几张值得更多；
+    第 15300–16420 轮只用占比²（1 张才 0.06），第 8 回合有主选的局只有 32%，开头太不值钱。本族程度：场上本族随从 / 4。
     第 14140–14240 轮用的是“等级权重 × 占比”：放一张提图斯就是畸变亡语的 0.5，模型学会了只放一张核心卡。"""
     best, comp, frac = 0.0, None, 0.0
     for c in comps:
         if not reachable(c, lob):
             continue
         fr, _, sup = comp_progress(ids, c)
-        q = c["w"] * fr * fr * sup * support_factor(ids, c)
+        q = c["w"] * (0.5 * fr + 0.5 * fr * fr) * sup * support_factor(ids, c)
         if q > best:
             best, comp, frac = q, c, fr
     return best, comp, frac
