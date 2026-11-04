@@ -249,9 +249,11 @@ def check_targets():
     assert c["name"] == "喝茶流" and fr == 1.0
     assert nearest_comp(["BG26_135"], comps)[0] is None
     q, c2, _ = target_score(["BG_LOE_077"], comps)                       # 只有布莱恩：喝茶流三张里的一张 → (1/3 + 1/9) / 2 × 0.7（配套卡没有）
-    assert abs(q - 0.7 * (0.5 / 3 + 0.5 / 9)) < 1e-9 and c2["name"] == "喝茶流"
+    assert abs(q - 0.7 * (0.5 / 3 + 0.5 / 9) * 0.4) < 1e-9 and c2["name"] == "喝茶流"     # 布莱恩没配战吼随从：撑起来 0.4
     ks = sorted(tea["keep_support"])[0]                                   # 喝茶流留着用的配套卡（bg.py playbook）
-    assert abs(target_score(list(tea["core"]) + [ks], comps)[0] - 1.0) < 1e-9 and abs(target_score(list(tea["core"]), comps)[0] - 0.7) < 1e-9
+    # 喝茶流三张核心卡：巴琳达配了 1 张吃法术的随从（守门融合怪）、布莱恩 0 张 → 0.4 + 0.6 × 1/6 = 0.5；再配 3 个战吼随从 → 0.8
+    assert abs(target_score(list(tea["core"]) + [ks], comps)[0] - 0.5) < 1e-9 and abs(target_score(list(tea["core"]), comps)[0] - 0.35) < 1e-9
+    assert abs(target_score(list(tea["core"]) + ["BG26_135"] * 3 + [ks], comps)[0] - 0.8) < 1e-9
 
     idx = {card_id(i): i for i in range(1, n_cards())}
     t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
@@ -265,7 +267,7 @@ def check_targets():
         c[0, 19:26] = 0
         c[0, 19:19 + len(board)] = [idx[x] for x in board]
         got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.023333, 0.081667, -0.105], got                   # 第 4 回合不算；整局和 = 0.15 × 最后的 0
+    assert got == [0.0, 0.009333, 0.043167, -0.0525], got                  # 第 4 回合不算；整局和 = 0.15 × 最后的 0
 
     cc = np.zeros((2, 124), np.int32)
     cc[:, 36] = idx["BG_LOE_077"]
@@ -416,7 +418,7 @@ def check_seeder():
     from tg.catalog import base_id, card_id
     from tg.obs import C_BOARD, N_BOARD
     tea = next(c for c in load_target_comps() if c["name"] == "喝茶流")
-    board = [[x, 10, 10] for x in sorted(tea["core"])]
+    board = [[x, 10, 10] for x in sorted(tea["core"])] + [["BG26_135", 3, 3]] * 3     # 再配 3 个战吼随从：布莱恩有燃料，算成型
     env = BatchEnv(4, seed=5, controlled=(0,), threads=1)
     rng = np.random.default_rng(1)
     for _ in range(3000):
@@ -431,13 +433,15 @@ def check_seeder():
     assert sd.seed(env, obs["features"]) and 0 in sd.seeded_slots
     obs = env.observe()
     ids = [base_id(card_id(int(x))) for x in obs["cards"][0][C_BOARD:C_BOARD + N_BOARD] if x > 0]
-    assert formed(ids, tea) and sorted(ids) == sorted(tea["core"]), ids
+    assert formed(ids, tea) and sorted(set(ids)) == sorted(tea["core"] | {"BG26_135"}), ids
     assert not sd.seed(env, obs["features"])                            # 一局只换一次
     assert sd.finish(0) and sd.take_stats()["seeded"] >= 1
     half = [[sorted(tea["core"])[0], 5, 5], [sorted(tea["core"])[1], 5, 5]]          # 喝茶流 3 张核心卡里的 2 张：做到一半
     assert CompSeeder({t: [{"tier": 3, "board": half}]}, 1.0, (t,), formed_from=t + 1).size() == 1
     assert CompSeeder({t: [{"tier": 3, "board": half[:1]}]}, 1.0, (t,), formed_from=t + 1).size() == 0
-    assert CompSeeder({t: [{"tier": 3, "board": half}]}, 1.0, (t,), formed_from=t).size() == 1      # 2/3 也算成型
+    assert CompSeeder({t: [{"tier": 3, "board": half}]}, 1.0, (t,), formed_from=t).size() == 0      # 巴琳达只配了守门融合怪：不算成型
+    fuel = half + [["BG36_762", 5, 5], ["BG28_583", 5, 5]]                          # 再配恶魔干扰者、鲁古格（吃法术的随从）
+    assert CompSeeder({t: [{"tier": 3, "board": fuel}]}, 1.0, (t,), formed_from=t).size() == 1      # 2/3 + 配齐燃料 = 成型
     return len(sd.seeded_slots)
 
 

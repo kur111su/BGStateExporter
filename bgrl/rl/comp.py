@@ -143,12 +143,40 @@ def _tribe_count(ids, tribes) -> int:
     return n
 
 
+_FUEL_CACHE: dict = {}
+
+
+def _is_fuel(cid: str, engine: str) -> bool:
+    """cid 是不是引擎 engine 的燃料（ENGINE_RULES：说明里的关键词 / 种族）。"""
+    key = (cid, engine)
+    if key not in _FUEL_CACHE:
+        d = catalog().get(cid) or {}
+        rule = ENGINE_RULES[engine][1]
+        text, races = str(d.get("text") or "").lower(), set(d.get("races") or [])
+        _FUEL_CACHE[key] = cid != engine and d.get("kind") == "minion" and (
+            any(k.lower() in text for k in rule.get("text", ())) or bool(races & set(rule.get("race", ())))
+            or ("ALL" in races and bool(rule.get("race"))))
+    return _FUEL_CACHE[key]
+
+
 def comp_progress(ids, comp: dict) -> tuple[float, int, float]:
-    """(核心卡占比, 核心卡张数, 本族随从撑起来的程度 0–1)。中立阵容（喝茶流这种，核心卡没有种族）撑起来的程度算 1。"""
+    """(核心卡占比, 核心卡张数, 撑起来的程度 0–1)。
+    种族阵容：场上本族随从 / TRIBE_FULL。中立的引擎阵容（喝茶流：布莱恩 + 巴琳达 + 守门融合怪）：场上每个引擎核心卡配了几张燃料，
+    0.4 + 0.6 × 平均 min(1, 燃料 / 3)——第 16600 轮喝茶流成型 14%，可场上布莱恩平均只配 0.6 个战吼随从、巴琳达 0.4 个吃法术的随从，
+    摆齐三张核心卡就拿满分，场面却没起来（第 12 / 13 回合阵容强度 0.49 / 0.36）。其它中立阵容算 1。"""
     have = set(ids)
     k = len(comp["core"] & have)
     tribes = comp.get("tribes") or frozenset()
-    sup = min(1.0, _tribe_count(ids, tribes) / TRIBE_FULL) if tribes else 1.0
+    if tribes:
+        sup = min(1.0, _tribe_count(ids, tribes) / TRIBE_FULL)
+    else:
+        engs = [e for e in comp["core"] if e in ENGINE_RULES]
+        if engs:
+            on = [e for e in engs if e in have]
+            r = [min(1.0, sum(_is_fuel(x, e) for x in ids) / ENGINE_FUEL_FULL) for e in on]
+            sup = 0.4 + 0.6 * (sum(r) / len(r) if r else 0.0)
+        else:
+            sup = 1.0
     return k / len(comp["core"]), k, sup
 
 

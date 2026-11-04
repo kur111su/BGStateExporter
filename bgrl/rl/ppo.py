@@ -566,6 +566,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
                         n_dec += k
                         self.n_noop += int(noop.sum())
+                        self.mix["noop_move"] += int((ak >= 196).sum())        # 无效操作分开记：调站位 / 冻结 / 取消
+                        self.mix["noop_freeze"] += int((ak == 2).sum())
+                        self.mix["noop_cancel"] += int((ak == 7).sum())
                     o += k
             tb = time.time()
             for ei, (name, env, off) in enumerate(self.envs):
@@ -1119,7 +1122,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
                    "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"],
-                   "noop_frac": round(self.n_noop / max(1, n_dec), 3), **upd}
+                   "noop_frac": round(self.n_noop / max(1, n_dec), 3),
+                   **{k: round(self.mix.get(k, 0) / max(1, n_dec), 3) for k in ("noop_move", "noop_freeze", "noop_cancel")}, **upd}
             mx, ends = self.mix, max(1, self.mix.get("end", 0))           # 每回合平均（学习者）
             rec.update(up_turn=round(mx["upgrade"] / ends, 3), ref_turn=round(mx["refresh"] / ends, 2),
                        buy_turn=round(mx["buy"] / ends, 2), sell_turn=round(mx["sell"] / ends, 3),
