@@ -237,6 +237,27 @@ class Config:
     # 模仿时把酒馆里随从的顺序随机打乱（买的那格跟着换）：酒馆顺序本来就不影响什么，背题的时候却会记住
     # “第几格买”——第 8000–11600 轮训练示范命中率 0.72 → 0.85，留出局一直 0.37
     demo_shop_shuffle: bool = False
+    # 局末把势能型塑形（目标阵容 target_bonus、引擎联动 engine_bonus、阵容强度 combat_bonus）最后的 Φ 扣回来多少（0–1）。
+    # 0 = 不扣（原来）：整局加起来 = 系数 × 最后的 Φ，等于在名次以外又多了一个“最后场面像不像阵容”的目标。
+    # 第 16420–16850 轮这三项局末合计估计平均 0.7、最多 2.0（名次 1 → 8 一共也是 2.0）：tgt_q 0.07 → 0.14、eng_q 0 → 0.40，
+    # 考试 4.44 → 4.75、加强局承受的对手强度 0.69 → 0.55——模型在拿“像阵容”的分，不是拿名次。
+    # 1 = 纯势能差（整局和 = -第一次的 Φ，和动作无关）：做阵容那一步照样当场拿到功劳，但最后要靠名次兑现；
+    # 前 shape_repay_ramp 轮从 0 慢慢加到这个数（价值头跟着改）
+    shape_repay: float = 0.0
+    shape_repay_ramp: int = 300
+    # 考试守护（三天无人看着跑用）：每次加强局考试（eval_every 轮一次、eval_games 局、全强度高分阵容）记下名次，
+    # 最近 guard_window 次的平均比历史最好低（名次数字大）guard_margin 以上、连续 guard_patience 次 →
+    # 换回最好的那一版参数（runs/<run>/best.pt，优化器重新开始），guard_keys 里的模仿 / 老师系数 × guard_decay。
+    # 最多 guard_max 次，之后只记不改。平均变好时把当前参数存成 best.pt（影子模式 / 竞技场 / comptest 用它）。
+    # 拿第 12000–16850 轮的日志模拟（6 次平均、0.3、连续 3 次）：会在第 12500（变乱）、14700 / 15100（老师 0.02）、
+    # 16700（引擎奖励）四个地方出手，正好是那几段变差的时候
+    guard: bool = False
+    guard_window: int = 6
+    guard_margin: float = 0.3
+    guard_patience: int = 3
+    guard_decay: float = 0.7
+    guard_max: int = 6
+    guard_keys: str = "teacher_coef,pro_coef,bc_coef"
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -441,6 +462,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         self._init_imitation()                         # 示范数据和模仿强度（rl/imitation.py）
         self._init_shaping()                           # 升本曲线和每个座位的塑形状态（rl/shaping.py）
         self.teacher, self.teacher_t0 = self._load_teacher(), None
+        self.repay_t0 = None                           # 局末扣回势能从哪一轮开始爬（存在 latest.pt 里）
+        self.guard_base = {k: float(getattr(cfg, k)) for k in self._guard_keys()}
+        self.guard_st = self._guard_new()
         self.mix = defaultdict(int)
         self.anchor_until = 0
         self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
@@ -581,7 +605,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     continue
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
-                        r_end = rewards[i] + (self._econ_close(off + int(i)) if dones[i] else 0.0)
+                        r_end = rewards[i] + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i)))
+                                              if dones[i] else 0.0)
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i],
                                             self._final_comp(off + int(i)) if dones[i] else None)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
@@ -921,9 +946,87 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.active_snaps = []
         self.good = None
         self.teacher_t0 = None                         # 老师的作用从退回的那一轮重新慢慢加
+        self.repay_t0 = None
+        self.guard_st = self._guard_new()              # 考试守护从头记（best.pt 会被第一次凑满的平均覆盖）
+        self._guard_apply()
         self.log_f.write(json.dumps({"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "restored_from": str(path)}, ensure_ascii=False) + "\n")
         self.log_f.flush()
+
+    # ---------------- 考试守护（guard_*） ----------------
+
+    def _guard_keys(self) -> list[str]:
+        return [k.strip() for k in str(getattr(self.cfg, "guard_keys", "") or "").split(",")
+                if k.strip() and hasattr(self.cfg, k.strip())]
+
+    @staticmethod
+    def _guard_new() -> dict:
+        return {"evals": [], "best": None, "best_iter": None, "bad": 0, "n": 0, "scale": 1.0}
+
+    def _guard_apply(self):
+        """把守护的缩放（scale）乘到模仿 / 老师系数上（基准是启动时配方里的值）。"""
+        sc = float(self.guard_st.get("scale", 1.0))
+        for k, v in getattr(self, "guard_base", {}).items():
+            setattr(self.cfg, k, v * sc)
+
+    def _guard(self, x) -> dict:
+        """每次加强局考试后调用。返回要写进日志的字段。"""
+        cfg = self.cfg
+        if not cfg.guard or x is None:
+            return {}
+        g = self.guard_st
+        w = max(1, int(cfg.guard_window))
+        g["evals"] = (g["evals"] + [float(x)])[-w:]
+        out = {"guard_scale": round(float(g["scale"]), 3)}
+        if len(g["evals"]) < w:
+            return out
+        m = float(np.mean(g["evals"]))
+        out["guard_avg"] = round(m, 3)
+        if g["best"] is None or m < g["best"]:
+            g["best"], g["best_iter"], g["bad"] = m, int(self.iter), 0
+            self._save_best(m)
+            out["guard_best"] = round(m, 3)
+            return out
+        out["guard_ref"] = round(float(g["best"]), 3)
+        if m < g["best"] + cfg.guard_margin:
+            g["bad"] = 0
+            return out
+        g["bad"] += 1
+        out["guard_bad"] = g["bad"]
+        if g["bad"] < cfg.guard_patience:
+            return out
+        if g["n"] >= cfg.guard_max:
+            out["guard_capped"] = True
+            return out
+        out["guard_fix"] = self._guard_fix(m)
+        return out
+
+    def _save_best(self, m: float):
+        torch.save({"model": self.model.state_dict(), "model_kwargs": self.mkw, "iter": self.iter,
+                    "guard": {"eval_avg": round(m, 3), "window": int(self.cfg.guard_window),
+                              "time": time.strftime("%Y-%m-%d %H:%M:%S")}}, self.run / "best.pt")
+
+    def _guard_fix(self, m: float) -> str:
+        g, cfg = self.guard_st, self.cfg
+        p = self.run / "best.pt"
+        if not p.exists():
+            g["bad"] = 0
+            return "没有 best.pt，只记不改"
+        sd = torch.load(p, map_location=self.dev, weights_only=False)["model"]
+        self.model.load_state_dict(sd)
+        lr = self.opt.param_groups[0]["lr"]
+        self.opt = torch.optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
+        self.snap_cache.clear()
+        g["n"] += 1
+        g["scale"] = float(g["scale"]) * float(cfg.guard_decay)
+        g["evals"], g["bad"] = [], 0
+        self._guard_apply()
+        self.mark_good()
+        msg = (f"第 {self.iter} 轮考试最近 {cfg.guard_window} 次平均 {m:.2f}，比最好的 {g['best']:.2f}（第 {g['best_iter']} 轮）"
+               f"差 {cfg.guard_margin} 以上连续 {cfg.guard_patience} 次：换回 best.pt，"
+               + "、".join(f"{k} → {getattr(cfg, k):.4g}" for k in self.guard_base) + f"（第 {g['n']} / {cfg.guard_max} 次）")
+        print(msg, flush=True)
+        return msg
 
     def mark_good(self):
         import copy
@@ -959,7 +1062,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
                     "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
                     "bc_scale": self.bc_scale, "pro_scale": self.pro_scale,
-                    "teacher": {"t0": self.teacher_t0, "id": getattr(self, "teacher_id", None)}}, self.run / "latest.pt")
+                    "teacher": {"t0": self.teacher_t0, "id": getattr(self, "teacher_id", None)},
+                    "repay_t0": self.repay_t0, "guard": self.guard_st}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -975,6 +1079,11 @@ class Trainer(ShapingMixin, ImitationMixin):
         tk = ck.get("teacher") or {}
         if getattr(self, "teacher", None) is not None and tk.get("t0") is not None and tk.get("id") == getattr(self, "teacher_id", None):
             self.teacher_t0 = int(tk["t0"])                 # 同一个老师：接着之前的爬坡，不是每次启动从 0 再爬（第 14240 轮那次重启又从 0 开始）
+        if ck.get("repay_t0") is not None:
+            self.repay_t0 = int(ck["repay_t0"])
+        if isinstance(ck.get("guard"), dict):
+            self.guard_st = {**self._guard_new(), **ck["guard"]}
+            self._guard_apply()
         if self.cfg.pro_gap_cap > 0:
             self.pro_scale = max(self.pro_scale, self.cfg.pro_scale_min)
         if self.adapt is not None:
@@ -1145,6 +1254,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["keep_sold"] = round(mx.get("keep_sold", 0) / mx["sells"], 4)   # 卖牌里卖掉“该留的牌”的比例（高手 5.2%）
             if mx.get("econ_n"):                       # 结束回合时平均存下的钱（下回合额外金币 + 2 × 金币上限加成）
                 rec["econ"] = round(mx["econ_sum"] / mx["econ_n"], 3)
+            if mx.get("fin_n"):                        # 局末三项势能还挂着多少、这一轮扣回的比例
+                rec["shape_fin"] = round(mx["fin_sum"] / mx["fin_n"], 3)
+                rec["shape_repay"] = round(self._repay_now(), 3)
             if mx.get("env_rebuild"):
                 rec["env_rebuild"] = mx["env_rebuild"]
             if mx.get("drift"):                        # 这一轮看起来在变乱（连续 drift_iters 轮就回退）
@@ -1191,6 +1303,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     pe = self.human_eval(self.pro, "pro")
                     self.adjust_pro(pe)
                     rec.update(pe, pro_scale=round(self.pro_scale, 3))
+                if cfg.guard:
+                    rec.update(self._guard(rec.get("eval_boost_place") if cfg.boost_frac > 0 else rec.get("eval_place")))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 if not getattr(self, "drift_n", 0):       # 正在变乱时不把现在当成回退点

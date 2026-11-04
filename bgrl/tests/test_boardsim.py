@@ -486,6 +486,63 @@ def check_engine():
     return got
 
 
+def check_repay():
+    """局末扣回势能（shape_repay）：三项最后的 Φ 按爬坡比例扣回；不是这一局的 Φ 不扣；系数为 0 的项不算。"""
+    from rl.shaping import ShapingMixin
+    cfg = SimpleNamespace(shape_repay=1.0, shape_repay_ramp=4, target_bonus=0.6, engine_bonus=0.4, combat_bonus=0.3)
+    t = SimpleNamespace(cfg=cfg, iter=100, repay_t0=None, mix=defaultdict(int), rollout=SimpleNamespace(ep=np.array([3, 3])),
+                        tg_ep=np.array([3, 2]), tg_prev=np.array([0.5, 0.9]), eg_ep=np.array([3, 3]), eg_prev=np.array([1.0, 2.0]),
+                        cs_ep=np.array([3, -1]), cs_prev=np.array([1.2, 0.7]))
+    full = 0.6 * 0.5 + 0.4 * 1.0 + 0.3 * 1.2
+    assert abs(ShapingMixin._shape_close(t, 0) + 0.25 * full) < 1e-9          # 爬坡第 1 / 4 轮
+    t.iter = 103
+    assert abs(ShapingMixin._shape_close(t, 0) + full) < 1e-9
+    assert abs(ShapingMixin._shape_close(t, 1) + 0.4 * 2.0) < 1e-9             # 1 号座位：目标阵容 / 阵容强度不是这一局的
+    t.iter = 50                                                                 # 退回到爬坡开始之前：不扣，不是反着加
+    assert ShapingMixin._shape_close(t, 0) == 0.0
+    cfg.shape_repay = 0.0
+    t.iter = 200
+    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 5     # 不扣时照样记局末还挂着多少
+    return round(full, 3)
+
+
+def check_guard():
+    """考试守护（Trainer._guard）：凑满 guard_window 次才比；创新低存 best.pt；差 margin 以上连续 patience 次出手；
+    出手后缩放乘到 guard_keys 的系数上；最多 guard_max 次。"""
+    from rl.ppo import Trainer
+    cfg = SimpleNamespace(guard=True, guard_window=3, guard_margin=0.3, guard_patience=2, guard_decay=0.5, guard_max=1,
+                          guard_keys="teacher_coef,pro_coef,no_such", teacher_coef=0.004, pro_coef=0.1)
+    saved, fixed = [], []
+    t = SimpleNamespace(cfg=cfg, iter=0, guard_st=Trainer._guard_new())
+    t.guard_base = {k: getattr(cfg, k) for k in Trainer._guard_keys(t)}
+    assert list(t.guard_base) == ["teacher_coef", "pro_coef"]
+
+    def fix(m):
+        fixed.append(m)
+        t.guard_st["n"] += 1
+        t.guard_st["scale"] *= cfg.guard_decay
+        t.guard_st["evals"], t.guard_st["bad"] = [], 0
+        Trainer._guard_apply(t)
+        return "fix"
+    t._save_best, t._guard_fix = saved.append, fix
+    outs = []
+    for it, x in enumerate([4.4, 4.2, 4.0, 4.1, 4.3, 4.6, 4.6, 4.7, 4.8, 4.9, 5.0, 5.0, 5.1], 1):
+        t.iter = it * 50
+        outs.append(Trainer._guard(t, x))
+    assert "guard_avg" not in outs[1] and outs[2]["guard_best"] == 4.2 and [round(x, 3) for x in saved] == [4.2, 4.1]
+    assert outs[3]["guard_best"] == 4.1                                         # 4.2 / 4.0 / 4.1 → 4.1 也是新低
+    assert t.guard_st["best_iter"] == 200
+    assert outs[6].get("guard_bad") == 1 and outs[7].get("guard_fix") == "fix", outs   # 4.5、4.633 连续两次差 0.3 以上
+    assert abs(cfg.teacher_coef - 0.002) < 1e-12 and abs(cfg.pro_coef - 0.05) < 1e-12
+    assert outs[8] == {"guard_scale": 0.5}                                     # 出手后从头凑窗口
+    assert outs[-1].get("guard_capped") and len(fixed) == 1                    # 最多 guard_max 次
+    t.guard_st = {**Trainer._guard_new(), "scale": 0.25}                       # 重启时从 latest.pt 读回缩放
+    Trainer._guard_apply(t)
+    assert abs(cfg.pro_coef - 0.025) < 1e-12
+    assert Trainer._guard(SimpleNamespace(cfg=SimpleNamespace(guard=False)), 4.0) == {}
+    return outs[7]
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -498,6 +555,8 @@ def main() -> int:
     check_lobby()
     check_seeder()
     check_engine()
+    check_repay()
+    check_guard()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

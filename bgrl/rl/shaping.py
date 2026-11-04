@@ -321,6 +321,33 @@ class ShapingMixin:
         self.ec_ep[s], self.ec_prev[s] = -1, 0.0
         return v
 
+    def _repay_now(self) -> float:
+        """这一轮局末扣回势能的比例（shape_repay）：第一次用起 shape_repay_ramp 轮从 0 线性加上去。"""
+        k = float(getattr(self.cfg, "shape_repay", 0) or 0)
+        if k <= 0:
+            return 0.0
+        if getattr(self, "repay_t0", None) is None:
+            self.repay_t0 = int(self.iter)
+        ramp = max(1, int(getattr(self.cfg, "shape_repay_ramp", 1) or 1))
+        return k * min(1.0, max(0.0, (self.iter - self.repay_t0 + 1) / ramp))
+
+    def _shape_close(self, s: int) -> float:
+        """座位 s 这一局结束：把目标阵容 / 引擎联动 / 阵容强度这局最后的 Φ 扣回 shape_repay 那么多（见 Config.shape_repay）。
+        扣完以后整局这三项加起来 ≈ -第一次的 Φ，和动作无关：做阵容那一步还是当场拿到功劳，最后由名次决定值不值。"""
+        k = ShapingMixin._repay_now(self)
+        ep = int(self.rollout.ep[s])
+        cfg = self.cfg
+        v = 0.0
+        if getattr(cfg, "target_bonus", 0) > 0 and self.tg_ep[s] == ep:
+            v += cfg.target_bonus * self.tg_prev[s]
+        if getattr(cfg, "engine_bonus", 0) > 0 and self.eg_ep[s] == ep:
+            v += cfg.engine_bonus * self.eg_prev[s]
+        if getattr(cfg, "combat_bonus", 0) > 0 and self.cs_ep[s] == ep:
+            v += cfg.combat_bonus * self.cs_prev[s]
+        self.mix["fin_sum"] += v                        # 这局三项局末一共还挂着多少（不扣时就是白拿的）
+        self.mix["fin_n"] += 1
+        return -k * float(v)
+
     def _comp_tables(self):
         """阵容打分用的查表（按卡牌编号）：种族位掩码（全种族 = 所有位）、是不是随从、关键卡、高手常见搭配矩阵。"""
         if getattr(self, "_ct", None) is not None:

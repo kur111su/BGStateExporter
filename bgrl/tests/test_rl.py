@@ -199,8 +199,26 @@ def main() -> int:
         tr.train(1)
         assert getattr(tr, "env_rebuilds", 0) == 1 and tr.envs[0][1] is not env, "引擎出错后没有换环境"
         tr.train(1)
+        # 考试守护：凑满窗口创新低 → best.pt；退步 → 换回 best.pt、系数缩放；latest.pt 带着守护状态
+        tr.cfg.guard, tr.cfg.guard_window, tr.cfg.guard_patience, tr.cfg.guard_margin = True, 2, 1, 0.3
+        tr.guard_base = {"pro_coef": 0.1}
+        assert "guard_avg" not in tr._guard(4.0)
+        assert tr._guard(4.0)["guard_best"] == 4.0 and (Path(d) / "best.pt").exists()
+        ref = [p.detach().clone() for p in tr.model.parameters()]
+        with torch.no_grad():
+            for p in tr.model.parameters():
+                p.add_(1.0)
+        out = tr._guard(5.0)
+        assert out.get("guard_fix"), out
+        assert all(torch.equal(a, b) for a, b in zip(ref, tr.model.parameters())), "没换回 best.pt"
+        assert abs(tr.cfg.pro_coef - 0.07) < 1e-9 and tr.guard_st["n"] == 1
+        tr.train(1)                                                    # 换回以后接着练（新优化器）
+        tr.save()
+        tr.guard_st, tr.cfg.pro_coef = tr._guard_new(), 0.1
+        tr.load(Path(d) / "latest.pt")
+        assert tr.guard_st["n"] == 1 and abs(tr.cfg.pro_coef - 0.07) < 1e-9
         tr.log_f.close()
-    print("健康检查和回退通过；引擎出错能换环境接着练")
+    print("健康检查和回退通过；引擎出错能换环境接着练；考试守护能存最好的、退步时换回来")
     print("TEST OK")
     return 0
 
