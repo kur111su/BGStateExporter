@@ -146,8 +146,10 @@ def main() -> int:
     from rl.comp import engine_score, engine_tables
     etab = engine_tables([base_of_index(i) if i else "" for i in range(n_cards())])
     cn = c2[0].numpy()
-    phi, _ = engine_score(cn[C_BOARD:C_HAND], np.concatenate([cn[C_BOARD:C_HAND], cn[C_HAND:C_SHOP]]), etab)
-    assert abs(float(b2[7]) - min(1.0, phi)) < 1e-6 and phi > 0, (float(b2[7]), phi)   # 布莱恩：燃料几成
+    own_n = np.concatenate([cn[C_BOARD:C_HAND], cn[C_HAND:C_SHOP]])
+    phi, parts = engine_score(cn[C_BOARD:C_HAND], own_n, etab)
+    nf_brann = dict(parts)[ENGINE_RULES[brann][0]]
+    assert abs(float(b2[7]) - min(1.0, nf_brann / 3)) < 1e-6 and nf_brann > 0, (float(b2[7]), parts)   # 布莱恩：燃料几成
     assert h1[8] == 0.5 and b0[8] == 0.5 and s1[8] == 0.5, "同名卡已有张数（三连进度）"
     assert s0[9] == 1, "倒转经济的卡"
     assert float(syn[0, nb + 2:nb + nh].abs().sum()) == 0, "空格子全是 0"
