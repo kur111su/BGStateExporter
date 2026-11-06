@@ -543,6 +543,39 @@ def check_guard():
     return outs[7]
 
 
+def check_ent_warmup():
+    """熵目标（Trainer._adapt_ent）和优化器重开后的学习率爬坡（_start_warmup / _apply_warmup）。"""
+    from rl.ppo import Trainer
+    cfg = SimpleNamespace(ent_target=1.1, ent_adapt=0.1, ent_coef_min=0.001, ent_coef_max=0.01, ent_coef=0.005,
+                          warmup_iters=10, lr=1e-4)
+    t = SimpleNamespace(cfg=cfg)
+    Trainer._adapt_ent(t, 1.5)
+    assert abs(cfg.ent_coef - 0.0045) < 1e-12
+    for _ in range(100):
+        Trainer._adapt_ent(t, 1.5)
+    assert cfg.ent_coef == 0.001                                      # 下限
+    for _ in range(100):
+        Trainer._adapt_ent(t, 0.5)
+    assert cfg.ent_coef == 0.01                                       # 上限
+    Trainer._adapt_ent(t, None)
+    cfg.ent_target = 0
+    Trainer._adapt_ent(t, 2.0)
+    assert cfg.ent_coef == 0.01                                       # 不开就不动
+    t.iter, t.opt = 200, SimpleNamespace(param_groups=[{"lr": 5e-5}])
+    t._apply_warmup = lambda: Trainer._apply_warmup(t)
+    Trainer._start_warmup(t)
+    lrs = []
+    for it in range(200, 213):
+        t.iter = it
+        Trainer._apply_warmup(t)
+        lrs.append(round(t.opt.param_groups[0]["lr"] / cfg.lr, 3))
+    assert lrs[0] == 0.1 and lrs[5] == 0.55 and lrs[10:] == [1.0, 1.0, 1.0] and t.warm_t0 is None, lrs
+    t.opt.param_groups[0]["lr"] = 3e-5                                # 爬完以后不再改（回退减半照常）
+    Trainer._apply_warmup(t)
+    assert t.opt.param_groups[0]["lr"] == 3e-5
+    return lrs
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -557,6 +590,7 @@ def main() -> int:
     check_engine()
     check_repay()
     check_guard()
+    check_ent_warmup()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

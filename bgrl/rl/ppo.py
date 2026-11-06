@@ -63,6 +63,16 @@ class Config:
     minibatch: int = 4096
     micro_batch: int = 512         # 一次放进显卡的样本数（显存不够就调小；不影响结果，只影响速度）
     lr_recover_iters: int = 50     # 回退后连续这么多轮正常，学习率翻倍（最多回到 lr）
+    # 优化器重新开始（--restore、考试守护换回 best.pt）后学习率从 10% 用 warmup_iters 轮爬到 lr（0 = 不爬）。
+    # 第 15300 轮退回那次没有爬坡：新 Adam 头几步每个参数都走满一步，熵 12 轮里 0.97 → 1.34，之后一路涨到 1.6 以上
+    warmup_iters: int = 0
+    # 熵的目标（0 = 不管，ent_coef 固定）：每轮熵高于目标 ent_coef × (1 - ent_adapt)，低于 × (1 + ent_adapt)，
+    # 限在 [ent_coef_min, ent_coef_max]。考试最好的几段熵在 1.05–1.16（第 13000–13500 轮 4.22–4.26），
+    # 1.34–1.48 时 4.47–4.78；第 15300 轮退回后熵涨到 1.55–1.74，变乱检查连退 4 次、学习率 1.5e-4 → 1.9e-5
+    ent_target: float = 0.0
+    ent_adapt: float = 0.03
+    ent_coef_min: float = 0.0005
+    ent_coef_max: float = 0.01
     # 每次调站位 / 冻结扣一点点奖励：这两个动作不推进游戏，第一版模型学会了一直点（影子模式的方案里 69% 是调站位）。
     # 30 次约等于 0.2 个名次，正常需要的一两次几乎不受影响
     noop_penalty: float = 0.003
@@ -949,6 +959,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.repay_t0 = None
         self.guard_st = self._guard_new()              # 考试守护从头记（best.pt 会被第一次凑满的平均覆盖）
         self._guard_apply()
+        self._start_warmup()
         self.log_f.write(json.dumps({"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "restored_from": str(path)}, ensure_ascii=False) + "\n")
         self.log_f.flush()
@@ -1021,6 +1032,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         g["scale"] = float(g["scale"]) * float(cfg.guard_decay)
         g["evals"], g["bad"] = [], 0
         self._guard_apply()
+        self._start_warmup()
         self.mark_good()
         msg = (f"第 {self.iter} 轮考试最近 {cfg.guard_window} 次平均 {m:.2f}，比最好的 {g['best']:.2f}（第 {g['best_iter']} 轮）"
                f"差 {cfg.guard_margin} 以上连续 {cfg.guard_patience} 次：换回 best.pt，"
@@ -1033,8 +1045,34 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.good = (copy.deepcopy(self.model.state_dict()), copy.deepcopy(self.opt.state_dict()), self.iter)
         self.rollbacks = 0
 
+    def _start_warmup(self):
+        """优化器刚重新开始：学习率从 10% 爬到 cfg.lr（warmup_iters 轮）。"""
+        if getattr(self.cfg, "warmup_iters", 0) > 0:
+            self.warm_t0 = int(self.iter)
+            self._apply_warmup()
+
+    def _apply_warmup(self):
+        t0, n = getattr(self, "warm_t0", None), int(getattr(self.cfg, "warmup_iters", 0) or 0)
+        if t0 is None or n <= 0:
+            return
+        k = (self.iter - t0) / n
+        if k >= 1 or k < 0:
+            self.warm_t0 = None
+            k = 1.0
+        for g in self.opt.param_groups:
+            g["lr"] = self.cfg.lr * (0.1 + 0.9 * k)
+
+    def _adapt_ent(self, ent) -> None:
+        """熵对着 ent_target 调 ent_coef（见 Config.ent_target）。"""
+        cfg = self.cfg
+        if not getattr(cfg, "ent_target", 0) or ent is None:
+            return
+        f = (1 - cfg.ent_adapt) if ent > cfg.ent_target else (1 + cfg.ent_adapt)
+        cfg.ent_coef = float(min(cfg.ent_coef_max, max(cfg.ent_coef_min, cfg.ent_coef * f)))
+
     def rollback(self, problem: str):
         self.rollbacks += 1
+        self.warm_t0 = None
         print(f"第 {self.iter} 轮出问题：{problem}。回退到第 {self.good[2] if self.good else '?'} 轮，学习率减半。", flush=True)
         if self.rollbacks > self.cfg.max_rollbacks or self.good is None:
             self.log_f.write(json.dumps({"iter": self.iter, "stopped": problem}, ensure_ascii=False) + "\n")
@@ -1063,7 +1101,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
                     "bc_scale": self.bc_scale, "pro_scale": self.pro_scale,
                     "teacher": {"t0": self.teacher_t0, "id": getattr(self, "teacher_id", None)},
-                    "repay_t0": self.repay_t0, "guard": self.guard_st}, self.run / "latest.pt")
+                    "repay_t0": self.repay_t0, "guard": self.guard_st, "ent_coef": self.cfg.ent_coef,
+                    "warm_t0": getattr(self, "warm_t0", None)}, self.run / "latest.pt")
 
     def load(self, path):
         ck = torch.load(path, map_location=self.dev, weights_only=False)
@@ -1084,6 +1123,10 @@ class Trainer(ShapingMixin, ImitationMixin):
         if isinstance(ck.get("guard"), dict):
             self.guard_st = {**self._guard_new(), **ck["guard"]}
             self._guard_apply()
+        if getattr(self.cfg, "ent_target", 0) and ck.get("ent_coef") is not None:   # 调过的熵系数接着用
+            self.cfg.ent_coef = float(min(self.cfg.ent_coef_max, max(self.cfg.ent_coef_min, ck["ent_coef"])))
+        if ck.get("warm_t0") is not None:
+            self.warm_t0 = int(ck["warm_t0"])
         if self.cfg.pro_gap_cap > 0:
             self.pro_scale = max(self.pro_scale, self.cfg.pro_scale_min)
         if self.adapt is not None:
@@ -1205,6 +1248,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         while self.iter < end:
             self.learner.bad_rows = 0
             batch, n_dec, t_col, t_env, t_net = self.collect()
+            self._apply_warmup()
             t1 = time.time()
             upd = self.update(batch) if batch is not None else {}
             t_upd = time.time() - t1
@@ -1212,8 +1256,9 @@ class Trainer(ShapingMixin, ImitationMixin):
             problem = self.health(upd) or self._drift(upd.get("ent"), self.n_noop / max(1, n_dec))
             if not problem:
                 self.since_rollback += 1
+                self._adapt_ent(upd.get("ent"))
                 g0 = self.opt.param_groups[0]["lr"]
-                if g0 < cfg.lr and self.since_rollback >= cfg.lr_recover_iters:
+                if getattr(self, "warm_t0", None) is None and g0 < cfg.lr and self.since_rollback >= cfg.lr_recover_iters:
                     for g in self.opt.param_groups:
                         g["lr"] = min(cfg.lr, g["lr"] * 2)
                     self.since_rollback = 0
@@ -1230,7 +1275,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
-                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"],
+                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"], "ent_coef": round(cfg.ent_coef, 5),
                    "noop_frac": round(self.n_noop / max(1, n_dec), 3),
                    **{k: round(self.mix.get(k, 0) / max(1, n_dec), 3) for k in ("noop_move", "noop_freeze", "noop_cancel")}, **upd}
             mx, ends = self.mix, max(1, self.mix.get("end", 0))           # 每回合平均（学习者）
