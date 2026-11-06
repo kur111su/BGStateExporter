@@ -13,7 +13,8 @@
 这些是别人的对局，生成的样本只在本机（runs/ 不进 Git）。
 
 用法：bg.py prodemos <回放文件夹> [--workers N] [--limit N]
-回放文件夹（默认 data\\firestone，包括子文件夹）里可以混着放：分享包原样的 part*.zip、单局的 *.xml.zip、*.xml（HSReplay 格式）。
+回放文件夹（默认 data\\firestone，包括子文件夹）里可以混着放：分享包原样的 part*.zip、单局的 *.xml.zip、*.xml（HSReplay 格式）、
+HDT 的 AI 复盘包（*复盘包.zip，或者套着一堆复盘包的 zip；tg/review_pack.py，manifest 里的“原分数”记成 mmr）。
 每次都从这个文件夹全部重新生成 runs/pro_demos/，所以新回放和旧的放在一起，不要只放新的。
 """
 from __future__ import annotations
@@ -46,32 +47,63 @@ def _init(mmr_by_game: dict, keep: dict, choose: bool = True):
     _CTX.update(mmr=mmr_by_game, keep=keep, choose=choose)
 
 
+PACK = "<pack>"                                       # 任务的“包内名字”是这个 = 这个 zip 本身就是一个复盘包
+
+
+def _is_pack_job(job) -> bool:
+    return job[1] == PACK or (job[1].endswith(".zip") and not job[1].endswith(".xml.zip"))
+
+
+def _records(job):
+    """一局 → (插件格式记录, 这一局的分数或 None)。"""
+    if _is_pack_job(job):
+        from tg.review_pack import iter_packs, parse_pack
+        for _, z in iter_packs(job[0], "" if job[1] == PACK else job[1]):
+            recs, info = parse_pack(z)
+            return recs, info.get("mmr") or None
+        raise ValueError("不是复盘包")
+    from tg.hsreplay import parse
+    return parse(_xml(job)), None
+
+
 def _jobs(src: Path) -> list[tuple[str, str]]:
     """找回放（包括子文件夹）：单局的 *.xml.zip / *.xml（HSReplay 格式，Firestone 分享包解压后的 rawxml-sanitized/ 里就是这种），
     和分享包原样的 *part*.zip（里面一堆 *.xml.zip，不用解压）。几种可以混着放；同一局（文件名相同）只算一次。
     返回 [(文件, 包内名字或空)]。"""
     import zipfile
+    import io
     out, seen = [], set()
 
     def add(path: str, inner: str = ""):
-        gid = Path(inner or path).name.split(".")[0]
+        gid = Path(path if inner in ("", PACK) else inner).name.split(".")[0]
         if gid not in seen:
             seen.add(gid)
             out.append((path, inner))
     for f in sorted(glob.glob(str(src / "**" / "*.xml.zip"), recursive=True)) + \
             sorted(glob.glob(str(src / "**" / "*.xml"), recursive=True)):
         add(f)
+    from tg.review_pack import is_pack
     for part in sorted(glob.glob(str(src / "**" / "*.zip"), recursive=True)):
         if part.endswith(".xml.zip"):
             continue
         try:
             with zipfile.ZipFile(part) as z:
+                if is_pack(z):                          # 单个 HDT 复盘包
+                    add(part, PACK)
+                    continue
                 for n in sorted(z.namelist()):
                     if n.endswith(".xml.zip") or n.endswith(".xml"):
                         add(part, n)
+                    elif n.endswith(".zip"):              # 外层 zip 里套着的复盘包
+                        try:
+                            with zipfile.ZipFile(io.BytesIO(z.read(n))) as zz:
+                                if is_pack(zz):
+                                    add(part, n)
+                        except zipfile.BadZipFile:
+                            pass
         except zipfile.BadZipFile:
             continue
-    return sorted(out, key=lambda x: Path(x[1] or x[0]).name)
+    return sorted(out, key=lambda x: Path(x[0] if x[1] in ("", PACK) else x[1]).name)
 
 
 def _xml(job: tuple[str, str]) -> bytes:
@@ -120,15 +152,16 @@ def convert_game(args):
     → 每个动作前的局面在 TavernGym 里重建 → 观察 + 动作编号（不合法的跳过）。每回合最后加一条“结束回合”。"""
     job, split = args
     from tg.bridge import build_game
-    from tg.hsreplay import parse
     from tg.logs import load_records, segment
     from tg.replay import translate
     from tg.actions import A_END
-    gid = Path(job[1] or job[0]).name.split(".")[0]
+    gid = Path(job[0] if job[1] in ("", PACK) else job[1]).name.split(".")[0]
     rng = np.random.default_rng(int(hashlib.md5(gid.encode()).hexdigest()[:8], 16))
     st = Counter()
     try:
-        states = load_records(parse(_xml(job)), gid)
+        recs, mmr = _records(job)
+        st["复盘包" if _is_pack_job(job) else "回放"] += 1
+        states = load_records(recs, gid)
         acts = segment(states)
     except Exception as ex:                           # noqa: BLE001
         st[f"解析失败 {type(ex).__name__}"] += 1
@@ -181,7 +214,7 @@ def convert_game(args):
     n = len(K)
     out = {"f": np.stack(F), "c": np.stack(Cc).astype(np.int32), "m": np.packbits(np.stack(M), axis=1),
            "cand": np.stack(CA), "kind": np.asarray(K, np.int8), "turn": np.asarray(Tn, np.int16),
-           "split": np.full(n, split, np.int8), "mmr": np.full(n, _CTX["mmr"].get(gid, 0), np.int32),
+           "split": np.full(n, split, np.int8), "mmr": np.full(n, mmr or _CTX["mmr"].get(gid, 0), np.int32),
            "n_actions": len(M[0]), "tiers": tiers, "gid": gid}
     return out, st
 
@@ -241,7 +274,7 @@ def main() -> int:
     t0 = time.time()
     stats, buf, nbuf, k, total = Counter(), [], 0, 0, 0
     tiers = {}
-    meta = {"source": "Firestone 6500+ 精彩对局回放（他人对局，已脱敏）", "games": len(files),
+    meta = {"source": "高分对局：Firestone 6500+ 精彩对局回放（他人对局，已脱敏）、HDT 复盘包", "games": len(files),
             "created": time.strftime("%Y-%m-%d %H:%M:%S"), "keep": keep}
     if a.workers > 1:
         from multiprocessing import Pool

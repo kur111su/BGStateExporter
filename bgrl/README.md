@@ -13,7 +13,7 @@
 | `shadow.bat` | 影子模式 http://localhost:8766/：模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮。换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `goldflow.bat` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` | 屏幕；`runs\v3\goldflow.json` |
 | `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）、挑卡（关键卡 / 经济卡 / 引擎实测关键卡）和每回合的阵容强度（场面打同期高分阵容的胜率，前四 / 后四 / 高分阵容自己） | 屏幕；`runs\v3\comptest.json` |
-| `prodemos.bat` | 从 Firestone 6500+ 分享包（默认 `data\firestone` 里的 4 个 zip，不用解压）生成高分决策样本，约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） | `runs\pro_demos\`（只在本机） |
+| `prodemos.bat` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） | `runs\pro_demos\`（只在本机） |
 | `teacher.bat` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从头学，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 15–25 分钟） | `runs\teacher.pt`（只在本机） |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |
 | `tavernbench.bat` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 | `reports\tavernbench\<模型>\report.txt` |
@@ -39,7 +39,7 @@
 | `goldflow` | `tools/goldflow.py` | 金币流向和阵容测试（`--boosted` 对高分阵容；`--pro data\firestone` 从回放重算高手那一列写进 `rl/pro_profile.json`） |
 | `demos` | `tools/make_demos.py` | 你的对局记录 → 示范数据 `runs\demos.npz`（每步操作前的局面 + 你的动作，每回合末尾加“结束回合”；每 5 局留 1 局验证）。`--if-stale` 有新对局才重建 |
 | `prolib` | `tools/pro_library.py` | Firestone 分享包的 `core/games.jsonl` → 高分阵容库 `runs\pro_boards.json`（只在本机）和汇总曲线 `rl/pro_profile.json` |
-| `prodemos` | `tools/make_pro_demos.py` | Firestone 回放 → 6500+ 决策样本 `runs\pro_demos\`。回放 XML 由 `tg/hsreplay.py` 读成插件格式记录，之后和你的对局走同一条路（切动作 → TavernGym 重建 → 观察 + 动作编号） |
+| `prodemos` | `tools/make_pro_demos.py` | Firestone 回放 → 6500+ 决策样本 `runs\pro_demos\`。回放 XML 由 `tg/hsreplay.py`、HDT 复盘包由 `tg/review_pack.py`（每步操作前后的局面；没有排行榜 / 对手阵容 / 英雄技能实体，升本费用按那一步的金币差）读成插件格式记录，之后和你的对局走同一条路（切动作 → TavernGym 重建 → 观察 + 动作编号） |
 | `nativedemos` | `tools/native_demos.py` | 已经是 TavernGym 观察格式的别人对局（例如万三的 `human_native_v0.npz`）→ 决策样本 `runs\h13_demos\`、对手阵容库 `runs\h13_boards.json`、汇总 `rl/h13_profile.json`（升本节奏、最终阵容、常见搭配，只有统计数字） |
 | `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡、高手的买法比例 `rl/card_value.json`（只有统计数字） |
 | `simcards` | `tools/simcards.py` | 引擎实测的卡牌价值和配合：高分阵容库里的场面在 TavernGym 里拿掉一张 / 两张卡再打同期高分阵容，看胜率掉多少 → `rl/sim_value.json`（关键卡、好搭配，只有统计数字；约 2–3 分钟） |
