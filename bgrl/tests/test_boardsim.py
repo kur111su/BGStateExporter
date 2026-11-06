@@ -498,11 +498,14 @@ def check_repay():
     t.iter = 103
     assert abs(ShapingMixin._shape_close(t, 0) + full) < 1e-9
     assert abs(ShapingMixin._shape_close(t, 1) + 0.4 * 2.0) < 1e-9             # 1 号座位：目标阵容 / 阵容强度不是这一局的
+    cfg.shape_repay_keys = "target,engine"                                     # 阵容强度不扣
+    assert abs(ShapingMixin._shape_close(t, 0) + (0.6 * 0.5 + 0.4 * 1.0)) < 1e-9
+    cfg.shape_repay_keys = "target,engine,combat"
     t.iter = 50                                                                 # 退回到爬坡开始之前：不扣，不是反着加
     assert ShapingMixin._shape_close(t, 0) == 0.0
     cfg.shape_repay = 0.0
     t.iter = 200
-    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 5     # 不扣时照样记局末还挂着多少
+    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 6     # 不扣时照样记局末还挂着多少
     return round(full, 3)
 
 
