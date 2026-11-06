@@ -70,7 +70,7 @@ def main() -> int:
     from rl.model import COMP_F, K_MAX
     from tg.catalog import base_of_index, card_id, n_cards
     from tg.obs import C_BOARD, F_LOBBY, lobby_bits
-    old = {k: v for k, v in ref_m.state_dict().items() if not k.startswith("comp_")}
+    old = {k: v for k, v in ref_m.state_dict().items() if not k.startswith(("comp_", "syn_"))}
     m2 = build_model(64, 2, 2, 32).eval()
     m2.load_state_dict(old)
     with torch.no_grad():
@@ -110,8 +110,9 @@ def main() -> int:
     from rl.ppo import grow_opt_state
     opt_new = torch.optim.Adam(m2.parameters(), lr=1e-4)
     names = [k for k, _ in m2.named_parameters()]
-    assert names[-4:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias"], names[-4:]
-    opt_old = torch.optim.Adam([p_ for k, p_ in m2.named_parameters() if not k.startswith("comp_")], lr=1e-4)
+    assert names[-6:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias",
+                          "syn_proj.weight", "syn_proj.bias"], names[-6:]
+    opt_old = torch.optim.Adam([p_ for k, p_ in m2.named_parameters() if not k.startswith(("comp_", "syn_"))], lr=1e-4)
     m2.zero_grad()
     m2(f, c, mk)[1].sum().backward()
     opt_old.step()
@@ -120,7 +121,47 @@ def main() -> int:
     assert len(opt_new.state) == len(od["state"]) and torch.equal(opt_new.state[next(m2.parameters())]["exp_avg"],
                                                                    od["state"][0]["exp_avg"])
     opt_new.step()                                     # 新参数第一次更新时自己建 Adam 状态
-    print(f"体系感知：旧检查点兼容（模型和优化器），阵容得分和 rl/comp 一致，{len(comps)} 套阵容")
+    # 联动感知（第 15313 轮起）：每张卡和体系 / 引擎 / 三连 / 经济的关系
+    from rl.comp import ENGINE_RULES, is_econ
+    from rl.model import SYN_F
+    from tg.catalog import catalog
+    from tg.obs import C_HAND, C_SHOP
+    det = catalog()
+    brann = "BG_LOE_077"
+    bc = next(x for x in sorted(idx) if x != brann and det.get(x, {}).get("kind") == "minion" and det[x].get("in_pool")
+              and "Battlecry" in str(det[x].get("text")) and x == base_of_index(idx[x]))
+    econ = next(x for x in sorted(idx) if is_econ(det.get(x) or {}) and det[x].get("kind") == "minion" and det[x].get("in_pool"))
+    core = sorted(apm["core"])
+    c2 = torch.zeros_like(c[:1])
+    c2[0, C_BOARD:C_BOARD + 3] = torch.tensor([idx[core[0]], idx[core[1]], idx[brann]])
+    c2[0, C_HAND:C_HAND + 2] = torch.tensor([idx[bc], idx[core[0]]])
+    c2[0, C_SHOP:C_SHOP + 2] = torch.tensor([idx[econ], idx[core[1]]])
+    with torch.no_grad():
+        _, syn = ref_m.comp.sense(soft_log(ff[:1]), c2)
+    assert syn.shape[-1] == SYN_F and brann in ENGINE_RULES
+    nb, nh = C_HAND - C_BOARD, C_SHOP - C_HAND
+    b0, b2, h0, h1, s0, s1 = syn[0, 0], syn[0, 2], syn[0, nb], syn[0, nb + 1], syn[0, nb + nh], syn[0, nb + nh + 1]
+    assert b0[0] == 1 and s1[0] == 1 and b2[0] == 0, "机械 APM 的核心卡（场上 / 酒馆）应该标成主选核心卡"
+    assert h0[6] == 1, "手里的战吼随从是场上布莱恩的燃料"
+    from rl.comp import engine_score, engine_tables
+    etab = engine_tables([base_of_index(i) if i else "" for i in range(n_cards())])
+    cn = c2[0].numpy()
+    phi, _ = engine_score(cn[C_BOARD:C_HAND], np.concatenate([cn[C_BOARD:C_HAND], cn[C_HAND:C_SHOP]]), etab)
+    assert abs(float(b2[7]) - min(1.0, phi)) < 1e-6 and phi > 0, (float(b2[7]), phi)   # 布莱恩：燃料几成
+    assert h1[8] == 0.5 and b0[8] == 0.5 and s1[8] == 0.5, "同名卡已有张数（三连进度）"
+    assert s0[9] == 1, "倒转经济的卡"
+    assert float(syn[0, nb + 2:nb + nh].abs().sum()) == 0, "空格子全是 0"
+    torch.nn.init.normal_(ref_m.syn_proj.weight, std=0.05)
+    with torch.no_grad():
+        ref_m.pack = False
+        l6, _, _ = ref_m(ff[:1], c2, mk[:1], slow=True)
+        ref_m.pack = True
+        l7, _, _ = ref_m(ff[:1], c2, mk[:1])
+    lg1 = mk[:1].bool()
+    assert torch.allclose(l6[lg1], l7[lg1], atol=2e-4, rtol=1e-4), "联动感知：优化前向和原写法不一致"
+    torch.nn.init.zeros_(ref_m.syn_proj.weight)
+    print(f"体系感知：旧检查点兼容（模型和优化器），阵容得分和 rl/comp 一致，{len(comps)} 套阵容；联动感知标记正确"
+          f"（燃料 {det[bc].get('name_zh')}、经济 {det[econ].get('name_zh')}）")
 
     # 训练数据按压缩后的半精度存：极大的数值也不会变成 inf
     from rl.ppo import Policy

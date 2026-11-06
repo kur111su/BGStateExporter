@@ -113,6 +113,7 @@ class CardEmbed(nn.Module):
 
 
 K_MAX, COMP_F = 32, 10          # 和 rl/comp.py 一样（这里不 import rl/comp：竞技场按文件路径单独导入本文件）
+E_MAX, SYN_F = 16, 10           # 引擎格数（rl/comp.E_MAX）；每张卡的联动标记个数（SynergySense）
 
 
 class CompSense(nn.Module):
@@ -133,12 +134,28 @@ class CompSense(nn.Module):
             self.register_buffer(k, t(k, torch.bool), persistent=False)
         for k in ("base_key", "lobby_idx"):
             self.register_buffer(k, t(k, torch.long), persistent=False)
+        n = self.core_c.shape[0]
+        for k, shape in (("eng_c", (n, E_MAX)), ("fuel_c", (n, E_MAX)), ("econ_c", (n,))):   # 旧的 comp.npz 没有：全是 0
+            v = t(k, torch.bool) if k in tables else torch.zeros(shape, dtype=torch.bool)
+            self.register_buffer(k, v, persistent=False)
 
     def forward(self, x_in: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         """x_in：soft_log 过的浮点；c：卡牌编号。返回 [B, K_MAX, COMP_F]。"""
+        return self.sense(x_in, c)[0]
+
+    def sense(self, x_in: torch.Tensor, c: torch.Tensor):
+        """返回 (每套阵容的进度 [B, K_MAX, COMP_F], 场上 / 手里 / 酒馆 / 发现里每张卡的联动标记 [B, NE, SYN_F])。
+
+        联动标记（SynergySense，第 15313 轮起）——每张卡和我现在的体系是什么关系：
+          0 主选的核心卡  1 主选的配套卡  2 备选的核心卡  3 备选的配套卡  4 主选种族阵容的本族随从
+          5 主选 / 备选里“留着用”的卡（卖了亏）  6 我手上（场上 + 手里）某个引擎的燃料
+          7 引擎卡：它的燃料我已经有几成（场上 + 手里燃料张数 / 3，最多 1）
+          8 同名卡我已经有几张（三连进度：0 / 0.5 / 1）  9 倒转经济的卡（发金币 / 铸币、便宜刷新、卖得贵）"""
         B = c.shape[0]
+        cs = self.cs
+        ne = cs["choice"][1] - cs["board"][0]
         if not self.on:
-            return torch.zeros(B, K_MAX, COMP_F, device=c.device)
+            return (torch.zeros(B, K_MAX, COMP_F, device=c.device), torch.zeros(B, ne, SYN_F, device=c.device))
         cs = self.cs
         nc = self.core_c.shape[0]
         cl = c.clamp(0, nc - 1)
@@ -168,8 +185,29 @@ class CompSense(nn.Module):
         backup = ((rank == 2) | (rank == 3)).float()
         shop_core = self.core_c[shop].any(1).float()
         shop_supp = self.supp_c[shop].any(1).float()
-        return torch.stack([reach, frac, frac * frac, sup, supf, score, main, backup, shop_core, shop_supp], -1) * \
+        feats = torch.stack([reach, frac, frac * frac, sup, supf, score, main, backup, shop_core, shop_supp], -1) * \
             self.valid.float()[None, :, None]
+        # 每张卡的联动标记
+        ent = cl[:, cs["board"][0]:cs["choice"][1]]                         # [B, NE]：场上、手里、酒馆、发现
+        mb, bb = main.bool()[:, None, :], backup.bool()[:, None, :]
+        core, supp = self.core_c[ent], self.supp_c[ent]                    # [B, NE, K]
+        bk_e, bk_o = self.base_key[ent], self.base_key[own]
+        keep = self.ks_b[bk_e] > 0
+        eng_own = self.eng_c[own].any(1)                                   # [B, E]：我手上有的引擎
+        nf = self.fuel_c[own].float().sum(1)                               # [B, E]：每个引擎的燃料张数
+        same = ((bk_e[:, :, None] == bk_o[:, None, :]) & (bk_o[:, None, :] > 0)).float().sum(-1)
+        n_own = own.shape[1]
+        same = same - (torch.arange(ne, device=c.device) < n_own).float()[None, :] * (ent > 0).float()   # 自己不算
+        syn = torch.stack([
+            (core & mb).any(-1), (supp & mb).any(-1), (core & bb).any(-1), (supp & bb).any(-1),
+            (self.trib_c[ent] & mb & self.tribal[None, None, :]).any(-1),
+            (keep & (mb | bb)).any(-1) | (core & (mb | bb)).any(-1),
+            (self.fuel_c[ent] & eng_own[:, None, :]).any(-1),
+        ], -1).float()
+        eng_lv = (self.eng_c[ent].float() * (nf / 3.0).clamp(max=1.0)[:, None, :]).amax(-1)
+        syn = torch.cat([syn, eng_lv.unsqueeze(-1), (same / 2).clamp(0, 1).unsqueeze(-1),
+                         self.econ_c[ent].float().unsqueeze(-1)], -1) * (ent > 0).float().unsqueeze(-1)
+        return feats, syn
 
 
 class EntityTransformer(nn.Module):
@@ -218,6 +256,10 @@ class EntityTransformer(nn.Module):
         nn.init.zeros_(self.comp_proj.weight)
         nn.init.zeros_(self.comp_proj.bias)
         self.comp_head = nn.Linear(d, K_MAX + 1)
+        # 联动感知（第 15313 轮起）：每张卡和体系 / 引擎 / 三连 / 经济的关系 → 加到场上、手里、酒馆、发现的词上（0 起步）
+        self.syn_proj = nn.Linear(SYN_F, d)
+        nn.init.zeros_(self.syn_proj.weight)
+        nn.init.zeros_(self.syn_proj.bias)
         self.last_comp_logits = None
         self._register_load_state_dict_pre_hook(self._fill_new_keys, with_module=False)
         # 每个词的类型和槽位序号（不是参数，不进检查点）
@@ -228,14 +270,20 @@ class EntityTransformer(nn.Module):
         self.pack = True          # 只把有内容的词送进 Transformer（结果不变，省约一半计算）
 
     def _fill_new_keys(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-        """旧检查点（第 15300 轮以前）没有体系感知的参数：用现在的初始值补上（输入层是 0，行为和原来一样）。"""
-        for name in ("comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias"):
+        """旧检查点（第 15300 轮以前没有体系感知、第 15313 轮以前没有联动感知）：用现在的初始值补上（输入层是 0，行为和原来一样）。"""
+        for name in ("comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias", "syn_proj.weight",
+                     "syn_proj.bias"):
             if prefix + name not in state_dict:
                 mod, attr = name.split(".")
                 state_dict[prefix + name] = getattr(getattr(self, mod), attr).detach().clone()
 
     def comp_input(self, x_in: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         return self.comp_proj(self.comp(x_in, c).reshape(c.shape[0], -1)).unsqueeze(1)
+
+    def sense_input(self, x_in: torch.Tensor, c: torch.Tensor):
+        """(加到全局词上的体系感知 [B,1,d], 加到场上 / 手里 / 酒馆 / 发现词上的联动感知 [B,NE,d])。"""
+        feats, syn = self.comp.sense(x_in, c)
+        return self.comp_proj(feats.reshape(c.shape[0], -1)).unsqueeze(1), self.syn_proj(syn)
 
     # ---------------- 编码 ----------------
 
@@ -248,17 +296,19 @@ class EntityTransformer(nn.Module):
         D = self.card_to_d(E)                                  # [B,124,d]
         bias = self.card_to_d.bias
         sl = lambda T, a, b=None: T[:, cs[a][0]:cs[b or a][1]]   # noqa: E731
-        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + self.comp_input(f, c).to(D.dtype)
+        gi, si = self.sense_input(f, c)
+        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + gi.to(D.dtype)
+        si = si.to(D.dtype)
         nq = cs["quests"][1] - cs["quests"][0]
         ns = cs["secrets"][1] - cs["secrets"][0]
         # 任务、奥秘：原来是先把卡嵌入加起来再过线性层，线性层的偏置只算一次
         q = sl(D, "quests").view(B, L.NQ, nq // L.NQ, d).sum(2) - (nq // L.NQ - 1) * bias
         sec = sl(D, "secrets").sum(1, keepdim=True) - (ns - 1) * bias
         bf = f[:, fs["board"][0]:fs["board"][1]].view(B, L.NB, L.MF)
-        board = self.f_minion(bf) + sl(D, "board")
+        board = self.f_minion(bf) + sl(D, "board") + si[:, :L.NB]
         n_it = L.NH + L.NS + L.NC
         items_f = f[:, fs["hand"][0]:fs["choice"][1]].view(B, n_it, L.IF)
-        items = self.f_item(items_f) + sl(D, "hand", "choice")
+        items = self.f_item(items_f) + sl(D, "hand", "choice") + si[:, L.NB:]
         of = f[:, fs["opp"][0]:fs["opp"][1]].view(B, L.NOPP, L.OPPF)
         obf = f[:, fs["oppboard"][0]:fs["oppboard"][1]].view(B, L.NOPP, L.NB, L.MF)
         obc = sl(E, "oppboard").view(B, L.NOPP, L.NB, -1)
@@ -291,7 +341,8 @@ class EntityTransformer(nn.Module):
             pres.append(p)
             types.append(t)
 
-        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + self.comp_input(f, c)
+        gi, si = self.sense_input(f, c)
+        g = self.f_global(f[:, fs["global"][0]:fs["global"][1]]).unsqueeze(1) + gi
         add(g, torch.ones(B, 1, dtype=torch.bool, device=dev), 0)
         hero = self.card_to_d(cardv("hero"))
         add(hero, c[:, cs["hero"][0]:cs["hero"][1]] > 0, 1)
@@ -306,10 +357,13 @@ class EntityTransformer(nn.Module):
         add(self.card_to_d(sec), (c[:, cs["secrets"][0]:cs["secrets"][1]] > 0).any(1, keepdim=True), 5)
         add(self.card_to_d(cardv("trinkets")), c[:, cs["trinkets"][0]:cs["trinkets"][1]] > 0, 6)
         bf = f[:, fs["board"][0]:fs["board"][1]].view(B, L.NB, L.MF)
-        add(self.f_minion(bf) + self.card_to_d(cardv("board")), bf[:, :, 0] > 0, 7)
+        add(self.f_minion(bf) + self.card_to_d(cardv("board")) + si[:, :L.NB], bf[:, :, 0] > 0, 7)
+        o = L.NB
         for name, t, n in (("hand", 8, L.NH), ("shop", 9, L.NS), ("choice", 10, L.NC)):
             it = f[:, fs[name][0]:fs[name][1]].view(B, n, L.IF)
-            add(self.f_item(it) + self.card_to_d(cardv(name)), (it[:, :, 0] > 0) | (c[:, cs[name][0]:cs[name][1]] > 0), t)
+            add(self.f_item(it) + self.card_to_d(cardv(name)) + si[:, o:o + n],
+                (it[:, :, 0] > 0) | (c[:, cs[name][0]:cs[name][1]] > 0), t)
+            o += n
         of = f[:, fs["opp"][0]:fs["opp"][1]].view(B, L.NOPP, L.OPPF)
         obf = f[:, fs["oppboard"][0]:fs["oppboard"][1]].view(B, L.NOPP, L.NB, L.MF)
         obc = self.card(c[:, cs["oppboard"][0]:cs["oppboard"][1]]).view(B, L.NOPP, L.NB, -1)

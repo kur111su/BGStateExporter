@@ -11,6 +11,7 @@ native_demos 生成万三画像都用这一份。卡牌 ID 都是去掉金色 _G
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from itertools import combinations
 from pathlib import Path
@@ -429,9 +430,26 @@ def model_tables(comps: list[dict] | None = None, ids: list[str] | None = None) 
             core_c[i, j] = cid in c["core"]
             supp_c[i, j] = cid in c.get("support", ())
             trib_c[i, j] = bool(c.get("tribes")) and bool(rs & c["tribes"] or "ALL" in rs)
+    et = engine_tables(ids)
+    eng_c = np.zeros((n, E_MAX), bool)
+    fuel_c = np.zeros((n, E_MAX), bool)
+    ne = min(E_MAX, et["engine"].shape[1])
+    eng_c[:, :ne], fuel_c[:, :ne] = et["engine"][:, :ne], et["fuel"][:, :ne]
+    econ_c = np.array([bool(cid) and is_econ(det.get(cid) or {}) for cid in ids], bool)
     return {"base_key": base_key, "core_b": core_b, "ks_b": ks_b, "core_c": core_c, "supp_c": supp_c, "trib_c": trib_c,
             "need": need, "need_valid": need_valid, "w": w, "ncore": ncore, "nks": nks, "tribal": tribal, "valid": valid,
-            "lobby_idx": np.asarray(LOBBY_IDX, np.int64), "names": np.array([c["name"] for c in comps])}
+            "lobby_idx": np.asarray(LOBBY_IDX, np.int64), "names": np.array([c["name"] for c in comps]),
+            "eng_c": eng_c, "fuel_c": fuel_c, "econ_c": econ_c}
+
+
+E_MAX = 16          # 模型里引擎的格数（ENGINE_RULES 现在 10 个）
+# 倒转经济的卡（模型输入 SynergySense 的一项）：发金币 / 铸币、刷新便宜或不要钱、卖得更贵、不花金币买——按英文说明认
+_ECON = re.compile(r"\bgain (?:\d+|an?|one|two) (?:extra )?Gold\b|Gold next turn|Tavern Coin|\bCoins?\b|free Refresh"
+                   r"|Refresh(?:es)? costs?|Refreshes? each turn cost|sells? for|instead of Gold|Coin Pouch", re.I)
+
+
+def is_econ(d: dict) -> bool:
+    return d.get("kind") in ("minion", "spell") and bool(_ECON.search(str(d.get("text") or "")))
 
 
 # ---------------- 引擎联动（engine_bonus）：引擎卡 + 它放大的“燃料”随从 ----------------
