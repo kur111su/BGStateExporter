@@ -131,11 +131,11 @@ def main() -> int:
     bc = next(x for x in sorted(idx) if x != brann and det.get(x, {}).get("kind") == "minion" and det[x].get("in_pool")
               and "Battlecry" in str(det[x].get("text")) and x == base_of_index(idx[x]))
     econ = next(x for x in sorted(idx) if is_econ(det.get(x) or {}) and det[x].get("kind") == "minion" and det[x].get("in_pool"))
-    core = sorted(apm["core"])
+    apm_core = sorted(apm["core"])
     c2 = torch.zeros_like(c[:1])
-    c2[0, C_BOARD:C_BOARD + 3] = torch.tensor([idx[core[0]], idx[core[1]], idx[brann]])
-    c2[0, C_HAND:C_HAND + 2] = torch.tensor([idx[bc], idx[core[0]]])
-    c2[0, C_SHOP:C_SHOP + 2] = torch.tensor([idx[econ], idx[core[1]]])
+    c2[0, C_BOARD:C_BOARD + 3] = torch.tensor([idx[apm_core[0]], idx[apm_core[1]], idx[brann]])
+    c2[0, C_HAND:C_HAND + 2] = torch.tensor([idx[bc], idx[apm_core[0]]])
+    c2[0, C_SHOP:C_SHOP + 2] = torch.tensor([idx[econ], idx[apm_core[1]]])
     with torch.no_grad():
         _, syn = ref_m.comp.sense(soft_log(ff[:1]), c2)
     assert syn.shape[-1] == SYN_F and brann in ENGINE_RULES
