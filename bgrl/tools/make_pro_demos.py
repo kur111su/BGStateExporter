@@ -12,7 +12,9 @@
 观察存成 soft_log 之后的 float16（和训练采样一样，模型用 compressed=True 读），分片写成 runs/pro_demos/part_XXX.npz。
 这些是别人的对局，生成的样本只在本机（runs/ 不进 Git）。
 
-用法：bg.py prodemos <分享包文件夹：解压后的，或者就是那 5 个 zip 所在的文件夹> [--workers N] [--limit N]
+用法：bg.py prodemos <回放文件夹> [--workers N] [--limit N]
+回放文件夹（默认 data\\firestone，包括子文件夹）里可以混着放：分享包原样的 part*.zip、单局的 *.xml.zip、*.xml（HSReplay 格式）。
+每次都从这个文件夹全部重新生成 runs/pro_demos/，所以新回放和旧的放在一起，不要只放新的。
 """
 from __future__ import annotations
 
@@ -45,20 +47,31 @@ def _init(mmr_by_game: dict, keep: dict, choose: bool = True):
 
 
 def _jobs(src: Path) -> list[tuple[str, str]]:
-    """找回放：目录里的 rawxml-sanitized/*.xml.zip、*.xml.zip，或者分享包原样的 *part*.zip（不用解压）。
+    """找回放（包括子文件夹）：单局的 *.xml.zip / *.xml（HSReplay 格式，Firestone 分享包解压后的 rawxml-sanitized/ 里就是这种），
+    和分享包原样的 *part*.zip（里面一堆 *.xml.zip，不用解压）。几种可以混着放；同一局（文件名相同）只算一次。
     返回 [(文件, 包内名字或空)]。"""
     import zipfile
-    files = sorted(glob.glob(str(src / "rawxml-sanitized" / "*.xml.zip"))) or sorted(glob.glob(str(src / "*.xml.zip")))
-    if files:
-        return [(f, "") for f in files]
-    out = []
-    for part in sorted(glob.glob(str(src / "*.zip"))):
+    out, seen = [], set()
+
+    def add(path: str, inner: str = ""):
+        gid = Path(inner or path).name.split(".")[0]
+        if gid not in seen:
+            seen.add(gid)
+            out.append((path, inner))
+    for f in sorted(glob.glob(str(src / "**" / "*.xml.zip"), recursive=True)) + \
+            sorted(glob.glob(str(src / "**" / "*.xml"), recursive=True)):
+        add(f)
+    for part in sorted(glob.glob(str(src / "**" / "*.zip"), recursive=True)):
+        if part.endswith(".xml.zip"):
+            continue
         try:
             with zipfile.ZipFile(part) as z:
-                out += [(part, n) for n in sorted(z.namelist()) if n.endswith(".xml.zip")]
+                for n in sorted(z.namelist()):
+                    if n.endswith(".xml.zip") or n.endswith(".xml"):
+                        add(part, n)
         except zipfile.BadZipFile:
             continue
-    return out
+    return sorted(out, key=lambda x: Path(x[1] or x[0]).name)
 
 
 def _xml(job: tuple[str, str]) -> bytes:
@@ -70,6 +83,8 @@ def _xml(job: tuple[str, str]) -> bytes:
         return read_xml(path)
     with zipfile.ZipFile(path) as z:
         data = z.read(inner)
+    if not inner.endswith(".zip"):
+        return data
     with zipfile.ZipFile(io.BytesIO(data)) as z2:
         return z2.read(next(n for n in z2.namelist() if n.endswith(".xml")))
 
