@@ -579,6 +579,31 @@ def check_ent_warmup():
     return lrs
 
 
+def check_seed_cut():
+    """换场面切断 GAE（Rollout.cut）：换之前最后一步用自己的价值自举、不吃换场面的价值跳变；换之前的阵容标签是 -1。"""
+    from rl.ppo import Rollout
+    ro = Rollout(2)
+    z = lambda k: np.zeros((1, k), np.float32)  # noqa: E731
+    vs = [0.1, 0.2, 0.9, 0.95]                  # 第 3 步换了场面：价值从 0.2 跳到 0.9
+    for i, v in enumerate(vs):
+        if i == 2:
+            ro.cut(0)
+        ro.add([0], z(4), np.zeros((1, 3), np.int64), np.ones((1, 8), bool), np.array([1]), np.array([0.0]), np.array([v]))
+    ro.reward(0, 1.0, True, 1, comp=5)
+    b = ro.collect(1.0, 1.0, None)
+    adv = b["adv"]
+    assert abs(adv[1]) < 1e-6, adv                                 # 切断：0 + 0.2 - 0.2
+    assert abs(adv[0] - (0.2 - 0.1)) < 1e-6, adv                   # 换之前只到切断处
+    assert abs(adv[2] - (1.0 - 0.9)) < 1e-6 and abs(adv[3] - (1.0 - 0.95)) < 1e-6, adv
+    assert list(b["comp"]) == [-1, -1, 5, 5], b["comp"]
+    ro2 = Rollout(1)                                               # 不切：跳变算在换之前那一步
+    for v in vs:
+        ro2.add([0], z(4), np.zeros((1, 3), np.int64), np.ones((1, 8), bool), np.array([1]), np.array([0.0]), np.array([v]))
+    ro2.reward(0, 1.0, True, 1, comp=5)
+    assert abs(ro2.collect(1.0, 1.0, None)["adv"][1] - 0.8) < 1e-6
+    return adv
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -594,6 +619,7 @@ def main() -> int:
     check_repay()
     check_guard()
     check_ent_warmup()
+    check_seed_cut()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

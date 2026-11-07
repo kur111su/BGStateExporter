@@ -350,12 +350,24 @@ class Rollout:
         self.comp: dict[tuple, int] = {}               # 局末成了哪一套（体系感知辅助头的标签）
         self.reset()
 
+    def cut(self, slot: int):
+        """成型阵容课程换场面之前调用：在这个座位最后一个决策后面切断 GAE。
+        不切的话，换场面带来的价值跳变（课程局平均好将近 1 名）全算在换之前最后一步（上一回合的结束回合）头上——
+        等于每回合早点结束回合、钱不花完也有奖励。切断后那一步用自己的价值自举（不换场面时下一步的价值≈这一步的），
+        换之前那几步的阵容标签也不要（局末的阵容是换来的，不是它们做出来的）。"""
+        i = int(self.last[slot])
+        if i >= 0:
+            self.cuts.add(i)
+            self.seed_cut[(int(slot), int(self.ep[slot]))] = i
+
     def reset(self):
         self.parts = defaultdict(list)
         self.r: list[float] = []
         self.done: list[bool] = []
         self.n = 0
         self.last = np.full(self.n_slots, -1, dtype=np.int64)
+        self.cuts: set[int] = set()
+        self.seed_cut: dict[tuple, int] = {}
 
     def add(self, slots, f, c, m, a, logp, v, r0=None):
         k = len(slots)
@@ -401,6 +413,8 @@ class Rollout:
             same = nxt_i >= 0 and slot[nxt_i] == slot[i] and ep[nxt_i] == ep[i]
             if done[i]:
                 nv, last = 0.0, 0.0
+            elif i in self.cuts:                               # 换场面之前的最后一步：切断
+                nv, last = float(v[i]), 0.0
             elif same:
                 nv = v[nxt_i]
             else:                                              # 本轮这一段的最后一个决策
@@ -415,6 +429,8 @@ class Rollout:
         b["ret"] = adv + v
         b["place"] = np.asarray([self.place.get((int(s), int(e)), 0) for s, e in zip(slot, ep)], dtype=np.int64)
         b["comp"] = np.asarray([self.comp.get((int(s), int(e)), -1) for s, e in zip(slot, ep)], dtype=np.int64)
+        for (s_, e_), i_ in self.seed_cut.items():          # 换场面之前那几步不要阵容标签
+            b["comp"][(slot == s_) & (ep == e_) & (np.arange(self.n) <= i_)] = -1
         self.place.clear()                 # 之后的决策只会属于还没结束的局，旧的名次用不到了
         self.comp.clear()
         self.reset()
@@ -664,6 +680,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                         if self.seeder.seed(env, self.obs[name]["features"]):
                             self.obs[name] = env.observe()
                             for g in self.seeder.seeded_slots:
+                                self.rollout.cut(off + g)        # GAE 在换场面处切断（见 Rollout.cut）
                                 self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
                                 self.tg_rebase.add(off + g)
                                 self.eg_rebase.add(off + g)
