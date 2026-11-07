@@ -92,6 +92,31 @@ def main() -> int:
     st2 = pb.take_stats()
     assert seen > 0 and st2["pro_injected"] > 0 and st2["pro_failed"] == 0, (seen, st2)
     print("pro boards OK", st2, "seen", seen)
+    # 后期全强度：前期强度 0（一个都不换），第 7 回合起至少 1.0
+    pb2 = ProBoardBooster(lib, frac=1.0, start_turn=5, seed=3, every=2)
+    pb2.strength = 0.0
+    assert pb2.strength_at(5) == 0.0 and pb2.strength_at(9) == 0.0
+    pb2.late_from, pb2.late_strength = 7, 1.0
+    assert pb2.strength_at(5) == 0.0 and pb2.strength_at(7) == 1.0 and pb2.strength_at(12) == 1.0
+    pb2.strength = 0.6
+    assert pb2.strength_at(5) == 0.6 and pb2.strength_at(8) == 1.0
+    pb2.strength = 0.0
+    env2 = taverngym.BatchEnv(8, seed=9, controlled=(0,), threads=1, config={"turn_action_caps": [14, 18, 22, 26, 30]})
+    early = late = 0
+    for _ in range(4000):
+        o = env2.observe()
+        t0 = np.rint(o["features"][:, 0] * 20).astype(int)
+        before = pb2.injected
+        pb2.boost(env2, o["features"])
+        if pb2.injected > before:
+            if (t0 < 7).all():
+                early += 1
+            late += int((t0 >= 7).any())
+        m, r = o["action_mask"], o["ready"]
+        acts = np.array([rng.choice(np.flatnonzero(mm)) if rr and mm.any() else 0 for mm, rr in zip(m, r)], dtype=np.int64)
+        env2.step(acts)
+    assert early == 0 and late > 0, (early, late)
+    print("pro boards late OK：前期不换、后期全换", pb2.take_stats())
     return 0
 
 

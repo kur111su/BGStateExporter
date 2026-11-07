@@ -113,6 +113,12 @@ class Config:
     boost_start: float = 0.4       # 自适应的起点（接着旧检查点练、检查点里没有记录时也用它）
     boost_target_place: float = 3.75   # 加强局的目标平均名次（8 人局随便打 = 4.5）
     boost_step: float = 0.02       # 每次调多少
+    # 后期全强度（只对 boost_kind pro）：第 boost_late_from 回合起每个机器人座位被换成高分阵容的概率至少 boost_late_strength，
+    # 前期照旧按自适应的强度。为什么：自适应把强度压在 0.6–0.7（加强局名次对着 3.75 调），后期一半机器人还是弱场面，
+    # 前四名靠中期节奏阵容就够了，不需要能成长的阵容；考试是全强度，第 12 / 13 / 14 回合场面强度 0.49 / 0.39 / 0.28
+    # （高手 0.67 / 0.60 / 0.68），名次就丢在这里。0 = 不分前后期
+    boost_late_from: int = 0
+    boost_late_strength: float = 1.0
     # 加强方式：scale = 放大机器人场面攻防（只是身材变大）；pro = 换成同一回合 6500+ 高分对局的真实阵容
     # （tools/pro_library.py 生成 runs/pro_boards.json，带高本随从和它们的效果）。pro 时 strength = 每个机器人被换的概率
     boost_kind: str = "scale"
@@ -451,6 +457,9 @@ class Trainer(ShapingMixin, ImitationMixin):
             off += e.n_slots
         self.n_slots = off
         self.booster = self._make_booster(cfg.boost_frac, cfg.seed) if cfg.boost_frac > 0 and cfg.games_bot else None
+        if self.booster is not None and hasattr(self.booster, "late_from") and cfg.boost_late_from > 0:
+            self.booster.late_from, self.booster.late_strength = int(cfg.boost_late_from), float(cfg.boost_late_strength)
+            print(f"加强局后期全强度：第 {cfg.boost_late_from} 回合起机器人换成高分阵容的概率至少 {cfg.boost_late_strength:.0%}", flush=True)
         self.t_boost = 0.0
         self.adapt = (AdaptiveStrength(start=cfg.boost_start, target=cfg.boost_target_place, step=cfg.boost_step)
                       if self.booster is not None and cfg.boost_adapt else None)
