@@ -255,6 +255,7 @@ def main() -> int:
         assert out.get("guard_fix"), out
         assert all(torch.equal(a, b) for a, b in zip(ref, tr.model.parameters())), "没换回 best.pt"
         assert abs(tr.cfg.pro_coef - 0.07) < 1e-9 and tr.guard_st["n"] == 1
+        assert len(tr.ent_hist) == 0 and tr.drift_n == 0, "换回 best.pt 后变乱检查要从头记"
         tr.train(1)                                                    # 换回以后接着练（新优化器）
         tr.save()
         tr.guard_st, tr.cfg.pro_coef = tr._guard_new(), 0.1

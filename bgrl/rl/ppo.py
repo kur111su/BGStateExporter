@@ -964,6 +964,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.guard_st = self._guard_new()              # 考试守护从头记（best.pt 会被第一次凑满的平均覆盖）
         self._guard_apply()
         self._start_warmup()
+        self._reset_drift()
         self.log_f.write(json.dumps({"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "restored_from": str(path)}, ensure_ascii=False) + "\n")
         self.log_f.flush()
@@ -1037,6 +1038,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         g["evals"], g["bad"] = [], 0
         self._guard_apply()
         self._start_warmup()
+        self._reset_drift()
         self.mark_good()
         msg = (f"第 {self.iter} 轮考试最近 {cfg.guard_window} 次平均 {m:.2f}，比最好的 {g['best']:.2f}（第 {g['best_iter']} 轮）"
                f"差 {cfg.guard_margin} 以上连续 {cfg.guard_patience} 次：换回 best.pt，"
@@ -1048,6 +1050,12 @@ class Trainer(ShapingMixin, ImitationMixin):
         import copy
         self.good = (copy.deepcopy(self.model.state_dict()), copy.deepcopy(self.opt.state_dict()), self.iter)
         self.rollbacks = 0
+
+    def _reset_drift(self):
+        """换了一套参数（--restore、考试守护换回 best.pt）：变乱检查的“最近熵中位数”从头记。
+        不清的话拿新参数的熵去比旧参数的中位数：第 17000 轮换回 best.pt（第 15450 轮那版熵 1.6）后，
+        和之前的中位数 1.10 比一直算“变乱”，回退点又就是换回来的那版，连退 5 次训练停了。"""
+        self.ent_hist, self.drift_n = deque(maxlen=300), 0
 
     def _start_warmup(self):
         """优化器刚重新开始：学习率从 10% 爬到 cfg.lr（warmup_iters 轮）。"""
