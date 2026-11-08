@@ -709,6 +709,17 @@ def check_comptest_seeded():
     assert sd["seeded"] and set(sd["by_comp"]) == {"喝茶流"}, sd
     assert len(sd["seeded"]) + len(sd["missing"]) == len([p for p in info["places"].values() if p > 0])
     assert sd["by_comp"]["喝茶流"][0] == len(sd["seeded"])
+    seen = {"early": [], "late": []}                                    # --late-ckpt：第 late_from 回合起换另一个模型打
+
+    def early(f, c, m):
+        seen["early"] += list(np.rint(f[:, 0] * 20).astype(int))
+        return act(f, c, m)
+
+    def late(f, c, m):
+        seen["late"] += list(np.rint(f[:, 0] * 20).astype(int))
+        return act(f, c, m)
+    play_model("runs/_no_such/latest.pt", 4, 12, 1, True, "cpu", policy=(early, {"iter": 0}), late=(late, {}), late_from=5)
+    assert seen["late"] and min(seen["late"]) >= 5 and max(seen["early"]) <= 4, (set(seen["early"]), set(seen["late"]))
     return len(sd["seeded"])
 
 

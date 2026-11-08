@@ -13,7 +13,7 @@
 | `shadow.bat` | 影子模式 http://localhost:8766/：模型的本回合方案、预计名次，加上插件的本场胜率、对位胜率、站位优化按钮。换局时自动换上最新模型。`shadow.bat --ckpt 某个快照.pt` 用指定模型 | `reports\shadow\日期.jsonl` |
 | `goldflow.bat` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` | 屏幕；`runs\v3\goldflow.json` |
 | `comptest.bat` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）、挑卡（关键卡 / 经济卡 / 引擎实测关键卡）和每回合的阵容强度（场面打同期高分阵容的胜率，前四 / 后四 / 高分阵容自己） | 屏幕；`runs\v3\comptest.json` |
-| `comptest_seeded.bat` | 拿着成型阵容的阵容测试：和 `comptest.bat` 一样对全强度高分阵容打 256 局，但每局第 8 / 9 / 10 回合把模型的场面换成高手同一回合已经成型、本局凑得成的 S / A 阵容，之后模型自己打（`goldflow --boosted --seed-comps 8,9,10`）：按阵容列平均名次 / 吃鸡 / 前四，加上每回合阵容强度——模型拿到成型阵容以后能不能把场面养起来、吃鸡 | 屏幕；`runs\v3\comptest_seeded.json` |
+| `comptest_seeded.bat` | 拿着成型阵容的阵容测试：和 `comptest.bat` 一样对全强度高分阵容打 256 局，但每局第 8 / 9 / 10 回合把模型的场面换成高手同一回合已经成型、本局凑得成的 S / A 阵容，之后模型自己打（`goldflow --boosted --seed-comps 8,9,10`）：按阵容列平均名次 / 吃鸡 / 前四，加上每回合阵容强度——模型拿到成型阵容以后能不能把场面养起来、吃鸡。两个测试都能加 `--late-ckpt runs\teacher.pt`（`--late-from 10`）：第 10 回合起换老师模型打，看后期换成模仿高手的打法场面能不能养起来（结果文件名后加 `_late`） | 屏幕；`runs\v3\comptest_seeded.json` |
 | `prodemos.bat` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） | `runs\pro_demos\`（只在本机） |
 | `teacher.bat` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从头学，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 15–25 分钟） | `runs\teacher.pt`（只在本机） |
 | `replay.bat` | 回放检查：把你对局里的每一步放进 TavernGym 重做，按卡统计不一致。`replay.bat --last 5` 只看最近 5 局 | `reports\a5_replay.txt` / `.json` |

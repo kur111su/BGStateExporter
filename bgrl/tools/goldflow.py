@@ -126,11 +126,12 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
-               policy=None, seed_comps: str = "", seed_lib: dict | None = None):
+               policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
-    （rl/calibrate.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。"""
+    （rl/calibrate.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。
+    late：(act, info)，第 late_from 回合起换它来打（例如老师模型），看后期换个打法场面能不能养起来。"""
     import time as _t
     from taverngym import BatchEnv
     from tools.cardvalue import PickStats
@@ -205,7 +206,16 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         if ready:
             f = obs["features"][ready]
             m = obs["action_mask"][ready].astype(bool)
-            a = np.asarray(act(f, obs["cards"][ready], m))
+            if late is None:
+                a = np.asarray(act(f, obs["cards"][ready], m))
+            else:                                      # 第 late_from 回合起换另一个模型打
+                cr = obs["cards"][ready]
+                lo = np.rint(f[:, 0] * 20).astype(int) >= late_from
+                a = np.zeros(len(ready), dtype=np.int64)
+                if (~lo).any():
+                    a[~lo] = np.asarray(act(f[~lo], cr[~lo], m[~lo]))
+                if lo.any():
+                    a[lo] = np.asarray(late[0](f[lo], cr[lo], m[lo]))
             for k, i in enumerate(ready):
                 fi = f[k]
                 ci = obs["cards"][i]
@@ -699,6 +709,9 @@ def main() -> int:
     ap.add_argument("--pro", default="", help="高分回放目录：算高手那一列写进 rl/pro_profile.json（gold_flow）")
     ap.add_argument("--turns", type=int, default=9)
     ap.add_argument("--boosted", action="store_true", help="对手换成高分对局的真实阵容（和训练考试 eval_boost_place 一样）")
+    ap.add_argument("--late-ckpt", default="", help="第 --late-from 回合起换这个模型打（例如 runs\\teacher.pt：老师后期会不会养场面），"
+                                                    "结果文件名后面加 _late")
+    ap.add_argument("--late-from", type=int, default=10)
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（comptest_seeded.bat），结果写进 comptest_seeded.json")
     a = ap.parse_args()
@@ -716,7 +729,17 @@ def main() -> int:
     if not dev:
         import torch
         dev = "cuda" if torch.cuda.is_available() else "cpu"
-    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps)
+    late = None
+    if a.late_ckpt:
+        if not Path(a.late_ckpt).exists():
+            print(f"没有检查点 {a.late_ckpt}")
+            return 1
+        print(f"第 {a.late_from} 回合起换 {a.late_ckpt} 打 …", flush=True)
+        late = model_policy(a.late_ckpt, dev, not a.sample)
+    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
+                             late=late, late_from=a.late_from)
+    if late is not None:
+        print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
     pro = prof.get("gold_flow")
     show(model, pro, a.turns)
@@ -768,12 +791,15 @@ def main() -> int:
     strength = show_strength(info)
     out = Path(a.ckpt).resolve().parent / (("comptest_seeded.json" if a.seed_comps else "comptest.json") if a.boosted
                                            else "goldflow.json")
+    if late is not None:
+        out = out.with_name(out.stem + "_late.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
                                "places": [p for p in (info.get("places") or {}).values() if p > 0],
-                               "seeded": info.get("seeded")},
+                               "seeded": info.get("seeded"),
+                               "late": {"ckpt": a.late_ckpt, "from": a.late_from} if late is not None else None},
                               ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0
