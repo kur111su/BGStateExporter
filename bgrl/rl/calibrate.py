@@ -421,3 +421,140 @@ class CompSeeder:
         out = {"seeded": self.n_seeded, "seed_missing": self.n_missing}
         self.n_seeded, self.n_missing = 0, 0
         return out
+
+
+class StartSeeder:
+    """起步课程：一部分机器人局里，学习者（0 号座位）到了第 t 回合（turns 里随机一个）招募开始时，从本局凑得成的 S / A 阵容里
+    均匀抽一套（每套机会一样，不是按高分阵容库里的多少），把场上最弱的几个随从换成这套阵容“现在就买得到”的起步卡：
+    先是酒馆等级够得着的核心卡，再是配套卡，种族阵容再补本族随从（都按卡牌原始身材，不带高手的成长）。
+    之后学习者自己接着打：要不要沿着这套做下去、怎么从起步走到成型，全靠它自己。
+
+    为什么：成型阵容课程只给“做到一半 / 已经成型”的结果，模型学会了打成型的阵容（课程局平均 2.7–2.9 名），
+    但自己的局里成型的 S / A 只有 1%——从第 4 回合到第 8 回合那段起步、过渡它几乎没走过；只靠奖励逼它做阵容名次会掉
+    （第 16420–16850 轮）。老师模型（只模仿高手）单独打平均 7.98 名，从它开始练也不行。"""
+
+    def __init__(self, frac: float = 0.2, turns=(4, 5, 6), seed: int = 0, n_plant: int = 3):
+        from tg.catalog import catalog
+        from .comp import load_target_comps, reachable
+        self.frac, self.turns, self.n_plant = frac, tuple(int(t) for t in turns), int(n_plant)
+        self.rng = random.Random(seed + 7717)
+        det = catalog()
+        self.det = det
+        self.by_cid = {int(d["cid"]): k for k, d in det.items() if d.get("cid") is not None}
+        self.comps = [c for c in load_target_comps() if c["tier"] in "SA"]
+        pool = [k for k, d in det.items() if d.get("kind") == "minion" and d.get("in_pool") and not is_golden_id(k)]
+        self.tribe_pool = {}                                    # 种族 → 池子里的随从
+        for k in pool:
+            for r in self.det[k].get("races") or []:
+                self.tribe_pool.setdefault(r, []).append(k)
+        self._reachable = reachable
+        self.plan: dict[int, tuple[int, int | None]] = {}
+        self.n_seeded, self.n_missing = 0, 0
+        self.seeded_slots: list[int] = []
+        self.names: dict[str, int] = {}
+
+    def _minion_ok(self, cid: str, tier: int) -> bool:
+        d = self.det.get(cid) or {}
+        return d.get("kind") == "minion" and bool(d.get("in_pool")) and 0 < int(d.get("tier") or 99) <= tier
+
+    def starters(self, comp: dict, tier: int, lob) -> list[str]:
+        """这套阵容在酒馆等级 tier 时能放上场的起步卡（最多 n_plant 张，同一张不重复）：核心卡 → 配套卡 → 本族随从，
+        每组里等级高的优先（同级随机）。"""
+        out: list[str] = []
+        groups = [sorted(comp["core"]), sorted(comp.get("support") or [])]
+        tribes = sorted(comp.get("tribes") or [])
+        if tribes:
+            groups.append(sorted({k for r in tribes for k in self.tribe_pool.get(r, [])}))
+        for g in groups:
+            cand = [k for k in g if k not in out and self._minion_ok(k, tier)
+                    and (not lob or not (self.det[k].get("races") or []) or any(r in lob or r == "ALL" for r in self.det[k]["races"]))]
+            self.rng.shuffle(cand)
+            cand.sort(key=lambda k: -int(self.det[k].get("tier") or 0))
+            for k in cand:
+                if len(out) >= self.n_plant:
+                    return out
+                out.append(k)
+        return out
+
+    def _turn(self, g: int, episode: int):
+        cur = self.plan.get(g)
+        if cur is None or cur[0] != episode:
+            t = self.rng.choice(self.turns) if self.rng.random() < self.frac else None
+            cur = self.plan[g] = (episode, t)
+        return cur[1]
+
+    def seed(self, env, features: np.ndarray, episodes=None) -> bool:
+        from tg.obs import lobby
+        self.seeded_slots = []
+        if self.frac <= 0 or not self.comps:
+            return False
+        from taverngym import _core
+        turns = np.rint(features[:, 0] * 20).astype(int)
+        changed = False
+        for g in range(env.n_games):
+            t = int(turns[g])
+            if t not in self.turns:
+                continue
+            want = self._turn(g, int(episodes[g]) if episodes is not None else env.episode_index(g))
+            if want != t:
+                continue
+            self.plan[g] = (self.plan[g][0], -2)
+            lob = lobby(features[g])
+            s = _loads(env.save(g))
+            game = s["game"]
+            if game.get("turn") != t or str(game.get("phase")) != "Recruit":
+                continue
+            me = game["players"][0]
+            tier = int(me.get("tier") or 1)
+            ok = [c for c in self.comps if self._reachable(c, lob)]
+            self.rng.shuffle(ok)
+            comp, plant = None, []
+            for c in ok:                                         # 均匀抽一套；起步卡不到 2 张就换下一套
+                plant = self.starters(c, tier, lob)
+                if len(plant) >= 2:
+                    comp = c
+                    break
+            if comp is None:
+                self.n_missing += 1
+                continue
+            board = [m for m in me.get("board") or [] if not m.get("destroyed")]
+            keep_n = max(0, min(len(board) - min(len(board), len(plant)), 7 - len(plant)))   # 换掉最弱的几张，总数不超过 7
+            keep = sorted(board, key=lambda m: int(m.get("atk", 0)) + int(m.get("hp", 0)), reverse=True)[:keep_n]
+            keep = sorted(keep, key=lambda m: board.index(m))
+            try:
+                G = _core.Game.from_json(_dumps(game))
+                G.debug(_dumps({"cmd": "clear_zone", "p": 0, "zone": "board"}))
+                for m in keep:
+                    cid = self.by_cid.get(int(m.get("card", -1)))
+                    if not cid:
+                        continue
+                    G.debug(_dumps({"cmd": "add_minion", "p": 0, "zone": "board", "card": base_id(cid),
+                                    "golden": bool(m.get("golden")), "atk": max(0, int(m.get("atk", 0))),
+                                    "hp": max(1, int(m.get("hp", 1)))}))
+                for cid in plant:
+                    d = self.det[cid]
+                    G.debug(_dumps({"cmd": "add_minion", "p": 0, "zone": "board", "card": cid, "golden": False,
+                                    "atk": max(0, int(d.get("atk") or 0)), "hp": max(1, int(d.get("hp") or 1))}))
+            except BaseException as ex:                            # noqa: BLE001
+                if isinstance(ex, (KeyboardInterrupt, SystemExit)):
+                    raise
+                self.n_missing += 1
+                continue
+            s["game"] = _loads(G.state_json())
+            env.load(g, _dumps(s))
+            self.n_seeded += 1
+            self.plan[g] = (self.plan[g][0], -1)
+            self.seeded_slots.append(g)
+            self.names[comp["name"]] = self.names.get(comp["name"], 0) + 1
+            changed = True
+        return changed
+
+    def finish(self, g: int):
+        cur = self.plan.pop(g, None)
+        return cur is not None and cur[1] == -1
+
+    def take_stats(self) -> dict:
+        out = {"started": self.n_seeded, "start_missing": self.n_missing}
+        self.n_seeded, self.n_missing = 0, 0
+        return out
+

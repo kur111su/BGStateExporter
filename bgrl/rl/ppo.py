@@ -261,6 +261,13 @@ class Config:
     # 前 shape_repay_ramp 轮从 0 慢慢加到这个数（价值头跟着改）
     shape_repay: float = 0.0
     shape_repay_ramp: int = 300
+    # 起步课程（rl/calibrate.StartSeeder）：seed_start_frac 的机器人局里，学习者到了 seed_start_turns 里随机一个回合，
+    # 从本局凑得成的 S / A 阵容里均匀抽一套，把场上最弱的 seed_start_n 个随从换成这套现在就买得到的起步卡
+    # （核心卡 → 配套卡 → 本族随从，卡牌原始身材）。之后自己决定要不要沿着做下去。这些局单独记 place_started，
+    # 不算进 place_bot / 加强强度；GAE 在换卡处切断（Rollout.cut）。0 = 不用
+    seed_start_frac: float = 0.0
+    seed_start_turns: str = "4,5,6"
+    seed_start_n: int = 3
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -484,6 +491,14 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.boost_places: list[int] = []              # 这一轮打完的加强局名次（日志用）
         self.seeder = self._make_seeder() if cfg.seed_comp_frac > 0 and cfg.games_bot else None
         self.seed_places: list[int] = []
+        self.starter = None
+        if cfg.seed_start_frac > 0 and cfg.games_bot:
+            from .calibrate import StartSeeder
+            st_turns = [int(x) for x in str(cfg.seed_start_turns).split(",") if x.strip()]
+            self.starter = StartSeeder(cfg.seed_start_frac, st_turns, seed=cfg.seed, n_plant=cfg.seed_start_n)
+            print(f"起步课程：{cfg.seed_start_frac:.0%} 的机器人局在第 {cfg.seed_start_turns} 回合把学习者场上最弱的 "
+                  f"{cfg.seed_start_n} 个随从换成一套本局凑得成的 S / A 阵容的起步卡（{len(self.starter.comps)} 套均匀抽）", flush=True)
+        self.start_places: list[int] = []
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
         self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
@@ -547,6 +562,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             self.booster.last_turn.clear()
         if name == "bot" and self.seeder is not None:
             self.seeder.plan.clear()
+        if name == "bot" and self.starter is not None:
+            self.starter.plan.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -650,10 +667,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                                             self._final_comp(off + int(i)) if dones[i] else None)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
-                            if seeded:                     # 换过场面的局单独记，不算进 place_bot / 加强强度
-                                self.seed_places.append(int(info["placement"][i]))
+                            started = name == "bot" and self.starter is not None and self.starter.finish(int(i))
+                            if seeded or started:          # 换过场面 / 起步卡的局单独记，不算进 place_bot / 加强强度
+                                (self.seed_places if seeded else self.start_places).append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
+                                seeded = True
                             else:
                                 self.stats.append((name, int(info["placement"][i])))
                             self.finished += 1
@@ -675,11 +694,14 @@ class Trainer(ShapingMixin, ImitationMixin):
                         self._rebuild_env(ei, ex)
                         continue
                     self.t_boost += time.time() - tc
-                if name == "bot" and self.seeder is not None:     # 成型阵容课程：学习者换成已经成型的 S / A 场面
+                broke = False
+                for sd in ((self.starter, self.seeder) if name == "bot" else ()):
+                    if sd is None:                         # 起步课程（换几张起步卡）、成型阵容课程（换整个场面）
+                        continue
                     try:
-                        if self.seeder.seed(env, self.obs[name]["features"]):
+                        if sd.seed(env, self.obs[name]["features"]):
                             self.obs[name] = env.observe()
-                            for g in self.seeder.seeded_slots:
+                            for g in sd.seeded_slots:
                                 self.rollout.cut(off + g)        # GAE 在换场面处切断（见 Rollout.cut）
                                 self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
                                 self.tg_rebase.add(off + g)
@@ -688,7 +710,10 @@ class Trainer(ShapingMixin, ImitationMixin):
                         if not is_panic(ex):
                             raise
                         self._rebuild_env(ei, ex)
-                        continue
+                        broke = True
+                        break
+                if broke:
+                    continue
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
                     for g in np.unique(np.flatnonzero(dones) // k):
@@ -1361,6 +1386,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                     self.booster.strength = self.adapt.update()
                     rec["boost_place_avg"] = self.adapt.mean()
                 self.t_boost = 0.0
+            if self.starter is not None:
+                rec.update(self.starter.take_stats())
+                if self.start_places:
+                    rec["place_started"] = round(float(np.mean(self.start_places)), 3)
+                    rec["started_games"] = len(self.start_places)
+                self.start_places = []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
