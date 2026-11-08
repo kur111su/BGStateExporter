@@ -709,7 +709,9 @@ def main() -> int:
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
-                               "strength": strength}, ensure_ascii=False, indent=1), encoding="utf-8")
+                               "strength": strength,
+                               "places": [p for p in (info.get("places") or {}).values() if p > 0]},
+                              ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0
 

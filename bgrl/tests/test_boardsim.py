@@ -623,6 +623,44 @@ def check_place_reward():
     return tab
 
 
+def check_board():
+    """训练看板（tools/board.py）：合成一段日志（含回退、守护换回、重启），画出 dashboard.md 和图。"""
+    import json
+    import tempfile
+    from pathlib import Path
+    from tools.board import load, render
+    with tempfile.TemporaryDirectory() as d:
+        run = Path(d)
+        lines = []
+        for it in range(1, 121):
+            r = {"iter": it, "time": "2026-11-08 10:%02d:%02d" % (it // 60, it % 60), "decisions": 100, "ent": 1.1 + 0.001 * it,
+                 "ent_coef": 0.004, "lr": 1.5e-4, "kl": 0.004, "place_bot": 3.2, "place_boost": 3.7, "cs_late": 0.57,
+                 "unspent": 0.3, "dps": 1300}
+            if it % 10 == 0:
+                r.update(eval_boost_place=4.4, eval_boost_top1=0.02, eval_boost_top4=0.6, eval_boost_score=4.5,
+                         guard_avg=4.5, guard_ref=4.29, guard_scale=0.7)
+            if it == 60:
+                r["guard_fix"] = "第 60 轮考试……换回 best.pt"
+            lines.append(r)
+            if it == 40:
+                lines.append({"iter": 40, "time": "", "rollback": "策略连续 10 轮变乱：熵 1.9"})
+        lines += [dict(lines[80], iter=75), dict(lines[81], iter=76)]          # 重新启动：轮数往回跳
+        (run / "log.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
+        (run / "comptest.json").write_text(json.dumps({"iter": 100, "games": 4, "places": [1, 3, 5, 8]}), encoding="utf-8")
+        rows, ev = load(run)
+        kinds = [e["kind"] for e in ev]
+        assert "rollback" in kinds and "guard" in kinds and "restart" in kinds, kinds
+        assert rows[-1]["iter"] == 120 and len({r["iter"] for r in rows}) == len(rows)
+        p = render(run, 100)
+        md = p.read_text(encoding="utf-8")
+        assert "第 **120** 轮" in md and "吃鸡 25.0%" in md and "守护换回 best.pt" in md, md[:400]
+        svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
+        assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
+        render(run, 100)                                                       # 再画一次：旧图删掉，不越积越多
+        assert len(list((run / "board").glob("exam_*.svg"))) == 1
+    return len(svgs)
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -640,6 +678,7 @@ def main() -> int:
     check_ent_warmup()
     check_seed_cut()
     check_place_reward()
+    check_board()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

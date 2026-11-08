@@ -83,6 +83,8 @@ class Config:
     snapshot_every: int = 50       # 每多少轮存一个快照进对手库
     profile_games: int = 16        # 测快照画像用多少局
     save_every: int = 10
+    # 训练看板（tools/board.py）：每这么多轮在后台重画 runs/<run>/dashboard.md + board/*.svg（0 = 不画）
+    board_every: int = 0
     eval_every: int = 50
     eval_games: int = 128          # 64 局时平均名次的误差约 ±0.3，128 局约 ±0.2
     amp: bool = True               # 混合精度用 bfloat16（数值范围和 float32 一样，不会溢出；3070 支持）
@@ -1163,6 +1165,24 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.good = (copy.deepcopy(self.model.state_dict()), copy.deepcopy(self.opt.state_dict()), self.iter)
         self.rollbacks = 0
 
+    def _redraw_board(self):
+        """后台线程重画训练看板；上一次还没画完就跳过。出错只打印一次，不影响训练。"""
+        import threading
+        th = getattr(self, "_board_th", None)
+        if th is not None and th.is_alive():
+            return
+
+        def work():
+            try:
+                from tools.board import render
+                render(self.run)
+            except Exception as ex:                    # noqa: BLE001
+                if not getattr(self, "_board_err", False):
+                    self._board_err = True
+                    print(f"训练看板没画成（不影响训练）：{type(ex).__name__}: {str(ex)[:160]}", flush=True)
+        self._board_th = threading.Thread(target=work, daemon=True)
+        self._board_th.start()
+
     def _reset_drift(self):
         """换了一套参数（--restore、考试守护换回 best.pt）：变乱检查的“最近熵中位数”从头记。
         不清的话拿新参数的熵去比旧参数的中位数：第 17000 轮换回 best.pt（第 15450 轮那版熵 1.6）后，
@@ -1494,6 +1514,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     self.mark_good()
             self.log_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self.log_f.flush()
+            if cfg.board_every and self.iter % cfg.board_every == 0:
+                self._redraw_board()
             if on_log:
                 on_log(rec)
         self.save()
