@@ -624,11 +624,11 @@ def check_place_reward():
 
 
 def check_board():
-    """训练看板（tools/board.py）：合成一段日志（含回退、守护换回、重启），画出 dashboard.md 和图。"""
+    """训练看板（rl/board.py）：合成一段日志（含回退、守护换回、重启），画出 dashboard.md 和图。"""
     import json
     import tempfile
     from pathlib import Path
-    from tools.board import load, render
+    from rl.board import load, render
     with tempfile.TemporaryDirectory() as d:
         run = Path(d)
         lines = []

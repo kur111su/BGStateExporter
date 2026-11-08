@@ -1174,7 +1174,7 @@ class Trainer(ShapingMixin, ImitationMixin):
 
         def work():
             try:
-                from tools.board import render
+                from .board import render
                 render(self.run)
             except Exception as ex:                    # noqa: BLE001
                 if not getattr(self, "_board_err", False):
