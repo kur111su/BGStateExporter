@@ -265,6 +265,12 @@ class Config:
     # 从本局凑得成的 S / A 阵容里均匀抽一套，把场上最弱的 seed_start_n 个随从换成这套现在就买得到的起步卡
     # （核心卡 → 配套卡 → 本族随从，卡牌原始身材）。之后自己决定要不要沿着做下去。这些局单独记 place_started，
     # 不算进 place_bot / 加强强度；GAE 在换卡处切断（Rollout.cut）。0 = 不用
+    # 名次奖励表（"1:1,2:0.55,…,8:-1"；空 = 引擎自带的线性 1 → -1，每差一名 0.29）。
+    # 为什么（第 18611 轮起）：线性奖励下第 1 名和第 2 名只差 0.29，和第 4 / 5 名一样——稳定进前四、不冒险就是最优，
+    # 正好是现在的打法：考试（全强度高分阵容）平均 4.2–4.6 名，吃鸡率只有 1.3–2.2%（8 个人平均 12.5%），
+    # 第 12–14 回合场面 0.52 / 0.39 / 0.26（高手 0.67 / 0.60 / 0.68）。要吃鸡就得后期场面压过所有人，
+    # 这一段线性奖励几乎不给额外的分。表换掉的只是局末那一下（引擎给的线性部分扣掉、换成表里的值），违规扣分照旧
+    place_reward: str = ""
     seed_start_frac: float = 0.0
     seed_start_turns: str = "4,5,6"
     seed_start_n: int = 3
@@ -325,6 +331,34 @@ class Policy:
         if want_obs:
             out = out + (fz.half().cpu().numpy(),)
         return out
+
+
+def parse_place_reward(spec: str):
+    """"1:1,2:0.55,…,8:-1" → 长度 9 的数组（下标 = 名次，0 不用）；空 / 不全 → None（用引擎的线性奖励）。"""
+    if not str(spec or "").strip():
+        return None
+    tab = np.full(9, np.nan)
+    for part in str(spec).split(","):
+        if ":" in part:
+            k, v = part.split(":", 1)
+            tab[int(k)] = float(v)
+    if np.isnan(tab[1:]).any():
+        raise ValueError(f"place_reward 要写全 1–8 名：{spec}")
+    tab[0] = 0.0
+    return tab
+
+
+def linear_place_reward(p: int) -> float:
+    """引擎自带的名次奖励：第 1 名 1，第 8 名 -1，线性。"""
+    return 1.0 - 2.0 * (int(p) - 1) / 7.0
+
+
+def place_score_equiv(places, tab) -> float:
+    """一组名次按奖励表算平均分，再换成“线性奖励下的等效名次”（4.5 - 3.5 × 平均分；线性表就是平均名次本身），
+    考试守护拿它比，越小越好。"""
+    if tab is None:
+        return float(np.mean(places))
+    return float(4.5 - 3.5 * np.mean([tab[int(p)] for p in places]))
 
 
 def grow_opt_state(opt, od: dict) -> dict:
@@ -517,6 +551,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         self._init_shaping()                           # 升本曲线和每个座位的塑形状态（rl/shaping.py）
         self.teacher, self.teacher_t0 = self._load_teacher(), None
         self.repay_t0 = None                           # 局末扣回势能从哪一轮开始爬（存在 latest.pt 里）
+        self.place_tab = parse_place_reward(getattr(cfg, "place_reward", ""))
+        if self.place_tab is not None:
+            print("名次奖励表：" + "、".join(f"{p} 名 {self.place_tab[p]:+.2f}" for p in range(1, 9)), flush=True)
         self.guard_base = {k: float(getattr(cfg, k)) for k in self._guard_keys()}
         self.guard_st = self._guard_new()
         self.mix = defaultdict(int)
@@ -661,8 +698,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                     continue
                 for i in np.flatnonzero((rewards != 0) | dones):
                     if self.role[off + i] == 0:
-                        r_end = rewards[i] + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i)))
-                                              if dones[i] else 0.0)
+                        r_env = float(rewards[i])
+                        if dones[i] and self.place_tab is not None and 1 <= int(info["placement"][i]) <= 8:
+                            pl = int(info["placement"][i])         # 局末名次奖励换成表里的值（违规扣分留着）
+                            r_env += float(self.place_tab[pl]) - linear_place_reward(pl)
+                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i)))
+                                         if dones[i] else 0.0)
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i],
                                             self._final_comp(off + int(i)) if dones[i] else None)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
@@ -925,6 +966,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             if booster is not None and booster.boost(env, obs["features"]):
                 obs = env.observe()
         ps = [p for p in places.values() if p > 0]
+        self.last_eval_places = ps
         self.last_comp = self._comp_scores([last_board[i] for i in places if i in last_board])
         return (round(float(np.mean(ps)), 3), round(float(np.mean([p == 1 for p in ps])), 3)) if ps else (None, None)
 
@@ -1028,7 +1070,25 @@ class Trainer(ShapingMixin, ImitationMixin):
 
     @staticmethod
     def _guard_new() -> dict:
-        return {"evals": [], "best": None, "best_iter": None, "bad": 0, "n": 0, "scale": 1.0}
+        return {"evals": [], "best": None, "best_iter": None, "bad": 0, "n": 0, "scale": 1.0, "metric": None}
+
+    def _guard_metric(self) -> str:
+        """守护比的是什么：平均名次（"place"），或者按名次奖励表算的等效名次（"score:<表>"）。"""
+        spec = str(getattr(self.cfg, "place_reward", "") or "").replace(" ", "")
+        return f"score:{spec}" if spec else "place"
+
+    def _guard_check_metric(self):
+        """换了名次奖励表：之前的最好成绩是按别的标准算的，不能比。best.pt 改名留着（best_<轮>.pt），守护从头记（缩放保留）。"""
+        g, m = self.guard_st, self._guard_metric()
+        if g.get("metric") in (None, m):
+            g["metric"] = m
+            return
+        p = self.run / "best.pt"
+        if p.exists():
+            q = self.run / f"best_it{g.get('best_iter') or 0}.pt"
+            p.replace(q)
+            print(f"考试守护换了标准（{g.get('metric')} → {m}）：原来的 best.pt 改名为 {q.name}，从头记", flush=True)
+        self.guard_st = {**self._guard_new(), "scale": g.get("scale", 1.0), "n": g.get("n", 0), "metric": m}
 
     def _guard_apply(self):
         """把守护的缩放（scale）乘到模仿 / 老师系数上（基准是启动时配方里的值）。"""
@@ -1041,6 +1101,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         cfg = self.cfg
         if not cfg.guard or x is None:
             return {}
+        self._guard_check_metric()
         g = self.guard_st
         w = max(1, int(cfg.guard_window))
         g["evals"] = (g["evals"] + [float(x)])[-w:]
@@ -1185,6 +1246,9 @@ class Trainer(ShapingMixin, ImitationMixin):
             self.repay_t0 = int(ck["repay_t0"])
         if isinstance(ck.get("guard"), dict):
             self.guard_st = {**self._guard_new(), **ck["guard"]}
+            if "metric" not in ck["guard"]:
+                self.guard_st["metric"] = "place"           # 第 18611 轮以前存的：按平均名次
+            self._guard_check_metric()
             self._guard_apply()
         if getattr(self.cfg, "ent_target", 0) and ck.get("ent_coef") is not None:   # 调过的熵系数接着用
             self.cfg.ent_coef = float(min(self.cfg.ent_coef_max, max(self.cfg.ent_coef_min, ck["ent_coef"])))
@@ -1408,6 +1472,10 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
+                    eps = getattr(self, "last_eval_places", None) or []
+                    if eps:
+                        rec["eval_boost_top4"] = round(float(np.mean([p <= 4 for p in eps])), 3)
+                        rec["eval_boost_score"] = round(place_score_equiv(eps, self.place_tab), 3)
                     rec.update(getattr(self, "last_comp", {}) or {})
                 if self.demos is not None:
                     he = self.human_eval()
@@ -1418,7 +1486,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                     self.adjust_pro(pe)
                     rec.update(pe, pro_scale=round(self.pro_scale, 3))
                 if cfg.guard:
-                    rec.update(self._guard(rec.get("eval_boost_place") if cfg.boost_frac > 0 else rec.get("eval_place")))
+                    rec.update(self._guard(rec.get("eval_boost_score", rec.get("eval_boost_place")) if cfg.boost_frac > 0
+                                           else rec.get("eval_place")))
             if cfg.save_every and self.iter % cfg.save_every == 0:
                 self.save()
                 if not getattr(self, "drift_n", 0):       # 正在变乱时不把现在当成回退点

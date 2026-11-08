@@ -260,7 +260,13 @@ def main() -> int:
         tr.save()
         tr.guard_st, tr.cfg.pro_coef = tr._guard_new(), 0.1
         tr.load(Path(d) / "latest.pt")
-        assert tr.guard_st["n"] == 1 and abs(tr.cfg.pro_coef - 0.07) < 1e-9
+        assert tr.guard_st["n"] == 1 and abs(tr.cfg.pro_coef - 0.07) < 1e-9 and tr.guard_st["metric"] == "place"
+        # 换了名次奖励表：原来的 best.pt 改名留着，守护从头记（出手次数和缩放保留）
+        tr.cfg.place_reward = "1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1"
+        tr._guard_check_metric()
+        assert not (Path(d) / "best.pt").exists() and list(Path(d).glob("best_it*.pt")), "原来的 best.pt 要改名留着"
+        assert tr.guard_st["best"] is None and tr.guard_st["n"] == 1 and tr.guard_st["metric"].startswith("score:")
+        tr.cfg.place_reward = ""
         tr.log_f.close()
     print("健康检查和回退通过；引擎出错能换环境接着练；考试守护能存最好的、退步时换回来")
     print("TEST OK")

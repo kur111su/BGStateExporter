@@ -528,6 +528,7 @@ def check_guard():
         Trainer._guard_apply(t)
         return "fix"
     t._save_best, t._guard_fix = saved.append, fix
+    t._guard_check_metric = lambda: None
     outs = []
     for it, x in enumerate([4.4, 4.2, 4.0, 4.1, 4.3, 4.6, 4.6, 4.7, 4.8, 4.9, 5.0, 5.0, 5.1], 1):
         t.iter = it * 50
@@ -604,6 +605,24 @@ def check_seed_cut():
     return adv
 
 
+def check_place_reward():
+    """名次奖励表：解析、和线性奖励的换算、等效名次（线性表 = 平均名次）。"""
+    from rl.ppo import linear_place_reward, parse_place_reward, place_score_equiv
+    assert parse_place_reward("") is None
+    lin = parse_place_reward(",".join(f"{p}:{linear_place_reward(p)}" for p in range(1, 9)))
+    assert abs(place_score_equiv([1, 3, 8], lin) - 4.0) < 1e-9 and place_score_equiv([1, 3, 8], None) == 4.0
+    tab = parse_place_reward("1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1")
+    assert tab[1] - tab[2] > linear_place_reward(1) - linear_place_reward(2) > tab[4] - tab[5]   # 第 1 名更值钱，中间更平
+    assert place_score_equiv([1], tab) == 1.0 and place_score_equiv([8], tab) == 8.0
+    assert place_score_equiv([1, 4], tab) < place_score_equiv([2, 3], tab)                  # 同样平均 2.5 名，吃一次鸡更好
+    try:
+        parse_place_reward("1:1,2:0.5")
+        raise AssertionError("不全应该报错")
+    except ValueError:
+        pass
+    return tab
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -620,6 +639,7 @@ def main() -> int:
     check_guard()
     check_ent_warmup()
     check_seed_cut()
+    check_place_reward()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0

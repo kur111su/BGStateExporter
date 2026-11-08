@@ -229,6 +229,10 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
+    pv = [p for p in places.values() if p > 0]
+    if pv:
+        dist = "、".join(f"{k} 名 {np.mean([p == k for p in pv]):.0%}" for k in range(1, 9))
+        print(f"名次分布：{dist}；吃鸡 {np.mean([p == 1 for p in pv]):.1%}、前四 {np.mean([p <= 4 for p in pv]):.0%}", flush=True)
     info["picks"], info["sells"], info["buy_rows"], info["sell_rows"] = picks, sells, buy_rows, sell_rows
     finals = []
     for i, row in enumerate(last_cards):
