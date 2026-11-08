@@ -54,6 +54,7 @@ def parse(argv=None):
     ap.add_argument("--init", default="", help="新训练从这个检查点 / 快照的参数开始（已有 latest.pt 时忽略）")
     ap.add_argument("--recipe", default="", help="配方文件（JSON，例如 configs/v3.json）：训练目录和参数，命令行参数优先")
     ap.add_argument("--restore", default="", help="接着训练目录练，但模型退回这个快照（例如 runs/v3/snapshots/it12450.pt）")
+    ap.add_argument("--verbose", action="store_true", help="每轮打印全部字段（JSON）；默认只打印主要的几项，全部字段在 log.jsonl / 看板里")
     for f in dataclasses.fields(Config):
         if f.name == "run_dir":
             continue
@@ -103,15 +104,54 @@ def main() -> int:
     if a.stage:
         tr.start_stage()
 
+    full_keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
+                 "eval_place", "eval_top1", "eval_boost_place", "eval_boost_top1", "eval_boost_top4", "eval_boost_score", "snapshot", "snapshot_dist", "snapshot_tier",
+                 "bc", "bc_scale", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_buy", "pro_sell", "pro_choose", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "human_top1", "human_top1_train", "human_nll", "human_upgrade", "human_end", "human_sell", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "tgt_q", "eng_q", "keep_sold", "aux_comp", "comp_acc", "drift", "kl_teacher", "teacher_coef", "teacher_core", "teacher_sure", "teacher_agree", "boost_strength", "seeded", "place_seeded", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac", "noop_move", "noop_freeze", "noop_cancel", "shape_fin", "shape_repay", "ent_coef", "started", "place_started", "guard_avg", "guard_ref", "guard_best", "guard_bad", "guard_fix", "guard_capped", "guard_scale")
+    verbose = a.verbose or bool(os.environ.get("GITHUB_ACTIONS"))
+    if not verbose:
+        print("每轮只显示主要几项（全部字段在 runs\\v3\\log.jsonl；曲线看 runs\\v3\\dashboard.md 或 board.bat；"
+              "要像以前那样全打印加 --verbose）", flush=True)
+
+    def f(rec, k, fmt="{:.2f}", dash="-"):
+        v = rec.get(k)
+        return fmt.format(v) if isinstance(v, (int, float)) else dash
+
     def show(rec):
         if "rollback" in rec:
-            print(json.dumps(rec, ensure_ascii=False), flush=True)
+            print(("⚠ 回退：" if not verbose else "") + (str(rec.get("rollback")) if not verbose else
+                  json.dumps(rec, ensure_ascii=False)) + (f"（学习率 → {rec.get('lr'):.2e}）" if not verbose and
+                                                          isinstance(rec.get("lr"), float) else ""), flush=True)
             return
-        keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
-                "eval_place", "eval_top1", "eval_boost_place", "eval_boost_top1", "eval_boost_top4", "eval_boost_score", "snapshot", "snapshot_dist", "snapshot_tier",
-                "bc", "bc_scale", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_buy", "pro_sell", "pro_choose", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "human_top1", "human_top1_train", "human_nll", "human_upgrade", "human_end", "human_sell", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "tgt_q", "eng_q", "keep_sold", "aux_comp", "comp_acc", "drift", "kl_teacher", "teacher_coef", "teacher_core", "teacher_sure", "teacher_agree", "boost_strength", "seeded", "place_seeded", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac", "noop_move", "noop_freeze", "noop_cancel", "shape_fin", "shape_repay", "ent_coef", "started", "place_started", "guard_avg", "guard_ref", "guard_best", "guard_bad", "guard_fix", "guard_capped", "guard_scale")
-        line = json.dumps({k: rec[k] for k in keys if k in rec}, ensure_ascii=False)
-        print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
+        if verbose:
+            line = json.dumps({k: rec[k] for k in full_keys if k in rec}, ensure_ascii=False)
+            print(("::notice::" if os.environ.get("GITHUB_ACTIONS") else "") + line, flush=True)
+            return
+        t = sum(rec.get(k, 0) or 0 for k in ("t_collect", "t_update"))
+        parts = [f"第 {rec.get('iter')} 轮 {t:4.0f}s",
+                 f"熵 {f(rec, 'ent')} 学习率 {f(rec, 'lr', '{:.1e}')}",
+                 f"名次 机器人 {f(rec, 'place_bot')} 加强 {f(rec, 'place_boost')}（强度 {f(rec, 'boost_strength')}）",
+                 f"后期场面 {f(rec, 'cs_late')}",
+                 f"剩钱 {f(rec, 'unspent')}"]
+        if rec.get("drift"):
+            parts.append(f"变乱 {rec['drift']}/10")
+        if rec.get("env_rebuild"):
+            parts.append(f"引擎重建 {rec['env_rebuild']}")
+        print(" | ".join(parts), flush=True)
+        if "eval_boost_place" in rec or "eval_place" in rec:
+            ev = [f"  考试 {f(rec, 'eval_boost_place')} 名",
+                  f"吃鸡 {f(rec, 'eval_boost_top1', '{:.1%}')} 前四 {f(rec, 'eval_boost_top4', '{:.0%}')}",
+                  f"等效 {f(rec, 'eval_boost_score')}"]
+            if rec.get("guard_avg") is not None:
+                ev.append(f"守护 最近6次 {f(rec, 'guard_avg')} / 最好 {f(rec, 'guard_best', dash=f(rec, 'guard_ref'))}"
+                          + ("（新纪录，存 best.pt）" if rec.get("guard_best") is not None else "")
+                          + (f"（差 {rec['guard_bad']}/3）" if rec.get("guard_bad") else ""))
+            if rec.get("pro_top1") is not None:
+                ev.append(f"像高手 {f(rec, 'pro_top1')}")
+            print(" | ".join(ev), flush=True)
+        if rec.get("guard_fix"):
+            print(f"  ⚠ 守护出手：{rec['guard_fix']}", flush=True)
+        if rec.get("snapshot"):
+            print(f"  存快照 {rec['snapshot']}", flush=True)
     tr.train(cfg.iters, on_log=show)
     if a.smoke:
         print("SMOKE OK")
