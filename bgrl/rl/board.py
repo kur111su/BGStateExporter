@@ -261,6 +261,23 @@ def render(run: Path, window: int = 3000) -> Path | None:
             md += ["## 阵容测试", "", line, ""]
         except (ValueError, OSError):
             pass
+    agg = {}                                               # 成型阵容课程：各套阵容拿到手以后的名次（最近 window 轮）
+    for r in rows:
+        if r["iter"] >= lo and isinstance(r.get("seeded_by_comp"), dict):
+            for k, v in r["seeded_by_comp"].items():
+                n, avg, top1 = v
+                a = agg.setdefault(k, [0, 0.0, 0.0])
+                a[0] += n
+                a[1] += avg * n
+                a[2] += top1 * n
+    if agg:
+        md += ["## 拿着成型阵容打（成型阵容课程，最近 %d 轮）" % window, "",
+               "模型在第 6–11 回合被换成这套高手的成型场面以后，自己接着打的结果。平均名次低、吃鸡率高的阵容，说明在模拟器里确实能赢。", "",
+               "| 阵容 | 局数 | 平均名次 | 吃鸡率 |", "| --- | --- | --- | --- |"]
+        for k, (n, s_avg, s_top) in sorted(agg.items(), key=lambda kv: kv[1][1] / max(1, kv[1][0])):
+            if n >= 5:
+                md.append(f"| {k} | {n} | {s_avg / n:.2f} | {s_top / n:.0%} |")
+        md.append("")
     md += ["## 曲线", ""]
     for fname, title in imgs:
         md += [f"![{title}](board/{fname}.svg)", ""]

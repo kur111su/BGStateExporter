@@ -641,6 +641,7 @@ def check_board():
                          guard_avg=4.5, guard_ref=4.29, guard_scale=0.7)
             if it == 60:
                 r["guard_fix"] = "第 60 轮考试……换回 best.pt"
+                r["seeded_by_comp"] = {"龙虾流野兽": [6, 2.5, 0.333], "机械 APM": [5, 3.2, 0.2]}
             lines.append(r)
             if it == 40:
                 lines.append({"iter": 40, "time": "", "rollback": "策略连续 10 轮变乱：熵 1.9"})
@@ -654,6 +655,7 @@ def check_board():
         p = render(run, 100)
         md = p.read_text(encoding="utf-8")
         assert "第 **120** 轮" in md and "吃鸡 25.0%" in md and "守护换回 best.pt" in md, md[:400]
+        assert "| 龙虾流野兽 | 6 | 2.50 | 33% |" in md, md
         svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
         assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
         render(run, 100)                                                       # 再画一次：旧图删掉，不越积越多

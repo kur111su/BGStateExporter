@@ -527,6 +527,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.boost_places: list[int] = []              # 这一轮打完的加强局名次（日志用）
         self.seeder = self._make_seeder() if cfg.seed_comp_frac > 0 and cfg.games_bot else None
         self.seed_places: list[int] = []
+        self.seed_by: dict[str, list[int]] = {}
         self.starter = None
         if cfg.seed_start_frac > 0 and cfg.games_bot:
             from .calibrate import StartSeeder
@@ -713,6 +714,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                             started = name == "bot" and self.starter is not None and self.starter.finish(int(i))
                             if seeded or started:          # 换过场面 / 起步卡的局单独记，不算进 place_bot / 加强强度
                                 (self.seed_places if seeded else self.start_places).append(int(info["placement"][i]))
+                                if seeded:                 # 拿着哪套成型阵容打、打了第几（考试那轮汇总进日志）
+                                    self.seed_by.setdefault(str(seeded), []).append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
                                 seeded = True
@@ -1498,6 +1501,10 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
+                    if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
+                        rec["seeded_by_comp"] = {k: [len(v), round(float(np.mean(v)), 2), round(float(np.mean([p == 1 for p in v])), 3)]
+                                                 for k, v in sorted(self.seed_by.items())}
+                        self.seed_by = {}
                     eps = getattr(self, "last_eval_places", None) or []
                     if eps:
                         rec["eval_boost_top4"] = round(float(np.mean([p <= 4 for p in eps])), 3)

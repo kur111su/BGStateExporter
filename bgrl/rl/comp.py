@@ -25,6 +25,14 @@ ZH_RACE = {"QUILBOAR": "野猪人", "UNDEAD": "亡灵", "BEAST": "野兽", "MURL
            "ELEMENTAL": "元素", "PIRATE": "海盗", "DRAGON": "龙", "NAGA": "纳迦", "ABERRATION": "畸变", "混合": "混合"}
 
 
+def main_tribe(ids, det: dict) -> str:
+    """一个场面的主种族：同一种族（含全种族）≥ 4 个，否则“混合”。"""
+    rc = Counter(r for x in ids for r in (det.get(x) or {}).get("races", []) if r != "ALL")
+    allr = sum(1 for x in ids if "ALL" in (det.get(x) or {}).get("races", []))
+    top = rc.most_common(1)
+    return top[0][0] if top and top[0][1] + allr >= 4 else "混合"
+
+
 def comp_stats(boards: list[list[str]], goldens: list[int], tiers: list[int], det: dict | None = None) -> dict:
     """最终阵容汇总：boards = 每局最后的场面（卡牌 ID，金色已去掉 _G）。主种族：同一种族（含全种族）≥ 4 个。"""
     det = det or catalog()
@@ -32,10 +40,7 @@ def comp_stats(boards: list[list[str]], goldens: list[int], tiers: list[int], de
     for ids in boards:
         for x in set(ids):
             cards[x] += 1
-        rc = Counter(r for x in ids for r in (det.get(x) or {}).get("races", []) if r != "ALL")
-        allr = sum(1 for x in ids if "ALL" in (det.get(x) or {}).get("races", []))
-        top = rc.most_common(1)
-        main[top[0][0] if top and top[0][1] + allr >= 4 else "混合"] += 1
+        main[main_tribe(ids, det)] += 1
     n = max(1, len(boards))
     return {"n": len(boards), "tier": round(float(np.mean(tiers)), 2) if tiers else None,
             "golden": round(float(np.mean(goldens)), 2) if goldens else None,

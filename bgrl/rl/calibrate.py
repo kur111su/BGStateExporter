@@ -350,6 +350,7 @@ class CompSeeder:
         self.n_seeded, self.n_missing = 0, 0
         self.seeded_slots: list[int] = []                      # 这次换过的对局（调用方据此重置塑形）
         self.names: dict[str, int] = {}
+        self.comp_of: dict[int, str] = {}                      # 对局 → 换成的那套阵容（局末记名次用）
 
     def size(self) -> int:
         return sum(len(v) for v in self.pool.values())
@@ -409,13 +410,16 @@ class CompSeeder:
             self.seeded_slots.append(g)
             for c in hit:
                 self.names[c["name"]] = self.names.get(c["name"], 0) + 1
+            best = max(hit, key=lambda c: ("SAB".find(c["tier"]) * -1, len(c["core"])))
+            self.comp_of[g] = best["name"]
             changed = True
         return changed
 
     def finish(self, g: int):
-        """对局 g 打完了：返回这局有没有换过场面。"""
+        """对局 g 打完了：换过场面就返回换成的那套阵容的名字（非空字符串），没换返回空字符串。"""
         cur = self.plan.pop(g, None)
-        return cur is not None and cur[1] == -1
+        name = self.comp_of.pop(g, "")
+        return (name or "?") if cur is not None and cur[1] == -1 else ""
 
     def take_stats(self) -> dict:
         out = {"seeded": self.n_seeded, "seed_missing": self.n_missing}

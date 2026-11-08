@@ -372,6 +372,20 @@ def show_comps(finals: list[dict]) -> dict | None:
     print("  模型主种族：", fmt(m["main"]))
     if h:
         print("  万三主种族：", fmt(h["main"]))
+    # 模型走每个主种族时打得怎么样：它偏爱龙 / 海盗，是因为在模拟器里对它来说确实更好，还是没试过别的
+    from collections import defaultdict
+    from rl.comp import main_tribe
+    from tg.catalog import catalog as _cat
+    det_ = _cat()
+    by = defaultdict(list)
+    for x in fb:
+        if x.get("place"):
+            by[main_tribe(x["board"], det_)].append(int(x["place"]))
+    if by:
+        rows_ = sorted(by.items(), key=lambda kv: -len(kv[1]))
+        print("  模型走各主种族的结果：" + "；".join(
+            f"{ZH_RACE.get(k, k)} {len(v)} 局 平均 {np.mean(v):.2f} 名 吃鸡 {np.mean([p == 1 for p in v]):.0%} "
+            f"前四 {np.mean([p <= 4 for p in v]):.0%}" for k, v in rows_))
     print("  模型常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in m["cards"][:12]))
     if h:
         print("  万三常用卡：", "、".join(f"{n} {v:.0%}" for _, n, v in h["cards"][:12]))
