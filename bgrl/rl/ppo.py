@@ -1229,6 +1229,12 @@ class Trainer(ShapingMixin, ImitationMixin):
             g["lr"] *= 0.5
         self.iter = it
         self.snap_cache.clear()
+        if self.rollbacks >= 2 and "最近中位数" in problem and "上限" not in problem:
+            # 连着第二次因为“熵比最近中位数高”回退：回退点自己的熵就在这个水平（比如换了名次奖励表以后，前 100 轮
+            # 熵中位数还没攒够、检查没开，熵涨上去的那段也被当成了回退点），再退还是一样，第 5 次训练就停了。
+            # 熵基准从头记（这 100 轮只看 drift_ent_max 上限），交给熵目标（ent_target）往回拉
+            self._reset_drift()
+            print("回退点本身的熵就在这个水平：变乱检查的熵基准从头记（只看上限），由熵目标往回拉", flush=True)
 
     def init_from(self, path):
         """用另一个检查点 / 快照的参数开始（不带优化器和对手库）。"""

@@ -128,7 +128,7 @@ def main() -> int:
             return
         t = sum(rec.get(k, 0) or 0 for k in ("t_collect", "t_update"))
         parts = [f"第 {rec.get('iter')} 轮 {t:4.0f}s",
-                 f"熵 {f(rec, 'ent')} 学习率 {f(rec, 'lr', '{:.1e}')}",
+                 f"熵 {f(rec, 'ent')}（系数 {f(rec, 'ent_coef', '{:.4f}')}） 学习率 {f(rec, 'lr', '{:.1e}')}",
                  f"名次 机器人 {f(rec, 'place_bot')} 加强 {f(rec, 'place_boost')}（强度 {f(rec, 'boost_strength')}）",
                  f"后期场面 {f(rec, 'cs_late')}",
                  f"剩钱 {f(rec, 'unspent')}"]

@@ -661,6 +661,28 @@ def check_board():
     return len(svgs)
 
 
+def check_rollback_rebase():
+    """连着第二次因为“熵比最近中位数高”回退：熵基准从头记，不再一直退到训练停（第 18651 轮换名次奖励表后的情形）。"""
+    from collections import deque
+    from rl.ppo import Trainer
+    loads = []
+    opt = SimpleNamespace(param_groups=[{"lr": 1e-4}], load_state_dict=loads.append)
+    t = SimpleNamespace(cfg=SimpleNamespace(max_rollbacks=5), rollbacks=0, good=({}, {}, 100), iter=110, opt=opt,
+                        model=SimpleNamespace(load_state_dict=loads.append), snap_cache={},
+                        ent_hist=deque([1.1] * 150, maxlen=300), drift_n=3)
+    t._reset_drift = lambda: Trainer._reset_drift(t)
+    why = "策略连续 10 轮变乱：熵 1.70（最近中位数 1.15）"
+    Trainer.rollback(t, why)
+    assert len(t.ent_hist) == 150 and t.iter == 100                      # 第一次：照常回退，基准不动
+    Trainer.rollback(t, why)
+    assert len(t.ent_hist) == 0 and t.drift_n == 0                       # 第二次：基准从头记
+    t.ent_hist = deque([1.1] * 150, maxlen=300)
+    Trainer.rollback(t, "策略连续 10 轮变乱：熵 1.90（上限 1.8）")
+    assert len(t.ent_hist) == 150                                          # 超上限照旧回退，不重设
+    assert abs(opt.param_groups[0]["lr"] - 1.25e-5) < 1e-12
+    return t.rollbacks
+
+
 def main() -> int:
     n = check_permute_shop()
     j = check_judge()
@@ -679,6 +701,7 @@ def main() -> int:
     check_seed_cut()
     check_place_reward()
     check_board()
+    check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")
     return 0
