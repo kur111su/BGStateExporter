@@ -121,6 +121,12 @@ class Config:
     # （高手 0.67 / 0.60 / 0.68），名次就丢在这里。0 = 不分前后期
     boost_late_from: int = 0
     boost_late_strength: float = 1.0
+    # 前期强度下限（第 19650 轮起）：自适应强度不低于 boost_min_strength；从启动时的强度每轮最多抬 boost_min_step 爬上去（不一下子变难）。
+    # 为什么：第 17010 轮加了后期全强度以后，自适应把前期强度从 0.6–0.7 一路压到 0.26（加强局名次对着 3.75 调），训练对手越来越弱——
+    # 机器人局吃鸡 20%，考试（全强度）只有 1–3%；靠前中期节奏就能在训练里赢，做阵容在训练里只值 +0.27 名。考试最好的一段
+    # （第 11000–13500 轮 4.10–4.26）强度是 0.72–0.78。0 = 不设下限
+    boost_min_strength: float = 0.0
+    boost_min_step: float = 0.002
     # 加强方式：scale = 放大机器人场面攻防（只是身材变大）；pro = 换成同一回合 6500+ 高分对局的真实阵容
     # （tools/pro_library.py 生成 runs/pro_boards.json，带高本随从和它们的效果）。pro 时 strength = 每个机器人被换的概率
     boost_kind: str = "scale"
@@ -355,6 +361,18 @@ def linear_place_reward(p: int) -> float:
     return 1.0 - 2.0 * (int(p) - 1) / 7.0
 
 
+def seed_row(v) -> list:
+    """成型阵容课程一套阵容的结果 [(名次, 加强局?)] → [局数, 平均名次, 吃鸡率, 其中加强局的局数, 平均名次, 吃鸡率]。"""
+    ps = [int(p) for p, _ in v]
+    bs = [int(p) for p, b in v if b]
+    row = [len(ps), round(float(np.mean(ps)), 2), round(float(np.mean([p == 1 for p in ps])), 3), len(bs)]
+    if bs:
+        row += [round(float(np.mean(bs)), 2), round(float(np.mean([p == 1 for p in bs])), 3)]
+    else:
+        row += [0.0, 0.0]
+    return row
+
+
 def place_score_equiv(places, tab) -> float:
     """一组名次按奖励表算平均分，再换成“线性奖励下的等效名次”（4.5 - 3.5 × 平均分；线性表就是平均名次本身），
     考试守护拿它比，越小越好。"""
@@ -527,7 +545,8 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.boost_places: list[int] = []              # 这一轮打完的加强局名次（日志用）
         self.seeder = self._make_seeder() if cfg.seed_comp_frac > 0 and cfg.games_bot else None
         self.seed_places: list[int] = []
-        self.seed_by: dict[str, list[int]] = {}
+        self.seed_by: dict[str, list] = {}             # 成型阵容课程：阵容 → [(名次, 是不是加强局)]
+        self.boost_floor: float | None = None          # 前期强度下限（boost_min_strength），从启动时的强度慢慢爬上去
         self.starter = None
         if cfg.seed_start_frac > 0 and cfg.games_bot:
             from .calibrate import StartSeeder
@@ -714,10 +733,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                             started = name == "bot" and self.starter is not None and self.starter.finish(int(i))
                             if seeded or started:          # 换过场面 / 起步卡的局单独记，不算进 place_bot / 加强强度
                                 (self.seed_places if seeded else self.start_places).append(int(info["placement"][i]))
-                                if seeded:                 # 拿着哪套成型阵容打、打了第几（考试那轮汇总进日志）
-                                    self.seed_by.setdefault(str(seeded), []).append(int(info["placement"][i]))
-                                if self.booster is not None:
-                                    self.booster.finish(int(i))
+                                bst = self.booster.finish(int(i)) if self.booster is not None else None
+                                if seeded:                 # 拿着哪套成型阵容打、打了第几、对手是不是加强过（考试那轮汇总进日志）
+                                    self.seed_by.setdefault(str(seeded), []).append((int(info["placement"][i]), bool(bst)))
                                 seeded = True
                             else:
                                 self.stats.append((name, int(info["placement"][i])))
@@ -1293,6 +1311,19 @@ class Trainer(ShapingMixin, ImitationMixin):
                 print(f"加强方式改为 {self.cfg.boost_kind}：强度从 {self.adapt.strength} 开始重新调", flush=True)
             self.booster.strength = self.adapt.strength
 
+    def _apply_boost_floor(self, rec: dict):
+        """前期强度下限（boost_min_strength）：下限从启动时的强度每轮最多抬 boost_min_step，自适应不再往下调过它。"""
+        cfg = self.cfg
+        if cfg.boost_min_strength <= 0 or self.adapt is None:
+            return
+        base = self.adapt.strength if self.boost_floor is None else self.boost_floor
+        self.boost_floor = min(float(cfg.boost_min_strength), base + float(cfg.boost_min_step))
+        self.adapt.lo = max(self.adapt.lo, self.boost_floor)
+        if self.adapt.strength < self.boost_floor:
+            self.adapt.strength = self.boost_floor
+        self.booster.strength = self.adapt.strength
+        rec["boost_floor"] = round(self.boost_floor, 3)
+
     def _make_seeder(self):
         """成型阵容课程（seed_comp_frac）：用和加强局同一个高分阵容库。"""
         from .calibrate import CompSeeder
@@ -1478,6 +1509,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                 if self.adapt is not None:
                     self.booster.strength = self.adapt.update()
                     rec["boost_place_avg"] = self.adapt.mean()
+                    self._apply_boost_floor(rec)
                 self.t_boost = 0.0
             if self.starter is not None:
                 rec.update(self.starter.take_stats())
@@ -1502,8 +1534,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
-                        rec["seeded_by_comp"] = {k: [len(v), round(float(np.mean(v)), 2), round(float(np.mean([p == 1 for p in v])), 3)]
-                                                 for k, v in sorted(self.seed_by.items())}
+                        rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}
                     eps = getattr(self, "last_eval_places", None) or []
                     if eps:

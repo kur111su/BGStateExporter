@@ -642,12 +642,16 @@ def check_board():
             if it == 60:
                 r["guard_fix"] = "第 60 轮考试……换回 best.pt"
                 r["seeded_by_comp"] = {"龙虾流野兽": [6, 2.5, 0.333], "机械 APM": [5, 3.2, 0.2]}
+            if it == 70:                                               # 新格式：后三项是其中加强局的局数 / 平均名次 / 吃鸡率
+                r["seeded_by_comp"] = {"龙虾流野兽": [4, 2.5, 0.25, 2, 3.0, 0.0]}
             lines.append(r)
             if it == 40:
                 lines.append({"iter": 40, "time": "", "rollback": "策略连续 10 轮变乱：熵 1.9"})
         lines += [dict(lines[80], iter=75), dict(lines[81], iter=76)]          # 重新启动：轮数往回跳
         (run / "log.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
         (run / "comptest.json").write_text(json.dumps({"iter": 100, "games": 4, "places": [1, 3, 5, 8]}), encoding="utf-8")
+        (run / "comptest_seeded.json").write_text(json.dumps({"iter": 100, "games": 4, "places": [1, 2, 5, 8],
+                                                               "seeded": {"turns": "8,9,10", "seeded": [1, 2, 5]}}), encoding="utf-8")
         rows, ev = load(run)
         kinds = [e["kind"] for e in ev]
         assert "rollback" in kinds and "guard" in kinds and "restart" in kinds, kinds
@@ -655,12 +659,57 @@ def check_board():
         p = render(run, 100)
         md = p.read_text(encoding="utf-8")
         assert "第 **120** 轮" in md and "吃鸡 25.0%" in md and "守护换回 best.pt" in md, md[:400]
-        assert "| 龙虾流野兽 | 6 | 2.50 | 33% |" in md, md
+        assert "| 龙虾流野兽 | 10 | 2.50 | 30% | 2 | 3.00 | 0% |" in md, md
+        assert "| 机械 APM | 5 | 3.20 | 20% | 0 | - | - |" in md, md
+        assert "拿着成型阵容的阵容测试" in md and "3 局平均名次 2.67，吃鸡 33.3%，前四 67%" in md, md
         svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
         assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
         render(run, 100)                                                       # 再画一次：旧图删掉，不越积越多
         assert len(list((run / "board").glob("exam_*.svg"))) == 1
     return len(svgs)
+
+
+def check_seed_row_floor():
+    """成型阵容课程按加强局分开记（ppo.seed_row）；前期强度下限从启动时的强度慢慢爬上去（boost_min_strength）。"""
+    from rl.calibrate import AdaptiveStrength
+    from rl.ppo import seed_row
+    assert seed_row([(1, True), (3, False), (5, True), (2, False)]) == [4, 2.75, 0.25, 2, 3.0, 0.5]
+    assert seed_row([(4, False)]) == [1, 4.0, 0.0, 0, 0.0, 0.0]
+    from rl.ppo import Trainer
+    ad = AdaptiveStrength(start=0.26)
+    t = SimpleNamespace(adapt=ad, boost_floor=None, booster=SimpleNamespace(strength=0.26),
+                        cfg=SimpleNamespace(boost_min_strength=0.7, boost_min_step=0.002))
+    seen = []
+    for _ in range(400):
+        rec = {}
+        Trainer._apply_boost_floor(t, rec)
+        ad.places.extend([6] * 60)                                     # 一直打得很差：自适应想往下调
+        ad.new = 60
+        t.booster.strength = ad.update()
+        seen.append(rec["boost_floor"])
+    assert abs(seen[0] - 0.262) < 1e-9 and seen[-1] == 0.7 and all(b >= a for a, b in zip(seen, seen[1:])), seen[:3]
+    assert ad.strength >= 0.7 - 0.02 - 1e-9 and ad.lo == 0.7                # 自适应往下调也不会低于下限（下一轮再抬回去）
+    return seen[-1]
+
+
+def check_comptest_seeded():
+    """comptest_seeded.bat（goldflow --seed-comps）：每局在给的回合把场面换成成型的 S / A 阵容，按阵容记名次。"""
+    from rl.comp import load_target_comps
+    from tools.goldflow import play_model
+    tea = next(c for c in load_target_comps() if c["name"] == "喝茶流")
+    board = [[x, 10, 10] for x in sorted(tea["core"])] + [["BG26_135", 3, 3]] * 3
+    lib = {t: [{"tier": 4, "board": board}] for t in (3, 4)}
+    rng = np.random.default_rng(3)
+
+    def act(f, c, m):
+        return np.array([rng.choice(np.flatnonzero(r)) for r in m])
+    _, info = play_model("runs/_no_such/latest.pt", 6, 11, 1, True, "cpu", boosted=False, policy=(act, {"iter": 0}),
+                         seed_comps="3,4", seed_lib=lib)
+    sd = info["seeded"]
+    assert sd["seeded"] and set(sd["by_comp"]) == {"喝茶流"}, sd
+    assert len(sd["seeded"]) + len(sd["missing"]) == len([p for p in info["places"].values() if p > 0])
+    assert sd["by_comp"]["喝茶流"][0] == len(sd["seeded"])
+    return len(sd["seeded"])
 
 
 def check_rollback_rebase():
@@ -703,6 +752,8 @@ def main() -> int:
     check_seed_cut()
     check_place_reward()
     check_board()
+    check_seed_row_floor()
+    check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")

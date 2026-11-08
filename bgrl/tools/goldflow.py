@@ -126,9 +126,11 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
-               policy=None):
+               policy=None, seed_comps: str = "", seed_lib: dict | None = None):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
-    runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。"""
+    runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
+    seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
+    （rl/calibrate.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。"""
     import time as _t
     from taverngym import BatchEnv
     from tools.cardvalue import PickStats
@@ -154,6 +156,21 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     if lib:
         from rl.boardsim import BoardJudge
         judge = BoardJudge(lib, k=12, n=3, seed=0)
+    seeder, seeded_comp = None, {}                     # 拿着成型阵容打：槽位 → 换成的那套阵容（空 = 没换成）
+    if seed_comps:
+        from rl.calibrate import CompSeeder
+        ts = tuple(int(x) for x in str(seed_comps).split(",") if x.strip())
+        slib = seed_lib if seed_lib is not None else lib
+        if ts and slib:
+            seeder = CompSeeder(slib, frac=1.0, turns=ts, seed=seed, formed_from=min(ts))
+            print(f"拿着成型阵容打：每局在第 {','.join(map(str, ts))} 回合（随机一个）招募开始时，场面换成高手同一回合已经成型的 "
+                  f"S / A 阵容（本局凑得成）；库里 " + "、".join(f"第 {t} 回合 {len(v)} 个" for t, v in sorted(seeder.pool.items())),
+                  flush=True)
+            if not seeder.size():
+                seeder = None
+                print("  库里没有成型的 S / A 阵容，不换", flush=True)
+        else:
+            print("没有高分阵容库（runs/pro_boards.json），不换成型阵容", flush=True)
     phis: dict[int, list] = {}                         # 槽位 → [(回合, Φ)]
     picks = PickStats()
     sells: dict[str, int] = {}
@@ -218,6 +235,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             if not done[i]:
                 done[i] = True
                 places[int(i)] = int(inf["placement"][i])
+                if seeder is not None:
+                    seeded_comp[int(i)] = seeder.finish(int(i))
         if len(places) >= shown + 8 or (len(places) == games and shown < games):
             shown = len(places)
             ps = [p for p in places.values() if p > 0]
@@ -226,6 +245,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                   + (f"，预计还要 {el / shown * (games - shown) / 60:.0f} 分钟" if shown < games else ""), flush=True)
         obs = env.observe()
         if booster is not None and booster.boost(env, obs["features"]):
+            obs = env.observe()
+        if seeder is not None and seeder.seed(env, obs["features"]):
             obs = env.observe()
     print(f"模型 {info.get('iter')} 轮（{info.get('name', Path(ckpt).name)}）：{len(places)} 局，平均名次 "
           f"{np.mean([p for p in places.values() if p > 0]):.2f}（{'对高分阵容' if booster else '对脚本机器人'}）", flush=True)
@@ -245,7 +266,31 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     info["phis"] = {i: v for i, v in phis.items()}
     info["places"] = places
     info["judge"], info["lib"] = judge, lib
+    if seeder is not None:
+        info["seeded"] = show_seeded(places, seeded_comp, seed_comps)
     return [x.turns for x in logs], info
+
+
+def show_seeded(places: dict, comp_of: dict, turns: str = "") -> dict:
+    """拿着成型阵容打（--seed-comps）：换成了的局 / 没换成的局各打成什么样，按阵容分开。"""
+    def fmt(v):
+        return (f"{len(v)} 局 平均 {np.mean(v):.2f} 名 吃鸡 {np.mean([p == 1 for p in v]):.0%} "
+                f"前四 {np.mean([p <= 4 for p in v]):.0%}")
+    by: dict[str, list] = {}
+    for i, p in places.items():
+        if p > 0:
+            by.setdefault(comp_of.get(i) or "", []).append(int(p))
+    got = [p for k, v in by.items() if k for p in v]
+    miss = by.get("", [])
+    print(f"\n拿着成型阵容打（第 {turns} 回合换成高手的成型场面，之后模型自己打）："
+          + (fmt(got) if got else "一局都没换成") + (f"；没换成的（本局凑不成 / 没打到那一回合）{fmt(miss)}" if miss else ""),
+          flush=True)
+    rows = sorted(((k, v) for k, v in by.items() if k), key=lambda kv: (np.mean(kv[1]), -len(kv[1])))
+    for k, v in rows:
+        print(f"  {k}：{fmt(v)}", flush=True)
+    return {"turns": turns, "seeded": got, "missing": miss,
+            "by_comp": {k: [len(v), round(float(np.mean(v)), 2), round(float(np.mean([p == 1 for p in v])), 3),
+                            round(float(np.mean([p <= 4 for p in v])), 3)] for k, v in rows}}
 
 
 def show_strength(info: dict, upto: int = 14) -> dict | None:
@@ -654,6 +699,8 @@ def main() -> int:
     ap.add_argument("--pro", default="", help="高分回放目录：算高手那一列写进 rl/pro_profile.json（gold_flow）")
     ap.add_argument("--turns", type=int, default=9)
     ap.add_argument("--boosted", action="store_true", help="对手换成高分对局的真实阵容（和训练考试 eval_boost_place 一样）")
+    ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
+                                                     "（comptest_seeded.bat），结果写进 comptest_seeded.json")
     a = ap.parse_args()
     prof = json.loads(PROFILE.read_text(encoding="utf-8")) if PROFILE.exists() else {}
     if a.pro:
@@ -669,7 +716,7 @@ def main() -> int:
     if not dev:
         import torch
         dev = "cuda" if torch.cuda.is_available() else "cpu"
-    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted)
+    games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps)
     model = summarize(games)
     pro = prof.get("gold_flow")
     show(model, pro, a.turns)
@@ -719,12 +766,14 @@ def main() -> int:
     if pk is not None and sv:
         pk["sim"] = sv
     strength = show_strength(info)
-    out = Path(a.ckpt).resolve().parent / ("comptest.json" if a.boosted else "goldflow.json")
+    out = Path(a.ckpt).resolve().parent / (("comptest_seeded.json" if a.seed_comps else "comptest.json") if a.boosted
+                                           else "goldflow.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
-                               "places": [p for p in (info.get("places") or {}).values() if p > 0]},
+                               "places": [p for p in (info.get("places") or {}).values() if p > 0],
+                               "seeded": info.get("seeded")},
                               ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
     return 0

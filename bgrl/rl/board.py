@@ -261,22 +261,48 @@ def render(run: Path, window: int = 3000) -> Path | None:
             md += ["## 阵容测试", "", line, ""]
         except (ValueError, OSError):
             pass
+    cs = run / "comptest_seeded.json"                      # comptest_seeded.bat：拿着高手的成型阵容对全强度高分阵容
+    if cs.exists():
+        try:
+            c = json.loads(cs.read_text(encoding="utf-8"))
+            sd = c.get("seeded") or {}
+            got = sd.get("seeded") or []
+            line = (f"拿着成型阵容的阵容测试：{c.get('created', '')}，第 {c.get('iter')} 轮，第 {sd.get('turns', '')} 回合换成高手的成型场面")
+            if got:
+                line += (f"，{len(got)} 局平均名次 {sum(got) / len(got):.2f}，吃鸡 {sum(p == 1 for p in got) / len(got):.1%}，"
+                         f"前四 {sum(p <= 4 for p in got) / len(got):.0%}")
+            md += [line, ""]
+        except (ValueError, OSError):
+            pass
     agg = {}                                               # 成型阵容课程：各套阵容拿到手以后的名次（最近 window 轮）
     for r in rows:
         if r["iter"] >= lo and isinstance(r.get("seeded_by_comp"), dict):
             for k, v in r["seeded_by_comp"].items():
-                n, avg, top1 = v
-                a = agg.setdefault(k, [0, 0.0, 0.0])
+                n, avg, top1 = v[:3]
+                nb, avgb, topb = (v[3:6] if len(v) >= 6 else (0, 0.0, 0.0))
+                a = agg.setdefault(k, [0, 0.0, 0.0, 0, 0.0, 0.0])
                 a[0] += n
                 a[1] += avg * n
                 a[2] += top1 * n
+                a[3] += nb
+                a[4] += avgb * nb
+                a[5] += topb * nb
     if agg:
+        split = any(a[3] for a in agg.values())
         md += ["## 拿着成型阵容打（成型阵容课程，最近 %d 轮）" % window, "",
-               "模型在第 6–11 回合被换成这套高手的成型场面以后，自己接着打的结果。平均名次低、吃鸡率高的阵容，说明在模拟器里确实能赢。", "",
-               "| 阵容 | 局数 | 平均名次 | 吃鸡率 |", "| --- | --- | --- | --- |"]
-        for k, (n, s_avg, s_top) in sorted(agg.items(), key=lambda kv: kv[1][1] / max(1, kv[1][0])):
+               "模型在第 6–11 回合被换成这套高手的成型场面以后，自己接着打的结果。平均名次低、吃鸡率高的阵容，说明在模拟器里确实能赢。"
+               + ("“加强局”那几列是对手换过高分阵容的局（第 10 回合起全强度），更接近考试。" if split else ""), ""]
+        if split:
+            md += ["| 阵容 | 局数 | 平均名次 | 吃鸡率 | 加强局 | 加强局平均名次 | 加强局吃鸡率 |",
+                   "| --- | --- | --- | --- | --- | --- | --- |"]
+        else:
+            md += ["| 阵容 | 局数 | 平均名次 | 吃鸡率 |", "| --- | --- | --- | --- |"]
+        for k, (n, s_avg, s_top, nb, sb_avg, sb_top) in sorted(agg.items(), key=lambda kv: kv[1][1] / max(1, kv[1][0])):
             if n >= 5:
-                md.append(f"| {k} | {n} | {s_avg / n:.2f} | {s_top / n:.0%} |")
+                row = f"| {k} | {n} | {s_avg / n:.2f} | {s_top / n:.0%} |"
+                if split:
+                    row += (f" {nb} | {sb_avg / nb:.2f} | {sb_top / nb:.0%} |" if nb else " 0 | - | - |")
+                md.append(row)
         md.append("")
     md += ["## 曲线", ""]
     for fname, title in imgs:
