@@ -362,8 +362,9 @@ class CompSeeder:
             cur = self.plan[g] = (episode, t)
         return cur[1]
 
-    def seed(self, env, features: np.ndarray, episodes=None) -> bool:
-        """env：controlled=(0,) 的 BatchEnv（槽位 i = 对局 i，学习者是 0 号座位）。返回有没有改（改了要重新 observe）。"""
+    def seed(self, env, features: np.ndarray, episodes=None, skip=None) -> bool:
+        """env：controlled=(0,) 的 BatchEnv（槽位 i = 对局 i，学习者是 0 号座位）。返回有没有改（改了要重新 observe）。
+        skip：这些对局不换（阵容练习局，见 ShopPractice）。"""
         from tg.obs import lobby
         self.seeded_slots = []
         if self.frac <= 0 or not self.size():
@@ -373,7 +374,7 @@ class CompSeeder:
         changed = False
         for g in range(env.n_games):
             t = int(turns[g])
-            if t not in self.turns:
+            if t not in self.turns or (skip and g in skip):
                 continue
             want = self._turn(g, int(episodes[g]) if episodes is not None else env.episode_index(g))
             if want != t:
@@ -487,7 +488,7 @@ class StartSeeder:
             cur = self.plan[g] = (episode, t)
         return cur[1]
 
-    def seed(self, env, features: np.ndarray, episodes=None) -> bool:
+    def seed(self, env, features: np.ndarray, episodes=None, skip=None) -> bool:
         from tg.obs import lobby
         self.seeded_slots = []
         if self.frac <= 0 or not self.comps:
@@ -562,3 +563,121 @@ class StartSeeder:
         self.n_seeded, self.n_missing = 0, 0
         return out
 
+
+class ShopPractice(StartSeeder):
+    """阵容练习局：frac 的机器人局一开局就给学习者（0 号座位）定一套本局凑得成的 S / A 阵容（每套机会一样），
+    之后 turns 里每回合招募开始时，把酒馆里 n_slots 个随从（没冻住的，先换和这套无关的）换成这套“现在买得到”的卡：
+    核心卡（一半的机会）、配套卡（3 成）、本族随从（2 成），酒馆等级够得着、本局开了那个种族，原始身材。
+    场面、手牌、金币一概不动：买不买、留不留、怎么打、做不做这套，全是模型自己决定——等于这局一直“刷到”这套阵容的牌。
+
+    为什么（第 20020 轮）：成型阵容课程是直接把高手第 6–11 回合的场面给它，前面怎么一步步凑出来它没走过；
+    起步课程（StartSeeder）把场上的随从换成起步卡，打乱了它自己的场面（那些局 3.40–3.58 名，比自己打还差），撤了。
+    模型自己的局里 S / A 成型 0–1%、核心卡买 1–3%（高手 7–9%），从来没自己做出过一套，不知道做出来值多少。
+    这里只是让对的牌常出现，选择权还在它手里；局末记“做成这一套了没有”和名次（practice_by_comp）。"""
+
+    def __init__(self, frac: float = 0.25, turns=(2, 3, 4, 5, 6, 7, 8, 9), seed: int = 0, n_slots: int = 2):
+        super().__init__(frac=frac, turns=turns, seed=seed, n_plant=12)
+        self.rng = random.Random(seed + 9311)
+        self.n_slots = int(n_slots)
+        self.plan: dict[int, list] = {}                # 对局 → [第几局, 这局练的阵容（None = 普通局）, 最近换过的回合]
+        self.n_applied = 0
+
+    def _groups(self, comp: dict, tier: int, lob) -> list[list[str]]:
+        def ok(k):
+            if not self._minion_ok(k, tier):
+                return False
+            rs = self.det[k].get("races") or []
+            return not lob or not rs or any(r in lob or r == "ALL" for r in rs)
+        core = [k for k in sorted(comp["core"]) if ok(k)]
+        sup = [k for k in sorted(comp.get("support") or []) if ok(k) and k not in comp["core"]]
+        tribes = sorted(comp.get("tribes") or [])
+        tri = sorted({k for r in tribes for k in self.tribe_pool.get(r, []) if ok(k)} - set(core) - set(sup))
+        return [core, sup, tri]
+
+    def offer(self, comp: dict, tier: int, lob, k: int) -> list[str]:
+        """这回合往酒馆里放的 k 张：每张先按 核心 0.5 / 配套 0.3 / 本族 0.2 抽一组（空的组跳过），再在组里随机一张。"""
+        groups = self._groups(comp, tier, lob)
+        w = [0.5, 0.3, 0.2]
+        out = []
+        for _ in range(k):
+            live = [(g, wi) for g, wi in zip(groups, w) if g]
+            if not live:
+                break
+            x, acc = self.rng.random() * sum(wi for _, wi in live), 0.0
+            for g, wi in live:
+                acc += wi
+                if x <= acc:
+                    out.append(self.rng.choice(g))
+                    break
+        return out
+
+    def active(self) -> set:
+        """这一局在练阵容的对局（成型阵容课程不换它们的场面）。"""
+        return {g for g, v in self.plan.items() if v[1] is not None}
+
+    def apply(self, env, features: np.ndarray, episodes=None) -> bool:
+        """每步 observe 之后调用：新的一局先决定练不练、练哪套；练的局在 turns 里每回合第一次看到招募阶段时换酒馆。
+        返回有没有改（改了要重新 observe）。"""
+        from tg.obs import lobby
+        if self.frac <= 0 or not self.comps:
+            return False
+        from taverngym import _core
+        turns = np.rint(features[:, 0] * 20).astype(int)
+        changed = False
+        for g in range(env.n_games):
+            ep = int(episodes[g]) if episodes is not None else env.episode_index(g)
+            cur = self.plan.get(g)
+            if cur is None or cur[0] != ep:
+                comp = None
+                if self.rng.random() < self.frac:
+                    lob = lobby(features[g])
+                    ok = [c for c in self.comps if self._reachable(c, lob)]
+                    comp = self.rng.choice(ok) if ok else None
+                cur = self.plan[g] = [ep, comp, -1]
+            t = int(turns[g])
+            if cur[1] is None or t not in self.turns or cur[2] == t:
+                continue
+            s = _loads(env.save(g))
+            game = s["game"]
+            if game.get("turn") != t or str(game.get("phase")) != "Recruit":
+                continue
+            cur[2] = t
+            me = game["players"][0]
+            shop = me.get("shop") or []
+            want = set(cur[1]["core"]) | set(cur[1].get("support") or [])
+            idx = [k for k, sl in enumerate(shop) if "Minion" in (sl.get("item") or {}) and not sl.get("frozen")]
+            if not idx:
+                continue
+            lob = lobby(features[g])
+            cards = self.offer(cur[1], int(me.get("tier") or 1), lob, min(self.n_slots, len(idx)))
+            if not cards:
+                self.n_missing += 1
+                continue
+            mine = lambda k: self.by_cid.get(int(shop[k]["item"]["Minion"].get("card", -1)), "") in want   # noqa: E731
+            idx.sort(key=lambda k: (mine(k), self.rng.random()))      # 先换和这套无关的
+            try:
+                G = _core.Game.from_json(_dumps(game))
+                for k in sorted(idx[:len(cards)], reverse=True):
+                    G.debug(_dumps({"cmd": "remove", "p": 0, "zone": "shop", "index": int(k)}))
+                for cid in cards:
+                    G.debug(_dumps({"cmd": "add_minion", "p": 0, "zone": "shop", "card": cid}))
+            except BaseException as ex:                            # noqa: BLE001 —— 引擎内部出错：这回合不换
+                if isinstance(ex, (KeyboardInterrupt, SystemExit)):
+                    raise
+                self.n_missing += 1
+                continue
+            s["game"] = _loads(G.state_json())
+            env.load(g, _dumps(s))
+            self.n_applied += 1
+            changed = True
+        return changed
+
+    def finish(self, g: int) -> str:
+        """对局 g 打完了：练阵容的局返回练的那套的名字，普通局返回空字符串。"""
+        cur = self.plan.pop(g, None)
+        return cur[1]["name"] if cur is not None and cur[1] is not None else ""
+
+    def take_stats(self) -> dict:
+        out = {"practice_shops": self.n_applied, "practice_missing": self.n_missing}
+        self.n_applied, self.n_missing = 0, 0
+        return out

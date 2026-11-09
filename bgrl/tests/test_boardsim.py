@@ -430,6 +430,8 @@ def check_seeder():
     t = int(np.rint(obs["features"][0, 0] * 20))
     sd = CompSeeder({t: [{"tier": 4, "board": board}]}, frac=1.0, turns=(t,), seed=0)
     assert sd.size() == 1
+    assert not sd.seed(env, obs["features"], skip=set(range(env.n_games)))   # 阵容练习局：不换
+    sd = CompSeeder({t: [{"tier": 4, "board": board}]}, frac=1.0, turns=(t,), seed=0)
     assert sd.seed(env, obs["features"]) and 0 in sd.seeded_slots
     obs = env.observe()
     ids = [base_id(card_id(int(x))) for x in obs["cards"][0][C_BOARD:C_BOARD + N_BOARD] if x > 0]
@@ -644,6 +646,7 @@ def check_board():
                 r["seeded_by_comp"] = {"龙虾流野兽": [6, 2.5, 0.333], "机械 APM": [5, 3.2, 0.2]}
             if it == 70:                                               # 新格式：后三项是其中加强局的局数 / 平均名次 / 吃鸡率
                 r["seeded_by_comp"] = {"龙虾流野兽": [4, 2.5, 0.25, 2, 3.0, 0.0]}
+                r["practice_by_comp"] = {"喝茶流": [6, 3.5, 0.167, 0.5]}
             lines.append(r)
             if it == 40:
                 lines.append({"iter": 40, "time": "", "rollback": "策略连续 10 轮变乱：熵 1.9"})
@@ -661,6 +664,7 @@ def check_board():
         assert "第 **120** 轮" in md and "吃鸡 25.0%" in md and "守护换回 best.pt" in md, md[:400]
         assert "| 龙虾流野兽 | 10 | 2.50 | 30% | 2 | 3.00 | 0% |" in md, md
         assert "| 机械 APM | 5 | 3.20 | 20% | 0 | - | - |" in md, md
+        assert "## 阵容练习局" in md and "| 喝茶流 | 6 | 50% | 3.50 | 17% |" in md, md
         assert "拿着成型阵容的阵容测试" in md and "3 局平均名次 2.67，吃鸡 33.3%，前四 67%" in md, md
         svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
         assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
@@ -721,6 +725,42 @@ def check_grow():
     assert step(10, 3)[0] == 0 and abs(step(10, A_END)[0] - 0.5 * (0.35 - 0.20)) < 1e-12
     assert t.mix["grow_n"] == 3 and abs(t.mix["grow_sum"] - (0.15 - 0.10 + 0.15)) < 1e-12
     return t.mix["grow_n"]
+
+
+def check_practice():
+    """阵容练习局（ShopPractice）：开局定一套本局凑得成的 S / A；练的回合招募开始时酒馆里换进这套的卡，场面不动；
+    局末 finish 返回练的那套；成型阵容课程跳过这些局（skip）。"""
+    import json as _json
+    from taverngym import BatchEnv
+    from rl.calibrate import ShopPractice
+    pr = ShopPractice(frac=1.0, turns=(2, 3, 4), seed=1, n_slots=2)
+    env = BatchEnv(4, seed=21, controlled=(0,), threads=1)
+    rng = np.random.default_rng(0)
+    seen, boards_same = 0, True
+    for _ in range(3000):
+        obs = env.observe()
+        before = [_json.loads(env.save(g))["game"]["players"][0]["board"] for g in range(4)]
+        if pr.apply(env, obs["features"]):
+            obs = env.observe()
+            for g in range(4):
+                game = _json.loads(env.save(g))["game"]
+                me = game["players"][0]
+                boards_same &= [m["card"] for m in me["board"]] == [m["card"] for m in before[g]]
+                cur = pr.plan[g]
+                if cur[1] is not None and cur[2] == game["turn"] and game["turn"] in (2, 3, 4):
+                    groups = pr._groups(cur[1], int(me["tier"]), None)
+                    allowed = {pr.det[k]["cid"] for grp in groups for k in grp}
+                    shop = [sl["item"]["Minion"]["card"] for sl in me["shop"] if "Minion" in sl["item"]]
+                    seen += sum(c in allowed for c in shop) >= 1
+        if min(int(round(f * 20)) for f in obs["features"][:, 0]) > 4:
+            break
+        acts = np.array([rng.choice(np.flatnonzero(m)) for m in obs["action_mask"]])
+        env.step(acts)
+    assert seen >= 4 and boards_same, (seen, boards_same)
+    assert pr.active() == {0, 1, 2, 3}
+    name = pr.finish(0)
+    assert name and name in {c["name"] for c in pr.comps} and 0 not in pr.active()
+    return seen
 
 
 def check_comptest_seeded():
@@ -796,6 +836,7 @@ def main() -> int:
     check_board()
     check_seed_row_floor()
     check_grow()
+    check_practice()
     check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
