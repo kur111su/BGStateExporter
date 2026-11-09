@@ -50,7 +50,8 @@ KPIS = [("eval_boost_score", "考试等效名次", True, 3), ("eval_boost_place"
         ("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_top4", "前四率", False, 3),
         ("place_bot", "机器人局名次", True, 3), ("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
         ("cs_late", "第 10 回合后场面强度", False, 3), ("grow", "后期每回合养场面", False, 3),
-        ("place_practice", "阵容练习局名次", True, 3), ("practice_tgt", "练习局局末阵容做到几成", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
+        ("place_practice", "阵容练习局名次", True, 3), ("practice_tgt", "练习局局末阵容做到几成", False, 3),
+        ("expert_follow", "练习局自己就照着凑的比例", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
         ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3), ("pro_top1", "和高手同一动作", False, 3)]
 
 
@@ -289,9 +290,9 @@ def render(run: Path, window: int = 3000) -> Path | None:
     if pagg:
         tot = sum(a[0] for a in pagg.values())
         md += ["## 阵容练习局（最近 %d 轮）" % window, "",
-               "开局给模型定一套本局凑得成的 S / A，第 2–9 回合每回合酒馆里换进 2 张这套的卡（场面、手牌、金币不动），"
-               "做不做全看模型。“做成了”= 局末场面按严格标准成了练的这一套。做成的比例往上走，说明它学会了沿着一套凑；"
-               "平均名次比机器人局好，说明自己凑出来的阵容也值钱。", "",
+               "开局给模型定一套本局凑得成的 S / A，第 7–13 回合每回合酒馆里换进 2 张这套的核心 / 配套卡（场面、手牌、金币不动），"
+               "第 7 回合起按“照着凑”的规则给建议（升本、刷新找核心卡、买核心卡、卖杂牌换位置）。“做成了”= 局末场面按严格标准"
+               "成了练的这一套。做成的比例往上走，说明它学会了沿着一套凑；平均名次比机器人局好，说明自己凑出来的阵容也值钱。", "",
                f"一共 {tot} 局，做成了 {sum(a[3] for a in pagg.values()) / max(1, tot):.0%}，"
                f"平均名次 {sum(a[1] for a in pagg.values()) / max(1, tot):.2f}，"
                f"吃鸡 {sum(a[2] for a in pagg.values()) / max(1, tot):.0%}", "",
