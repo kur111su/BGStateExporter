@@ -176,7 +176,9 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         if judge is None or lg_fn is None:
             print("推演要高分阵容库（runs/pro_boards.json）和模型的动作分数，这次不推演", flush=True)
         else:
-            look = (lg_fn, {"n": 0, "changed": 0, "gain": 0.0, "by_kind": {}})
+            from rl.boardsim import BoardJudge
+            # 推演用另一组考官（种子 1）：阵容强度表（种子 0 那组）还是独立的检查，不是“对着考题练”
+            look = (lg_fn, {"n": 0, "changed": 0, "gain": 0.0, "by_kind": {}}, BoardJudge(lib, k=12, n=3, seed=1))
             print(f"推演：第 {look_from} 回合起每个决策试模型最想走的 {look_k} 步 + 结束回合，各自打完这回合（最多 {look_depth} 步），"
                   f"选结束时场面最强的", flush=True)
     seeder, seeded_comp = None, {}                     # 拿着成型阵容打：槽位 → 换成的那套阵容（空 = 没换成）
@@ -247,7 +249,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 if rows:
                     L = look[0](f[rows], obs["cards"][ready][rows], m[rows])
                     for r, k in enumerate(rows):
-                        a[k] = lookahead(env, int(ready[k]), int(tt[k]), m[k], L[r], int(a[k]), judge, look[0],
+                        a[k] = lookahead(env, int(ready[k]), int(tt[k]), m[k], L[r], int(a[k]), look[2], look[0],
                                          look_k, look_depth, look[1], rng_seed=seed * 1000003 + step_no * 31 + k)
             for k, i in enumerate(ready):
                 fi = f[k]
