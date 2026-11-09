@@ -296,7 +296,7 @@ class Config:
     practice_frac: float = 0.0
     practice_turns: str = "2,3,4,5,6,7,8,9"
     practice_slots: int = 2
-    # 练习局里目标阵容那一项（target_bonus × Φ）局末少扣多少（第 20240 轮起）：1 = 不扣，局末凑成几成就白拿 target_bonus × 几成。
+    # 练习局里目标阵容那一项（target_bonus × Φ）局末少扣多少（第 20240 轮起）：1 = 不扣，局末凑成几成就白拿 target_bonus（v3 是 0.6）× 几成。
     # 普通局照常扣回（shape_repay），所以只有练习局里“凑阵容”本身值分；练出来的买法拿到普通局里值不值，还是名次说了算
     practice_keep_target: float = 0.0
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
