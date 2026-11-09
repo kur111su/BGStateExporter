@@ -575,12 +575,15 @@ class ShopPractice(StartSeeder):
     模型自己的局里 S / A 成型 0–1%、核心卡买 1–3%（高手 7–9%），从来没自己做出过一套，不知道做出来值多少。
     这里只是让对的牌常出现，选择权还在它手里；局末记“做成这一套了没有”和名次（practice_by_comp）。"""
 
-    def __init__(self, frac: float = 0.25, turns=(2, 3, 4, 5, 6, 7, 8, 9), seed: int = 0, n_slots: int = 2):
+    def __init__(self, frac: float = 0.25, turns=(7, 8, 9, 10, 11, 12, 13), seed: int = 0, n_slots: int = 2,
+                 weights=(0.6, 0.4, 0.0)):
         super().__init__(frac=frac, turns=turns, seed=seed, n_plant=12)
+        self.weights = tuple(float(x) for x in weights)         # 核心 / 配套 / 本族随从 各占多少机会
         self.rng = random.Random(seed + 9311)
         self.n_slots = int(n_slots)
         self.plan: dict[int, list] = {}                # 对局 → [第几局, 这局练的阵容（None = 普通局）, 最近换过的回合]
         self.n_applied = 0
+        self._base: list[str] | None = None            # 卡牌序号 → 基础卡 id（expert 用）
 
     def _groups(self, comp: dict, tier: int, lob) -> list[list[str]]:
         def ok(k):
@@ -594,13 +597,17 @@ class ShopPractice(StartSeeder):
         tri = sorted({k for r in tribes for k in self.tribe_pool.get(r, []) if ok(k)} - set(core) - set(sup))
         return [core, sup, tri]
 
-    def offer(self, comp: dict, tier: int, lob, k: int) -> list[str]:
-        """这回合往酒馆里放的 k 张：每张先按 核心 0.5 / 配套 0.3 / 本族 0.2 抽一组（空的组跳过），再在组里随机一张。"""
+    def offer(self, comp: dict, tier: int, lob, k: int, have=()) -> list[str]:
+        """这回合往酒馆里放的 k 张：每张先按 weights（默认核心 0.6 / 配套 0.4 / 本族 0）抽一组（空的组跳过），再在组里随机一张。
+        have：场上 + 手里已经有的基础卡——核心卡先给还没有的（都有了才重复，好凑三连）。"""
         groups = self._groups(comp, tier, lob)
-        w = [0.5, 0.3, 0.2]
+        have = set(have)
+        if groups[0] and any(x not in have for x in groups[0]):
+            groups[0] = [x for x in groups[0] if x not in have]
+        w = list(self.weights)
         out = []
         for _ in range(k):
-            live = [(g, wi) for g, wi in zip(groups, w) if g]
+            live = [(g, wi) for g, wi in zip(groups, w) if g and wi > 0]
             if not live:
                 break
             x, acc = self.rng.random() * sum(wi for _, wi in live), 0.0
@@ -653,7 +660,10 @@ class ShopPractice(StartSeeder):
             if not idx:
                 continue
             lob = lobby(features[g])
-            cards = self.offer(cur[1], int(me.get("tier") or 1), lob, min(self.n_slots, len(idx)))
+            have = [self.by_cid.get(int(x.get("card", -1)), "") for x in (me.get("board") or [])]
+            have += [self.by_cid.get(int(((h.get("item") or {}).get("Minion") or {}).get("card", -1)), "")
+                     for h in (me.get("hand") or []) if isinstance(h, dict)]
+            cards = self.offer(cur[1], int(me.get("tier") or 1), lob, min(self.n_slots, len(idx)), have=have)
             if not cards:
                 self.n_missing += 1
                 continue
@@ -675,6 +685,101 @@ class ShopPractice(StartSeeder):
             self.n_applied += 1
             changed = True
         return changed
+
+    def _bases(self) -> list[str]:
+        if self._base is None:
+            from tg.catalog import base_of_index, n_cards
+            self._base = [base_of_index(i) if i else "" for i in range(n_cards())]
+        return self._base
+
+    def rank(self, comp: dict, b: str) -> int:
+        """这张卡（基础卡 id）对这套阵容：核心卡 3、配套卡 2、本族随从 1、无关 0。"""
+        if not b:
+            return 0
+        if b in comp["core"]:
+            return 3
+        if b in (comp.get("support") or ()):
+            return 2
+        tribes = comp.get("tribes") or ()
+        d = self.det.get(b) or {}
+        if tribes and d.get("kind") == "minion" and any(r in tribes or r == "ALL" for r in (d.get("races") or [])):
+            return 1
+        return 0
+
+    # 照着凑的升本节奏（回合 → 回合末至少到几本），按高手的平均：第 5 回合 3.2、第 7 回合 4.4、第 8 回合 5.0、第 9 回合 5.4
+    CURVE = {1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 4, 7: 4, 8: 5, 9: 5}
+
+    def expert(self, g: int, c, m, f=None) -> int:
+        """练习局里“照着这套凑”的动作（没有就 -1，交给模型自己）。c：这一行的卡牌序号（obs["cards"]），m：合法动作，
+        f：这一行的 features（看回合、酒馆等级；不给就不管升本）。按顺序：
+          1 发现 / 选择：有这套的牌就选最相关的（核心 > 配套 > 本族）
+          2 手里有这套的随从、场上有位置：打出来（放最右边）
+          3 酒馆里有这套的核心卡、买得起：买
+          4 酒馆等级落后于高手节奏（第 5 回合 3 本、第 6 回合 4 本、第 8 回合 5 本、第 10 回合 6 本）、升得起：升本
+          5 酒馆里有配套卡 / 本族随从：场上 + 手里随从不满 7 个、或者场上有比它更没用的可以换，就买
+          6 场上满了、手里压着更有用的随从：卖掉场上最没用的那个（无关 < 本族 < 配套，同样先卖等级低的）
+          7 第 7 回合起、4 本以上、场上满了还有不属于这套的随从、酒馆里没有能换上的牌、刷得起：刷新（找核心卡）
+        冻结、结束回合、法术、站位都不管。"""
+        from tg.actions import (A_BUY, A_CHOOSE, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE, N_BOARD, N_CHOICE, N_HAND, N_POS,
+                                N_SHOP)
+        from tg.obs import C_BOARD, C_CHOICE, C_HAND, C_SHOP
+        cur = self.plan.get(g)
+        if cur is None or cur[1] is None:
+            return -1
+        comp, base = cur[1], self._bases()
+        cc = np.asarray(c).astype(np.int64)
+        mm = np.asarray(m).astype(bool)
+
+        def b_of(x):
+            return base[int(x)] if 0 < int(x) < len(base) else ""
+
+        def kind(x):
+            return (self.det.get(b_of(x)) or {}).get("kind")
+
+        def tier_of(x):
+            return int((self.det.get(b_of(x)) or {}).get("tier") or 0)
+
+        def rk(x):
+            return self.rank(comp, b_of(x))
+        ch = [(rk(cc[C_CHOICE + i]), -i) for i in range(N_CHOICE) if mm[A_CHOOSE + i]]
+        if ch:
+            r, ni = max(ch)
+            return A_CHOOSE - ni if r > 0 else -1
+        board = [int(x) for x in cc[C_BOARD:C_BOARD + N_BOARD]]
+        hand = [int(x) for x in cc[C_HAND:C_HAND + N_HAND]]
+        n_board = sum(x > 0 for x in board)
+        n_min = n_board + sum(x > 0 and kind(x) == "minion" for x in hand)
+        worst = min([(rk(x), tier_of(x)) for x in board if x > 0], default=(9, 0))   # 场上最没用的随从
+        for h in range(N_HAND):
+            if hand[h] > 0 and kind(hand[h]) == "minion" and rk(hand[h]) > 0:
+                for p in range(N_POS - 1, -1, -1):
+                    if mm[A_PLAY + h * N_POS + p]:
+                        return A_PLAY + h * N_POS + p
+        shop = [(rk(cc[C_SHOP + i]), i) for i in range(N_SHOP) if mm[A_BUY + i]]
+        core = [i for r, i in shop if r == 3]
+        if core:
+            return A_BUY + core[0]
+        if f is not None and mm[A_UPGRADE]:
+            t, tr = int(round(float(f[0]) * 20)), None
+            from tg.obs import tier as tier_f
+            tr = int(tier_f(f))
+            if tr < self.CURVE.get(t, 6):
+                return A_UPGRADE
+        for r_want in (2, 1):
+            for r, i in shop:
+                if r == r_want and (n_min < N_BOARD or (n_board >= N_BOARD and worst[0] < r)):
+                    return A_BUY + i
+        waiting = max([rk(x) for x in hand if x > 0 and kind(x) == "minion"], default=0)
+        if n_board >= N_BOARD and waiting > 0:
+            cand = [(rk(board[i]), tier_of(board[i]), i) for i in range(N_BOARD)
+                    if board[i] > 0 and rk(board[i]) < waiting and mm[A_SELL + i]]
+            if cand:
+                return A_SELL + min(cand)[2]
+        if f is not None and mm[A_REFRESH] and n_board >= N_BOARD and worst[0] < 2:
+            from tg.obs import tier as tier_f
+            if int(round(float(f[0]) * 20)) >= 7 and int(tier_f(f)) >= 4:
+                return A_REFRESH
+        return -1
 
     def finish(self, g: int) -> str:
         """对局 g 打完了：练阵容的局返回练的那套的名字，普通局返回空字符串。"""

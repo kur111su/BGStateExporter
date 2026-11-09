@@ -736,7 +736,7 @@ def check_practice():
     import json as _json
     from taverngym import BatchEnv
     from rl.calibrate import ShopPractice
-    pr = ShopPractice(frac=1.0, turns=(2, 3, 4), seed=1, n_slots=2)
+    pr = ShopPractice(frac=1.0, turns=(2, 3, 4), seed=1, n_slots=2, weights=(0.5, 0.3, 0.2))
     env = BatchEnv(4, seed=21, controlled=(0,), threads=1)
     rng = np.random.default_rng(0)
     seen, boards_same = 0, True
@@ -764,6 +764,53 @@ def check_practice():
     name = pr.finish(0)
     assert name and name in {c["name"] for c in pr.comps} and 0 not in pr.active()
     return seen
+
+
+def check_expert():
+    """练习局“照着凑”的建议动作（ShopPractice.expert）：买核心卡 > 升本（落后于节奏）> 买配套；打出这套的随从；
+    场上满了、手里压着核心卡就卖最没用的；场上满了还有杂牌、酒馆里没能换的就刷新。"""
+    from rl.calibrate import ShopPractice
+    from tg.actions import A_BUY, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE, N_ACTIONS, N_POS
+    from tg.catalog import base_of_index, n_cards
+    from tg.obs import C_BOARD, C_HAND, C_SHOP, F_TIER, F_TURN, TIER_SCALE, TURN_SCALE
+    pr = ShopPractice(frac=1.0, seed=0)
+    tea = next(c for c in pr.comps if c["name"] == "喝茶流")
+    pr.plan[0] = [0, tea, -1]
+    idx = {}
+    for i in range(1, n_cards()):
+        idx.setdefault(base_of_index(i), i)
+    brann, fruit, junk = idx["BG_LOE_077"], idx["BG36_346"], idx["BG26_135"]          # 布莱恩（核心）、水果商贩（配套）、南海卖艺者
+
+    def state(turn, tier, shop=(), hand=(), board=(), legal=()):
+        f = np.zeros(32, dtype=np.float32)
+        f[F_TURN], f[F_TIER] = turn / TURN_SCALE, tier / TIER_SCALE
+        c = np.zeros(60, dtype=np.int64)
+        for k, x in enumerate(shop):
+            c[C_SHOP + k] = x
+        for k, x in enumerate(hand):
+            c[C_HAND + k] = x
+        for k, x in enumerate(board):
+            c[C_BOARD + k] = x
+        m = np.zeros(N_ACTIONS, dtype=bool)
+        m[list(legal)] = True
+        return c, m, f
+    c, m, f = state(8, 4, shop=[junk, fruit, brann], legal=[A_BUY, A_BUY + 1, A_BUY + 2, A_UPGRADE, A_REFRESH])
+    assert pr.expert(0, c, m, f) == A_BUY + 2                                    # 核心卡先买
+    m[A_BUY + 2] = False
+    assert pr.expert(0, c, m, f) == A_UPGRADE                                    # 第 8 回合 4 本：先升本
+    m[A_UPGRADE] = False
+    assert pr.expert(0, c, m, f) == A_BUY + 1                                    # 再买配套卡
+    c, m, f = state(8, 5, hand=[junk, brann], board=[junk] * 3, legal=[A_PLAY + 1 * N_POS + p for p in range(4)] + [A_PLAY + p for p in range(4)])
+    assert pr.expert(0, c, m, f) == A_PLAY + 1 * N_POS + 3                       # 打出布莱恩（最右边），不打杂牌
+    c, m, f = state(9, 5, hand=[brann], board=[junk] * 6 + [fruit], legal=[A_SELL + i for i in range(7)] + [A_REFRESH])
+    assert pr.expert(0, c, m, f) == A_SELL + 0                                   # 场上满了：卖杂牌给布莱恩腾位置
+    c, m, f = state(9, 5, board=[junk] * 6 + [fruit], legal=[A_REFRESH, A_SELL])
+    assert pr.expert(0, c, m, f) == A_REFRESH                                    # 场上满了还有杂牌、酒馆没东西：刷新
+    c, m, f = state(5, 3, board=[junk] * 6 + [fruit], legal=[A_REFRESH])
+    assert pr.expert(0, c, m, f) == -1                                           # 第 7 回合以前不刷
+    pr.plan[0] = [0, None, -1]
+    assert pr.expert(0, *state(8, 4, shop=[brann], legal=[A_BUY])) == -1         # 普通局不给建议
+    return True
 
 
 def check_comptest_seeded():
@@ -840,6 +887,7 @@ def main() -> int:
     check_seed_row_floor()
     check_grow()
     check_practice()
+    check_expert()
     check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"

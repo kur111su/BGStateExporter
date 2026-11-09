@@ -45,7 +45,7 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --practice-frac 0.5 --practice-turns 2,3 --practice-keep-target 1.0 --target-bonus 0.5
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --practice-frac 0.5 --practice-turns 2,3 --practice-keep-target 1.0 --expert-coef 0.3 --practice-expert-from 2 --target-bonus 0.5
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
         run: |
           python -X utf8 bgrl/tests/test_hsreplay.py --write-sample bgrl/runs/_replays

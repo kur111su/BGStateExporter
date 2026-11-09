@@ -294,11 +294,17 @@ class Config:
     # practice_turns 每回合招募开始时把酒馆里 practice_slots 个随从换成这套现在买得到的卡（核心 / 配套 / 本族），
     # 场面、手牌、金币不动，买不买、做不做全看模型；这些局不再换成型场面，单独记名次和“做成这套没有”。0 = 不用
     practice_frac: float = 0.0
-    practice_turns: str = "2,3,4,5,6,7,8,9"
+    practice_turns: str = "7,8,9,10,11,12,13"
     practice_slots: int = 2
     # 练习局里目标阵容那一项（target_bonus × Φ）局末少扣多少（第 20240 轮起）：1 = 不扣，局末凑成几成就白拿 target_bonus（v3 是 0.6）× 几成。
     # 普通局照常扣回（shape_repay），所以只有练习局里“凑阵容”本身值分；练出来的买法拿到普通局里值不值，还是名次说了算
     practice_keep_target: float = 0.0
+    # 照着凑（第 20350 轮起）：练习局第 practice_expert_from 回合起，ShopPractice.expert 按“照着这套凑”的规则给每个决策一个
+    # 建议动作（发现选这套的牌 → 打出这套的随从 → 买核心卡 → 按高手节奏升本 → 买配套 / 本族 → 场上满了卖最没用的 →
+    # 场上满了还有杂牌就刷新找核心卡），没有规则可用的决策不管。更新时这些决策加一项交叉熵 expert_coef × (-log π(建议))，
+    # 按整批的决策数平均。0 = 不用
+    expert_coef: float = 0.0
+    practice_expert_from: int = 7
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -447,13 +453,14 @@ class Rollout:
         self.cuts: set[int] = set()
         self.seed_cut: dict[tuple, int] = {}
 
-    def add(self, slots, f, c, m, a, logp, v, r0=None):
+    def add(self, slots, f, c, m, a, logp, v, r0=None, exp=None):
         k = len(slots)
         if not k:
             return
         slots = np.asarray(slots, dtype=np.int64)
+        exp = np.full(k, -1, dtype=np.int16) if exp is None else np.asarray(exp, dtype=np.int16)
         for name, x in (("slot", slots), ("ep", self.ep[slots]), ("f", np.asarray(f, dtype=np.float16)), ("c", c),
-                        ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v)):
+                        ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v), ("exp", exp)):
             self.parts[name].append(np.asarray(x))
         self.last[slots] = np.arange(self.n, self.n + k)
         self.r.extend([0.0] * k if r0 is None else [float(x) for x in r0])
@@ -577,6 +584,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             from .calibrate import ShopPractice
             pr_turns = [int(x) for x in str(cfg.practice_turns).split(",") if x.strip()]
             self.practice = ShopPractice(cfg.practice_frac, pr_turns, seed=cfg.seed, n_slots=cfg.practice_slots)
+            if cfg.expert_coef > 0:
+                print(f"照着凑：练习局第 {cfg.practice_expert_from} 回合起，按规则给建议动作，交叉熵系数 {cfg.expert_coef}", flush=True)
             print(f"阵容练习局：{cfg.practice_frac:.0%} 的机器人局开局定一套本局凑得成的 S / A（{len(self.practice.comps)} 套均匀抽），"
                   f"第 {cfg.practice_turns} 回合每回合把酒馆里 {cfg.practice_slots} 个随从换成这套的卡", flush=True)
         self.prac_places: list[int] = []
@@ -729,8 +738,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                         r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64), c[o:o + k])
                         r0 = self._combat_shape(env, off, idx, f[o:o + k], ak, r0)
                         r0 = self._grow_shape(env, off, idx, f[o:o + k], ak, r0)
+                        exp = self._expert_labels(name, idx, f[o:o + k], c[o:o + k], m[o:o + k], ak)
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
-                                         res[1][o:o + k], res[2][o:o + k], r0=r0)
+                                         res[1][o:o + k], res[2][o:o + k], r0=r0, exp=exp)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
                         n_dec += k
                         self.n_noop += int(noop.sum())
@@ -920,6 +930,14 @@ class Trainer(ShapingMixin, ImitationMixin):
                             loss = loss + cfg.aux_comp_coef * aux_c
                             stats["aux_comp"].append(aux_c.item())
                             stats["comp_acc"].append(float((self.model.last_comp_logits[has_k].argmax(-1) == K[has_k]).float().mean()))
+                    if getattr(cfg, "expert_coef", 0) > 0 and "exp" in b:
+                        E = t(b["exp"][j].astype(np.int64), torch.long)
+                        has_e = E >= 0
+                        if has_e.any():                # 练习局“照着凑”：建议动作的交叉熵（按整批平均）
+                            ce = -logp_all[has_e].gather(1, E[has_e].unsqueeze(1)).squeeze(1)
+                            loss = loss + cfg.expert_coef * ce.sum() / len(j)
+                            stats["expert_ce"].append(ce.mean().item())
+                            stats["expert_agree"].append(float((logp_all[has_e].argmax(-1) == E[has_e]).float().mean()))
                     if use_anchor:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
                             ref = F.log_softmax(self.anchor(f, c, m, compressed=True)[0].float(), -1)
@@ -1420,6 +1438,22 @@ class Trainer(ShapingMixin, ImitationMixin):
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
 
+    def _expert_labels(self, name, idx, f, c, m, ak):
+        """练习局里“照着凑”的建议动作（见 Config.expert_coef）：没有建议 / 不是练习局 = -1。顺便记跟着走的比例。"""
+        cfg = self.cfg
+        if name != "bot" or self.practice is None or cfg.expert_coef <= 0:
+            return None
+        exp = np.full(len(idx), -1, dtype=np.int16)
+        tt = np.rint(f[:, 0] * 20).astype(int)
+        for j in range(len(idx)):
+            g = int(idx[j])
+            if tt[j] >= cfg.practice_expert_from and self.practice.is_active(g):
+                exp[j] = self.practice.expert(g, c[j], m[j], f[j])
+        lab = exp >= 0
+        self.mix["exp_n"] += int(lab.sum())
+        self.mix["exp_follow"] += int((np.asarray(ak)[lab] == exp[lab]).sum())
+        return exp
+
     def _comp_name(self, k) -> str:
         """_final_comp 的序号 → 阵容名字（没成 / 不认识 → 空字符串）。"""
         if k is None:
@@ -1532,6 +1566,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3),
                        comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
+            if mx.get("exp_n"):                        # 练习局里有建议的决策、模型自己就选了建议的比例
+                rec["expert_follow"] = round(mx["exp_follow"] / mx["exp_n"], 3)
+                rec["expert_n"] = int(mx["exp_n"])
             if mx.get("prac_fin_n"):                   # 练习局局末目标阵容做到几成（0–1）
                 rec["practice_tgt"] = round(mx["prac_fin_sum"] / mx["prac_fin_n"], 3)
             if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
