@@ -10,6 +10,7 @@
                                   多了多少就加多少，一局结束时扣回最后的存款（纯势能差，整局和为 0；资源变成场面由 combat_bonus 接着算）
   combat_bonus                    阵容强度：结束回合时让引擎拿当前场面打一组同期高分阵容（rl/boardsim.py），
                                   胜率比上次量的时候涨了多少就加多少（势能差：整局加起来 = 最后的强度 - 第一次的强度）
+  grow_bonus                      养场面：后期每回合开始、结束各量一次同一把尺子的强度，加 结束 - 开始（这回合自己养了多少，不扣回）
 
 Trainer（rl/ppo.py）继承 ShapingMixin。这里用到 Trainer 的：cfg、iter、rollout（ep / last / r：改已经存下的奖励）、
 mix（日志计数）。每个座位的状态（upg_ep、upg_n、ref_idx、gs）在这里建；tempo_t0 存在检查点里。
@@ -57,8 +58,15 @@ class ShapingMixin:
         self.fc_idx = np.full(self.n_slots, -1, dtype=np.int64)  # （rl/target_comps.json 里的序号；-1 = 没成型）
         if cfg.combat_bonus > 0:
             self.judge = self._make_judge()
+        self.grow_judge = None                         # 养场面（grow_bonus）：每个座位这回合开始时的强度
+        self.gr_ep = np.full(self.n_slots, -1, dtype=np.int64)
+        self.gr_turn = np.full(self.n_slots, -1, dtype=np.int64)
+        self.gr_start = np.full(self.n_slots, np.nan, dtype=np.float64)
+        self.gr_rng = random.Random(cfg.seed + 13)
+        if getattr(cfg, "grow_bonus", 0) > 0:
+            self.grow_judge = self._make_judge(fights=cfg.grow_fights, what="养场面")
 
-    def _make_judge(self):
+    def _make_judge(self, fights: int | None = None, what: str = ""):
         from .boardsim import BoardJudge
         lib = getattr(self, "_pro_lib", None)
         if not lib:
@@ -70,6 +78,10 @@ class ShapingMixin:
             print("没有高分阵容库（runs/pro_boards.json、runs/h13_boards.json），阵容强度奖励这次不用", flush=True)
             return None
         cfg = self.cfg
+        if what:
+            print(f"{what}奖励：第 {cfg.grow_from_turn} 回合起（抽 {cfg.grow_frac:.0%} 的回合）每回合开始、结束各打一次 "
+                  f"{cfg.combat_boards} 个同期高分阵容 × {fights} 场，加 {cfg.grow_bonus} ×（结束 - 开始）", flush=True)
+            return BoardJudge(lib, k=cfg.combat_boards, n=int(fights or cfg.combat_fights), seed=cfg.seed)
         print(f"阵容强度奖励：每次结束回合（第 {cfg.combat_from_turn} 回合起，抽 {cfg.combat_frac:.0%}）打 "
               f"{cfg.combat_boards} 个同期高分阵容 × {cfg.combat_fights} 场，系数 {cfg.combat_bonus}", flush=True)
         return BoardJudge(lib, k=cfg.combat_boards, n=cfg.combat_fights, seed=cfg.seed)
@@ -110,6 +122,47 @@ class ShapingMixin:
                 self.mix["cs_late_sum"] += raw
                 self.mix["cs_late_n"] += 1
         self.mix["t_combat"] += time.time() - t0
+        return r0
+
+    def _grow_shape(self, env, off, idx, f, ak, r0):
+        """养场面奖励（grow_bonus）：第 grow_from_turn 回合起，学习者这回合第一次决策前（招募阶段刚开始）拿这局的副本
+        打一组同期高分阵容量 Φ_开始，结束回合时（局面还是招募阶段的最后样子）同一组再量 Φ_结束，结束回合那一步加
+        grow_bonus × (Φ_结束 - Φ_开始)。同一组考官、同一局的战斗随机数（combat_preview 按对局种子），两次一减噪声小。
+
+        为什么不用 combat_bonus：它和上一次结束回合比，对手每回合变强那一截也扣在模型头上，整局加起来是最后的强度，
+        局末扣回以后后期那几步几乎没有功劳；不扣回又等于奖励“早点死、死的时候场面像样”。这一项只看这回合自己养了多少：
+        引擎（布莱恩、提图斯、热气球测绘员……）的价值是以后每回合都养得更多，留着它就一直有分；卖掉它当场看不出亏，
+        之后每回合少拿。死得早就少几回合，不会多拿。"""
+        cfg = self.cfg
+        if self.grow_judge is None or cfg.grow_bonus <= 0:
+            return r0
+        t0 = time.time()
+        turns = np.rint(f[:, 0] * 20).astype(int)
+        for j in range(len(idx)):
+            t = int(turns[j])
+            if t < cfg.grow_from_turn:
+                continue
+            i = int(idx[j])
+            s = off + i
+            ep = int(self.rollout.ep[s])
+            if self.gr_ep[s] != ep or self.gr_turn[s] != t:      # 这回合第一次决策：决定量不量，量的话先量开始
+                self.gr_ep[s], self.gr_turn[s] = ep, t
+                self.gr_start[s] = np.nan
+                if cfg.grow_frac >= 1 or self.gr_rng.random() < cfg.grow_frac:
+                    g, seat = env.slot(i)
+                    v = self.grow_judge.judge(env.game(int(g)), int(seat), t)
+                    if v is not None:
+                        self.gr_start[s] = v
+            if ak[j] == A_END and not np.isnan(self.gr_start[s]):
+                g, seat = env.slot(i)
+                v = self.grow_judge.judge(env.game(int(g)), int(seat), t)
+                if v is not None:
+                    d = float(v - self.gr_start[s])
+                    r0[j] += cfg.grow_bonus * d
+                    self.mix["grow_sum"] += d
+                    self.mix["grow_n"] += 1
+                self.gr_start[s] = np.nan
+        self.mix["t_grow"] += time.time() - t0
         return r0
 
     def tempo_now(self) -> float:

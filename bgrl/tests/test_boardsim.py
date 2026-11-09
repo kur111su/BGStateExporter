@@ -692,6 +692,37 @@ def check_seed_row_floor():
     return seen[-1]
 
 
+def check_grow():
+    """养场面奖励（ShapingMixin._grow_shape）：第 grow_from_turn 回合起，这回合第一次决策前量开始、结束回合时量结束，
+    结束回合那一步加 grow_bonus × (结束 - 开始)；早于 grow_from_turn 的回合、新的一局都从头来。"""
+    from collections import defaultdict
+    from tg.actions import A_END
+    from rl.shaping import ShapingMixin
+    vals = iter([0.30, 0.45, 0.50, 0.40, 0.20, 0.35])           # 依次量到的强度
+    calls = []
+
+    def judge(game, seat, t):
+        calls.append(t)
+        return next(vals)
+    cfg = SimpleNamespace(grow_bonus=0.5, grow_from_turn=9, grow_frac=1.0, seed=0)
+    t = SimpleNamespace(cfg=cfg, grow_judge=SimpleNamespace(judge=judge), mix=defaultdict(int),
+                        rollout=SimpleNamespace(ep=np.zeros(2, dtype=np.int64)),
+                        gr_ep=np.full(2, -1, dtype=np.int64), gr_turn=np.full(2, -1, dtype=np.int64),
+                        gr_start=np.full(2, np.nan), gr_rng=None)
+    env = SimpleNamespace(slot=lambda i: (i, 0), game=lambda g: None)
+    feat = lambda turn: np.full((1, 4), turn / 20.0)              # noqa: E731 —— features[:, 0] * 20 = 回合
+    step = lambda turn, a: ShapingMixin._grow_shape(t, env, 0, np.array([0]), feat(turn), np.array([a]), np.zeros(1))  # noqa: E731
+    assert step(8, A_END)[0] == 0 and not calls                    # 第 8 回合：不量
+    assert step(9, 3)[0] == 0 and calls == [9]                     # 第 9 回合第一次决策：量开始 0.30
+    assert step(9, 3)[0] == 0 and calls == [9]                     # 同一回合不再量开始
+    assert abs(step(9, A_END)[0] - 0.5 * (0.45 - 0.30)) < 1e-12    # 结束 0.45：+0.075
+    assert abs(step(10, A_END)[0] - 0.5 * (0.40 - 0.50)) < 1e-12   # 第 10 回合一上来就结束：开始 0.50、结束 0.40
+    t.rollout.ep[0] = 1                                            # 新的一局，同一回合数也重新量开始
+    assert step(10, 3)[0] == 0 and abs(step(10, A_END)[0] - 0.5 * (0.35 - 0.20)) < 1e-12
+    assert t.mix["grow_n"] == 3 and abs(t.mix["grow_sum"] - (0.15 - 0.10 + 0.15)) < 1e-12
+    return t.mix["grow_n"]
+
+
 def check_comptest_seeded():
     """comptest_seeded.bat（goldflow --seed-comps）：每局在给的回合把场面换成成型的 S / A 阵容，按阵容记名次。"""
     from rl.comp import load_target_comps
@@ -764,6 +795,7 @@ def main() -> int:
     check_place_reward()
     check_board()
     check_seed_row_floor()
+    check_grow()
     check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"

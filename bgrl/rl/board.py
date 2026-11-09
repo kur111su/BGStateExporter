@@ -29,12 +29,13 @@ PANELS = [
      "8 个人随便打：吃鸡 12.5%、前四 50%", False, True),
     ("place", "训练对局名次", [("place_bot", "机器人局"), ("place_boost", "加强局"), ("place_seeded", "成型阵容课程局"),
                           ("place_league", "对历史版本")], "越低越好", True, False),
-    ("boost", "加强局强度（自适应）", [("boost_strength", "前期换成高分阵容的概率")],
-     "模型越强它越高；第 10 回合起固定全强度", False, False),
+    ("boost", "加强局强度（自适应）", [("boost_strength", "前期换成高分阵容的概率"), ("boost_floor", "下限")],
+     "模型越强它越高；第 10 回合起固定全强度；下限从第 19650 轮起慢慢抬到 0.7", False, False),
     ("ent", "熵 / 熵系数", [("ent", "熵"), ("ent_coef_x100", "熵系数 × 100")],
      "熵目标 1.2；超过 1.8 或比最近中位数高 35% 连续 10 轮会回退", None, False),
     ("lr", "学习率 / KL", [("lr_x1e4", "学习率 × 1e4"), ("kl_x100", "KL × 100")], "回退时学习率减半，之后每 50 轮翻倍", None, False),
-    ("strength", "场面强度（结束回合的场面打同期高分阵容的胜率）", [("cs_wr", "全部回合"), ("cs_late", "第 10 回合以后")],
+    ("strength", "场面强度（结束回合的场面打同期高分阵容的胜率）", [("cs_wr", "全部回合"), ("cs_late", "第 10 回合以后"),
+                                                    ("grow", "后期每回合自己养了多少（结束 − 开始）")],
      "越高越好；高手第 12–14 回合约 0.6–0.7", False, False),
     ("econ", "经济（每回合）", [("unspent", "剩下没花的钱"), ("up_turn", "升本"), ("buy_turn", "买牌"), ("ref_turn", "刷新")],
      "剩钱越少越好（高手 0.01–0.26）", None, False),
@@ -48,7 +49,7 @@ PANELS = [
 KPIS = [("eval_boost_score", "考试等效名次", True, 3), ("eval_boost_place", "考试平均名次", True, 3),
         ("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_top4", "前四率", False, 3),
         ("place_bot", "机器人局名次", True, 3), ("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
-        ("cs_late", "第 10 回合后场面强度", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
+        ("cs_late", "第 10 回合后场面强度", False, 3), ("grow", "后期每回合养场面", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
         ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3), ("pro_top1", "和高手同一动作", False, 3)]
 
 

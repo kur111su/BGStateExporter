@@ -173,6 +173,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         else:
             print("没有高分阵容库（runs/pro_boards.json），不换成型阵容", flush=True)
     phis: dict[int, list] = {}                         # 槽位 → [(回合, Φ)]
+    grows: dict[int, list] = {}                        # 槽位 → [(回合, 结束 - 开始)]：这回合自己把场面养强了多少
+    g_start: dict[int, tuple] = {}                     # 槽位 → (回合, 这回合开始时的 Φ)
     picks = PickStats()
     sells: dict[str, int] = {}
     buy_rows: list = []                                # 每次买：(当时的卡牌编号, 动作)，算“围绕种族 / 搭配”的买法
@@ -230,15 +232,21 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                     sells[sid] = sells.get(sid, 0) + 1
                     sell_rows.append((fi[:64].copy(), ci.copy(), ak))
                 logs[i].see(int(turn(fi)), int(gold(fi)), int(tier(fi)), int(up_cost(fi)), int(a[k]))
+                if judge is not None and not done[i] and int(turn(fi)) >= 3 and g_start.get(int(i), (None,))[0] != int(turn(fi)):
+                    g_, seat_ = env.slot(int(i))               # 这回合第一次决策：先量开始时的强度
+                    g_start[int(i)] = (int(turn(fi)), judge.judge(env.game(int(g_)), int(seat_), int(turn(fi))))
                 if ak == A_END and int(turn(fi)) == 8 and _ctab.comps:
                     mn, bk = _ctab.main_backup(ci[None], lobby_bits(fi[None]))
                     plan8[i] = ([_ctab.comps[k]["name"] for k in np.flatnonzero(mn[0])],
                                 [_ctab.comps[k]["name"] for k in np.flatnonzero(bk[0])])
-                if judge is not None and ak == A_END and int(turn(fi)) >= 3:
+                if judge is not None and ak == A_END and int(turn(fi)) >= 3 and not done[i]:   # 打完的槽位自动开的新局不算
                     g_, seat_ = env.slot(int(i))
                     v = judge.judge(env.game(int(g_)), int(seat_), int(turn(fi)))
                     if v is not None:
                         phis.setdefault(int(i), []).append((int(turn(fi)), v))
+                        st0 = g_start.get(int(i))
+                        if st0 and st0[0] == int(turn(fi)) and st0[1] is not None:
+                            grows.setdefault(int(i), []).append((int(turn(fi)), v - st0[1]))
             actions[ready] = a
         _, dones, inf = env.step(actions)
         for i in np.flatnonzero(dones):
@@ -274,6 +282,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                        "place": places.get(i, 0), "lobby": last_lobby[i], "plan8": plan8[i]})
     info["finals"] = finals
     info["phis"] = {i: v for i, v in phis.items()}
+    info["grows"] = {i: v for i, v in grows.items()}
     info["places"] = places
     info["judge"], info["lib"] = judge, lib
     if seeder is not None:
@@ -329,17 +338,21 @@ def show_strength(info: dict, upto: int = 14) -> dict | None:
                 v = judge.judge(g, 0, t)
                 if v is not None:
                     ref.append(v)
+        gv = [v for xs in (info.get("grows") or {}).values() for tt, v in xs if tt == t]
         rows[t] = {"model": round(float(np.mean(allv)), 3), "n": len(allv),
+                   "grow": round(float(np.mean(gv)), 3) if gv else None,
                    "top4": round(float(np.mean(top)), 3) if top else None,
                    "bottom4": round(float(np.mean(bot)), 3) if bot else None,
                    "pro": round(float(np.mean(ref)), 3) if ref else None}
     if not rows:
         return None
     f = lambda x: "  -  " if x is None else f"{x:.2f}"   # noqa: E731
+    g = lambda x: "   -  " if x is None else f"{x:+.3f}"   # noqa: E731
     print("\n阵容强度（结束回合时的场面打同期 12 个高分阵容的胜率，第 t … t-3 回合各 3 个；引擎实打，平局算半场）")
-    print("回合 | 模型 | 前四名的局 | 后四名的局 | 高分阵容")
+    print("养了多少 = 同一组考官，结束回合时 - 这回合开始时：这回合的买、卖、打牌、法术、三连让场面强了多少")
+    print("回合 | 模型 | 前四名的局 | 后四名的局 | 高分阵容 | 养了多少")
     for t, r in rows.items():
-        print(f"{t:4d} | {f(r['model'])} |       {f(r['top4'])} |       {f(r['bottom4'])} |     {f(r['pro'])}")
+        print(f"{t:4d} | {f(r['model'])} |       {f(r['top4'])} |       {f(r['bottom4'])} |     {f(r['pro'])} |   {g(r.get('grow'))}")
     return rows
 
 

@@ -250,6 +250,14 @@ class Config:
     # 第 14350 / 15180 轮阵容测试：第 3–9 回合模型的胜率和高手阵容一样甚至更高，第 12 / 13 回合 0.52 / 0.40（高手 0.67 / 0.60）。1 = 不加
     combat_late_from: int = 10
     combat_late_mult: float = 1.0
+    # 养场面奖励（见 _grow_shape，第 19650 轮起）：第 grow_from_turn 回合起，学习者每回合第一次决策前用同一组同期高分阵容
+    # （和 combat_* 同一把尺子）量一次场面强度，结束回合时再量一次，加 grow_bonus × (结束 - 开始)——这一回合的买、卖、
+    # 打牌、法术、三连把场面养强了多少。不扣回、不和上回合比：对手每回合变强那一截不算模型的错，死得早也不会多拿。
+    # grow_frac：每回合按这个概率量（一次开始 + 一次结束）。0 = 不用
+    grow_bonus: float = 0.0
+    grow_from_turn: int = 9
+    grow_fights: int = 3
+    grow_frac: float = 0.5
     # 经济奖励（见 _econ_shape）：结束回合时存下的资源（下回合额外金币 + 2 × 永久金币上限加成 + 手牌价值）每多 1 块加这么多，
     # 下回合钱到手 / 牌打出去时扣回来，一局结束时扣回最后的存款（纯势能差）。布莱恩·铜须让南海卖艺者、
     # 剃刀沼泽地卜师（鲜血宝石）、竞技表演者（发现法术）之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
@@ -700,6 +708,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                         noop = is_noop(ak) | (ak == 7)                # 冻结、调站位、取消（打出 → 取消可以无限循环）
                         r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64), c[o:o + k])
                         r0 = self._combat_shape(env, off, idx, f[o:o + k], ak, r0)
+                        r0 = self._grow_shape(env, off, idx, f[o:o + k], ak, r0)
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
@@ -768,6 +777,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                             for g in sd.seeded_slots:
                                 self.rollout.cut(off + g)        # GAE 在换场面处切断（见 Rollout.cut）
                                 self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
+                                self.gr_turn[off + g] = -1       # 养场面：这回合的“开始”在新场面上重新量
                                 self.tg_rebase.add(off + g)
                                 self.eg_rebase.add(off + g)
                     except BaseException as ex:            # noqa: BLE001
@@ -1475,6 +1485,10 @@ class Trainer(ShapingMixin, ImitationMixin):
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3),
                        comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
+            if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
+                rec["grow"] = round(mx["grow_sum"] / mx["grow_n"], 4)
+                rec["grow_n"] = int(mx["grow_n"])
+                rec["t_grow"] = round(mx.get("t_grow", 0.0), 2)
             if mx.get("cs_n"):                         # 阵容强度：对同期高分阵容的平均胜率（全部 / 第 9 回合起）
                 rec.update(cs_wr=round(mx["cs_sum"] / mx["cs_n"], 3), cs_n=int(mx["cs_n"]), t_combat=round(mx["t_combat"], 1),
                            cs_late=round(mx["cs_late_sum"] / mx["cs_late_n"], 3) if mx.get("cs_late_n") else None)
