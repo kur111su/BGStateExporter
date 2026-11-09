@@ -813,6 +813,26 @@ def check_expert():
     return True
 
 
+def check_lookahead():
+    """comptest --lookahead-from：后期每个决策在副本上推演几步（随机数换过）、选结束时场面最强的；只在明显更强时才换。"""
+    from tools.goldflow import play_model
+    lib = {t: [{"tier": 3, "board": [["BG26_135", t, t]] * 3}] for t in range(2, 16)}
+    rng = np.random.default_rng(5)
+    W = rng.normal(size=245)
+
+    def logits(f, c, m):
+        return np.where(np.asarray(m, dtype=bool), W[None, :] + 0.01 * np.asarray(f)[:, :1], -np.inf)
+
+    def act(f, c, m):
+        return logits(f, c, m).argmax(1)
+    _, info = play_model("runs/_no_such/latest.pt", 3, 9, 1, True, "cpu", policy=(act, {"iter": 0, "logits": logits}),
+                         look_from=4, look_k=3, look_depth=4, judge_lib=lib)
+    st = info["look"]
+    assert st["n"] > 0 and 0 <= st["changed"] <= st["n"], st
+    assert st["changed"] == 0 or st["gain"] / st["changed"] >= 0.02 - 1e-9
+    return st["n"], st["changed"]
+
+
 def check_comptest_seeded():
     """comptest_seeded.bat（goldflow --seed-comps）：每局在给的回合把场面换成成型的 S / A 阵容，按阵容记名次。"""
     from rl.comp import load_target_comps
@@ -888,6 +908,7 @@ def main() -> int:
     check_grow()
     check_practice()
     check_expert()
+    check_lookahead()
     check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
