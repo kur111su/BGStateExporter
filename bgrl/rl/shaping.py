@@ -384,10 +384,11 @@ class ShapingMixin:
         ramp = max(1, int(getattr(self.cfg, "shape_repay_ramp", 1) or 1))
         return k * min(1.0, max(0.0, (self.iter - self.repay_t0 + 1) / ramp))
 
-    def _shape_close(self, s: int) -> float:
+    def _shape_close(self, s: int, keep_target: float = 0.0) -> float:
         """座位 s 这一局结束：把 shape_repay_keys 里那几项（目标阵容 target / 引擎联动 engine / 阵容强度 combat）
         这局最后的 Φ 扣回 shape_repay 那么多（见 Config.shape_repay）。扣完以后那几项整局加起来 ≈ -第一次的 Φ，和动作无关：
-        做阵容那一步还是当场拿到功劳，最后由名次决定值不值。不扣的项局末的 Φ 照常算进回报。"""
+        做阵容那一步还是当场拿到功劳，最后由名次决定值不值。不扣的项局末的 Φ 照常算进回报。
+        keep_target：目标阵容这一项少扣多少（阵容练习局用，见 Config.practice_keep_target；1 = 一点不扣）。"""
         k = ShapingMixin._repay_now(self)
         ep = int(self.rollout.ep[s])
         cfg = self.cfg
@@ -401,7 +402,10 @@ class ShapingMixin:
                 x = b * float(prev[s])
                 v += x
                 if name in keys:
-                    rep += x
+                    rep += x * ((1.0 - float(keep_target)) if name == "target" else 1.0)
+                if name == "target" and keep_target > 0:
+                    self.mix["prac_fin_sum"] += float(prev[s])        # 练习局局末的目标阵容 Φ（做到几成）
+                    self.mix["prac_fin_n"] += 1
         self.mix["fin_sum"] += v                        # 这局三项局末一共还挂着多少（不扣时就是白拿的）
         self.mix["fin_n"] += 1
         return -k * rep

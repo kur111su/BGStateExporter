@@ -615,6 +615,10 @@ class ShopPractice(StartSeeder):
         """这一局在练阵容的对局（成型阵容课程不换它们的场面）。"""
         return {g for g, v in self.plan.items() if v[1] is not None}
 
+    def is_active(self, g: int) -> bool:
+        v = self.plan.get(g)
+        return v is not None and v[1] is not None
+
     def apply(self, env, features: np.ndarray, episodes=None) -> bool:
         """每步 observe 之后调用：新的一局先决定练不练、练哪套；练的局在 turns 里每回合第一次看到招募阶段时换酒馆。
         返回有没有改（改了要重新 observe）。"""

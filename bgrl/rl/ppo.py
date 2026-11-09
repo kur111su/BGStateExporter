@@ -296,6 +296,9 @@ class Config:
     practice_frac: float = 0.0
     practice_turns: str = "2,3,4,5,6,7,8,9"
     practice_slots: int = 2
+    # 练习局里目标阵容那一项（target_bonus × Φ）局末少扣多少（第 20240 轮起）：1 = 不扣，局末凑成几成就白拿 target_bonus × 几成。
+    # 普通局照常扣回（shape_repay），所以只有练习局里“凑阵容”本身值分；练出来的买法拿到普通局里值不值，还是名次说了算
+    practice_keep_target: float = 0.0
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -750,7 +753,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                         if dones[i] and self.place_tab is not None and 1 <= int(info["placement"][i]) <= 8:
                             pl = int(info["placement"][i])         # 局末名次奖励换成表里的值（违规扣分留着）
                             r_env += float(self.place_tab[pl]) - linear_place_reward(pl)
-                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i)))
+                        kt = (float(cfg.practice_keep_target) if dones[i] and name == "bot" and self.practice is not None
+                              and self.practice.is_active(int(i)) else 0.0)
+                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i), keep_target=kt))
                                          if dones[i] else 0.0)
                         fcomp = self._final_comp(off + int(i)) if dones[i] else None
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i], fcomp)
@@ -1527,6 +1532,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3),
                        comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
+            if mx.get("prac_fin_n"):                   # 练习局局末目标阵容做到几成（0–1）
+                rec["practice_tgt"] = round(mx["prac_fin_sum"] / mx["prac_fin_n"], 3)
             if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
                 rec["grow"] = round(mx["grow_sum"] / mx["grow_n"], 4)
                 rec["grow_n"] = int(mx["grow_n"])

@@ -50,7 +50,7 @@ KPIS = [("eval_boost_score", "考试等效名次", True, 3), ("eval_boost_place"
         ("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_top4", "前四率", False, 3),
         ("place_bot", "机器人局名次", True, 3), ("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
         ("cs_late", "第 10 回合后场面强度", False, 3), ("grow", "后期每回合养场面", False, 3),
-        ("place_practice", "阵容练习局名次", True, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
+        ("place_practice", "阵容练习局名次", True, 3), ("practice_tgt", "练习局局末阵容做到几成", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
         ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3), ("pro_top1", "和高手同一动作", False, 3)]
 
 
