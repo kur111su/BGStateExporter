@@ -28,7 +28,8 @@ PANELS = [
     ("win", "吃鸡率 / 前四率（考试）", [("eval_boost_top1", "吃鸡率"), ("eval_boost_top4", "前四率")],
      "8 个人随便打：吃鸡 12.5%、前四 50%", False, True),
     ("place", "训练对局名次", [("place_bot", "机器人局"), ("place_boost", "加强局"), ("place_seeded", "成型阵容课程局"),
-                          ("place_practice", "阵容练习局"), ("place_league", "对历史版本")], "越低越好", True, False),
+                          ("place_practice", "阵容练习局"), ("place_gift", "送牌局"), ("place_league", "对历史版本")],
+     "越低越好", True, False),
     ("boost", "加强局强度（自适应）", [("boost_strength", "前期换成高分阵容的概率"), ("boost_floor", "下限")],
      "模型越强它越高；第 10 回合起固定全强度；下限从第 19650 轮起慢慢抬到 0.7", False, False),
     ("ent", "熵 / 熵系数", [("ent", "熵"), ("ent_coef_x100", "熵系数 × 100")],
@@ -51,7 +52,7 @@ KPIS = [("eval_boost_score", "考试等效名次", True, 3), ("eval_boost_place"
         ("place_bot", "机器人局名次", True, 3), ("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
         ("cs_late", "第 10 回合后场面强度", False, 3), ("grow", "后期每回合养场面", False, 3),
         ("place_practice", "阵容练习局名次", True, 3), ("practice_tgt", "练习局局末阵容做到几成", False, 3),
-        ("expert_follow", "练习局自己就照着凑的比例", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
+        ("expert_follow", "练习局自己就照着凑的比例", False, 3), ("place_gift", "送牌局名次", True, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
         ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3), ("pro_top1", "和高手同一动作", False, 3)]
 
 

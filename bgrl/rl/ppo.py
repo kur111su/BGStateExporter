@@ -305,6 +305,13 @@ class Config:
     # 按整批的决策数平均。0 = 不用
     expert_coef: float = 0.0
     practice_expert_from: int = 7
+    # 送牌课程（rl/calibrate.CardGifts，第 20800 轮起）：gift_frac 的机器人局里，gift_turns 每回合招募开始时按 gift_p 的机会
+    # 往学习者手里放一张“高手抢着买（rl/card_value.json 挑中倍率 ≥ gift_min_lift）、模型从来不买”的牌；纯加金币的法术不送。
+    # 这些局不再换成型场面，名次单独记（place_gift），不算进 place_bot / 加强强度。0 = 不用
+    gift_frac: float = 0.0
+    gift_turns: str = "4,5,6,7,8,9,10,11,12"
+    gift_p: float = 0.6
+    gift_min_lift: float = 2.0
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -588,6 +595,14 @@ class Trainer(ShapingMixin, ImitationMixin):
                 print(f"照着凑：练习局第 {cfg.practice_expert_from} 回合起，按规则给建议动作，交叉熵系数 {cfg.expert_coef}", flush=True)
             print(f"阵容练习局：{cfg.practice_frac:.0%} 的机器人局开局定一套本局凑得成的 S / A（{len(self.practice.comps)} 套均匀抽），"
                   f"第 {cfg.practice_turns} 回合每回合把酒馆里 {cfg.practice_slots} 个随从换成这套的卡", flush=True)
+        self.gifts = None
+        if cfg.gift_frac > 0 and cfg.games_bot:
+            from .calibrate import CardGifts
+            g_turns = [int(x) for x in str(cfg.gift_turns).split(",") if x.strip()]
+            self.gifts = CardGifts(cfg.gift_frac, g_turns, p=cfg.gift_p, min_lift=cfg.gift_min_lift, seed=cfg.seed)
+            print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
+                  f"高手抢着买、模型不买的牌（{len(self.gifts.pool)} 种）", flush=True)
+        self.gift_places: list[int] = []
         self.prac_places: list[int] = []
         self.prac_by: dict[str, list] = {}             # 阵容练习局：阵容 → [(名次, 做成这套没有)]
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
@@ -660,6 +675,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             self.starter.plan.clear()
         if name == "bot" and self.practice is not None:
             self.practice.plan.clear()
+        if name == "bot" and self.gifts is not None:
+            self.gifts.plan.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -773,7 +790,13 @@ class Trainer(ShapingMixin, ImitationMixin):
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
                             started = name == "bot" and self.starter is not None and self.starter.finish(int(i))
                             practiced = name == "bot" and self.practice is not None and self.practice.finish(int(i))
-                            if practiced and not seeded:   # 阵容练习局：单独记名次、做成练的那套没有
+                            gifted = name == "bot" and self.gifts is not None and self.gifts.finish(int(i))
+                            if gifted and not seeded:      # 送牌局：单独记名次
+                                self.gift_places.append(int(info["placement"][i]))
+                                if self.booster is not None:
+                                    self.booster.finish(int(i))
+                                seeded = True              # 不算进 place_bot / 加强强度
+                            elif practiced and not seeded:   # 阵容练习局：单独记名次、做成练的那套没有
                                 self.prac_places.append(int(info["placement"][i]))
                                 self.prac_by.setdefault(practiced, []).append(
                                     (int(info["placement"][i]), self._comp_name(fcomp) == practiced))
@@ -817,7 +840,22 @@ class Trainer(ShapingMixin, ImitationMixin):
                             raise
                         self._rebuild_env(ei, ex)
                         continue
-                skip = self.practice.active() if name == "bot" and self.practice is not None else None
+                if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
+                    try:
+                        if self.gifts.apply(env, self.obs[name]["features"]):
+                            self.obs[name] = env.observe()
+                    except BaseException as ex:            # noqa: BLE001
+                        if not is_panic(ex):
+                            raise
+                        self._rebuild_env(ei, ex)
+                        continue
+                skip = None
+                if name == "bot":
+                    skip = set()
+                    if self.practice is not None:
+                        skip |= self.practice.active()
+                    if self.gifts is not None:
+                        skip |= self.gifts.active()
                 for sd in ((self.starter, self.seeder) if name == "bot" else ()):
                     if sd is None:                         # 起步课程（换几张起步卡）、成型阵容课程（换整个场面）
                         continue
@@ -1617,6 +1655,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                     rec["place_started"] = round(float(np.mean(self.start_places)), 3)
                     rec["started_games"] = len(self.start_places)
                 self.start_places = []
+            if self.gifts is not None:
+                rec.update(self.gifts.take_stats())
+                if self.gift_places:
+                    rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
+                    rec["gift_games"] = len(self.gift_places)
+                self.gift_places = []
             if self.practice is not None:
                 rec.update(self.practice.take_stats())
                 if self.prac_places:

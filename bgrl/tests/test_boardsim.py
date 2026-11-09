@@ -813,6 +813,37 @@ def check_expert():
     return True
 
 
+def check_gifts():
+    """送牌课程（CardGifts）：送牌局在给的回合招募开始时往学习者手里放一张池子里的牌（等级够得着），场面不动；
+    纯加金币的法术不进池子；finish 返回是不是送牌局；成型阵容课程跳过这些局。"""
+    import json as _json
+    from taverngym import BatchEnv
+    from rl.calibrate import CardGifts
+    full = CardGifts(frac=1.0, seed=0)
+    assert full.pool and all(k != "BG28_810" for k, *_ in full.pool)          # 酒馆币（加 1 金币）不送
+    assert any(k == "BG30_123" for k, *_ in full.pool)                        # 无畏的食客在池子里
+    gf = CardGifts(frac=1.0, turns=(2, 3, 4, 5), p=1.0, seed=3, cards=["BG26_135", "BG28_827", "BG31_320", "BG36_201"])
+    env = BatchEnv(4, seed=8, controlled=(0,), threads=1)
+    rng = np.random.default_rng(1)
+    given = 0
+    for _ in range(4000):
+        obs = env.observe()
+        before = {g: _json.loads(env.save(g))["game"]["players"][0] for g in range(4)}
+        if gf.apply(env, obs["features"]):
+            obs = env.observe()
+            for g in range(4):
+                me = _json.loads(env.save(g))["game"]["players"][0]
+                if len(me["hand"]) == len(before[g]["hand"]) + 1:
+                    given += 1
+                    assert [m["card"] for m in me["board"]] == [m["card"] for m in before[g]["board"]]
+        if min(int(round(f * 20)) for f in obs["features"][:, 0]) > 5:
+            break
+        env.step(np.array([rng.choice(np.flatnonzero(m)) for m in obs["action_mask"]]))
+    assert given >= 2, given
+    assert gf.active() == {0, 1, 2, 3} and gf.finish(0) and 0 not in gf.active()
+    return given
+
+
 def check_lookahead():
     """comptest --lookahead-from：后期每个决策在副本上推演几步（随机数换过）、选结束时场面最强的；只在明显更强时才换。"""
     from tools.goldflow import play_model
@@ -908,6 +939,7 @@ def main() -> int:
     check_grow()
     check_practice()
     check_expert()
+    check_gifts()
     check_lookahead()
     check_comptest_seeded()
     check_rollback_rebase()
