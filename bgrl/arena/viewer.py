@@ -140,7 +140,14 @@ def summary() -> dict:
             live.append({"id": f.stem, "category": "进行中" if age < 300 else "未完成", "live": age < 300,
                          "created": f.stat().st_ctime, "turns": last.get("turn"), "model": last.get("model"),
                          "place_est": last.get("place"), "records": True, "placement": None})
-    return {"me": me, "matches": live + sorted(rows, key=lambda r: r.get("created") or 0, reverse=True),
+    ordered = sorted(rows, key=lambda r: r.get("created") or 0, reverse=True)
+    model = None                                           # 当前模型：打包好的那个（compat.json），没有就用最近一局的
+    try:
+        model = json.loads((HERE / "compat.json").read_text(encoding="utf-8")).get("model_version")
+    except (OSError, ValueError):
+        pass
+    model = model or next((r.get("model") for r in live + ordered if r.get("model")), None)
+    return {"me": me, "matches": live + ordered, "model": model,
             "now": time.time(), "sync": SYNC, "site": _url()}
 
 
@@ -194,21 +201,26 @@ PAGE = r"""<!doctype html>
 <style>
 :root{--bg:#f6f5f2;--panel:#fff;--ink:#1d1d1f;--ink2:#3f3f46;--mute:#6b6b70;--line:#e3e1dc;--grid:#ecebe7;--acc:#2f6fdb;--acc-soft:rgba(47,111,219,.10);--good:#1f8a4c;--gold:#b7791f;--bar:#dbe6fb}
 @media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1d1d21;--ink:#ececf0;--ink2:#c9c9d0;--mute:#9a9aa2;--line:#2e2e34;--grid:#28282d;--acc:#6f9cff;--acc-soft:rgba(111,156,255,.12);--good:#4cc27e;--gold:#e3b04b;--bar:#2a3550}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#top{flex:none;border-bottom:1px solid var(--line)}
+header{padding:8px 14px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 6px}h3{font-size:14px;margin:0 0 2px}small,.mute{color:var(--mute)}
 button.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit}
 button.btn:hover{border-color:var(--acc)}
-.wrap{padding:16px 20px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.chips button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:4px 12px;cursor:pointer;font:inherit}
+.stats{display:grid;grid-template-columns:max-content 230px minmax(240px,1fr);gap:8px;padding:8px 14px;align-items:stretch}
+@media (max-width:1100px){.stats{grid-template-columns:1fr 1fr}.stats .tiles{grid-column:span 2;flex-wrap:wrap}}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chips button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:2px 10px;cursor:pointer;font:inherit}
 .chips button.sel{background:var(--acc);border-color:var(--acc);color:#fff}.chips button.sel small{color:rgba(255,255,255,.85)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}.tile b{display:block;font-size:22px;font-weight:600}
-.charts{display:grid;grid-template-columns:1fr 1.4fr;gap:12px;margin-bottom:16px}@media (max-width:1000px){.charts{grid-template-columns:1fr}}
+.tiles{display:flex;gap:6px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;min-width:70px;display:flex;flex-direction:column;justify-content:center}
+.tile b{display:block;font-size:17px;font-weight:600;line-height:1.25;white-space:nowrap}.tile small{font-size:11px;white-space:nowrap}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-.roll{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}.roll div b{font-size:16px}
-main{display:grid;grid-template-columns:340px 1fr;gap:16px;padding:0 20px 20px}@media (max-width:900px){main{grid-template-columns:1fr}}
-.list{max-height:70vh;overflow:auto}.item{padding:8px;border-radius:8px;cursor:pointer;display:flex;gap:10px;align-items:center}
+.mini{padding:5px 9px;min-width:0}.mini .mh{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+main{flex:1;min-height:0;display:grid;grid-template-columns:320px 1fr;gap:12px;padding:10px 14px}
+.col{overflow:auto;min-height:0}
+.lh{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;position:sticky;top:-12px;background:var(--panel);padding:4px 0;z-index:1}
+button.btn.sel{background:var(--acc);border-color:var(--acc);color:#fff}
+.item{padding:8px;border-radius:8px;cursor:pointer;display:flex;gap:10px;align-items:center}
 .item:hover,.item.sel{background:var(--bg)}.pl{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:none}
 .p1{background:#c99a12}.p2{background:#7d8ea8}.p3{background:#a86b3c}.p4{background:#2f6fdb}.p5,.p6,.p7,.p8{background:#8a8a92}.plive{background:var(--good)}
 .cards{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}.card{border:1px solid var(--line);border-radius:8px;padding:5px 7px;min-width:92px;background:var(--bg)}
@@ -224,22 +236,21 @@ svg .ax{fill:var(--mute);font-size:11px}svg .val{fill:var(--ink2);font-size:11px
 #tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:12px;display:none;z-index:9}
 #tip b{font-size:14px}
 </style></head><body>
-<header><h1>竞技场对局</h1><span id="me" class="mute"></span><button class="btn" onclick="doSync()">同步竞技场战绩</button><span id="sync" class="mute"></span><span class="mute" id="upd"></span></header>
-<div class="wrap">
- <div class="chips" id="chips"></div>
- <div class="tiles" id="tiles"></div>
- <div class="charts">
-  <div class="panel"><h3>名次分布</h3><div class="mute" style="font-size:12px">第 1～8 名 · 每个名次的局数</div><div id="dist"></div></div>
-  <div class="panel"><h3>近期表现</h3><div class="mute" style="font-size:12px" id="recentSub">最近 100 条参赛结果</div><div id="recent"></div><div class="roll" id="roll"></div></div>
+<div id="top">
+ <header><h1>竞技场对局</h1><div class="chips" id="chips"></div><span id="me" class="mute"></span><button class="btn" onclick="doSync()">同步竞技场战绩</button><span id="sync" class="mute"></span><span class="mute" id="upd"></span></header>
+ <div class="stats">
+  <div class="tiles" id="tiles"></div>
+  <div class="panel mini"><div class="mh"><b>名次分布</b> <span class="mute">第 1～8 名的局数</span></div><div id="dist"></div></div>
+  <div class="panel mini"><div class="mh"><b>近期表现</b> <span class="mute" id="recentSub"></span></div><div id="recent"></div></div>
  </div>
 </div>
 <main>
- <section><div class="panel"><div class="mute" style="margin-bottom:6px">对局（新的在上）</div><div class="list" id="list"></div></div></section>
- <section id="detail" class="panel"><div class="mute">选左边一局查看。</div></section>
+ <section class="panel col"><div class="mute lh"><span>对局（新的在上）</span><button class="btn" id="follow" onclick="followLive()">看正在打的</button></div><div id="list"></div></section>
+ <section id="detail" class="panel col"><div class="mute">正在打的对局会显示在这里；也可以点左边任意一局。</div></section>
 </main>
 <div id="tip"></div>
 <script>
-const $=s=>document.querySelector(s);let SEL=null,DATA=null,TURN=null,DEC=null,timer=null,SUM=null,CAT='all';
+const $=s=>document.querySelector(s);let SEL=null,DATA=null,TURN=null,DEC=null,timer=null,SUM=null,CAT='all',FOLLOW=true;
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const cat={standard:'纯 AI',bots:'补位',arena:'补位',practice:'练习',custom:'约战'};
 const catKey=c=>c=='arena'?'bots':c;
@@ -252,13 +263,13 @@ const NS='http://www.w3.org/2000/svg';function el(n,a,p){const e=document.create
 function txt(p,x,y,s,cls,anchor){const t=el('text',{x,y,class:cls||'ax','text-anchor':anchor||'middle'},p);t.textContent=s;return t}
 
 function distChart(games){const box=$('#dist');box.replaceChildren();const cnt=Array(9).fill(0);games.forEach(g=>cnt[g.placement]++);
- const W=460,H=210,L=28,R=8,T=18,B=26,max=Math.max(1,...cnt.slice(1));const step=niceStep(max);const top=Math.ceil(max/step)*step;
+ const W=260,H=96,L=22,R=4,T=14,B=16,max=Math.max(1,...cnt.slice(1));const step=niceStep(max);const top=Math.ceil(max/step)*step;
  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':'名次分布条形图'},box);
  const y=v=>T+(H-T-B)*(1-v/top);for(let v=0;v<=top;v+=step){el('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),stroke:'var(--grid)','stroke-width':1},svg);txt(svg,L-6,y(v)+4,v,'ax','end')}
- const band=(W-L-R)/8,bw=Math.min(24,band*0.6);
+ const band=(W-L-R)/8,bw=Math.min(16,band*0.6);
  for(let p=1;p<=8;p++){const cx=L+band*(p-0.5),h=(H-T-B)-(y(cnt[p])-T),x0=cx-bw/2,y0=y(cnt[p]),yb=H-B;
-  if(cnt[p]>0){const r=Math.min(4,h);el('path',{d:`M${x0},${yb}V${y0+r}Q${x0},${y0} ${x0+r},${y0}H${x0+bw-r}Q${x0+bw},${y0} ${x0+bw},${y0+r}V${yb}Z`,fill:'var(--acc)'},svg);txt(svg,cx,y0-5,cnt[p],'val')}
-  txt(svg,cx,H-8,'#'+p);
+  if(cnt[p]>0){const r=Math.min(4,h);el('path',{d:`M${x0},${yb}V${y0+r}Q${x0},${y0} ${x0+r},${y0}H${x0+bw-r}Q${x0+bw},${y0} ${x0+bw},${y0+r}V${yb}Z`,fill:'var(--acc)'},svg);txt(svg,cx,y0-3,cnt[p],'val')}
+  txt(svg,cx,H-4,'#'+p);
   const hit=el('rect',{x:L+band*(p-1),y:T,width:band,height:H-T-B,fill:'transparent',tabindex:0},svg);
   const lines=[`${cnt[p]} 局`,`第 ${p} 名 · 占 ${games.length?(cnt[p]/games.length*100).toFixed(0):0}%`];
   hit.addEventListener('pointermove',e=>showTip(e,lines));hit.addEventListener('pointerleave',hideTip);
@@ -267,14 +278,15 @@ function distChart(games){const box=$('#dist');box.replaceChildren();const cnt=A
 function niceStep(m){return m<=5?1:m<=10?2:m<=25?5:m<=50?10:Math.ceil(m/50)*10}
 
 function recentChart(games){const box=$('#recent');box.replaceChildren();const g=games.slice(-100);
- $('#recentSub').textContent=`最近 ${g.length} 条参赛结果（共 ${games.length} 条）`;
- const W=640,H=210,L=26,R=12,T=12,B=26;const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':'近期名次折线图'},box);
+ const avgOf=k=>{const q=games.slice(-k);return q.length?(q.reduce((a,m)=>a+m.placement,0)/q.length).toFixed(2):'-'};
+ $('#recentSub').textContent=`最近 ${g.length} 局 · 均名 20 局 ${avgOf(20)} / 50 局 ${avgOf(50)} / 100 局 ${avgOf(100)}`;
+ const W=640,H=96,L=20,R=8,T=8,B=14;const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':'近期名次折线图'},box);
  const y=p=>T+(H-T-B)*(p-1)/7;for(let p=1;p<=8;p++){el('line',{x1:L,x2:W-R,y1:y(p),y2:y(p),stroke:'var(--grid)','stroke-width':1},svg)}[1,4,8].forEach(p=>txt(svg,L-6,y(p)+4,p,'ax','end'));
- txt(svg,L,H-6,'较早','ax','start');txt(svg,W-R,H-6,'较近','ax','end');
+ txt(svg,L,H-2,'较早','ax','start');txt(svg,W-R,H-2,'较近','ax','end');
  if(!g.length){txt(svg,W/2,H/2,'还没有结果');return}
  const n=g.length,x=i=>n==1?(L+W-R)/2:L+8+i*(W-L-R-16)/(n-1);
  el('path',{d:g.map((m,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(m.placement).toFixed(1)).join(''),fill:'none',stroke:'var(--acc)','stroke-width':2,'stroke-linejoin':'round','stroke-linecap':'round'},svg);
- const showDots=n<=40;g.forEach((m,i)=>{if(showDots||i==n-1)el('circle',{cx:x(i),cy:y(m.placement),r:4,fill:'var(--acc)',stroke:'var(--panel)','stroke-width':2},svg)});
+ const showDots=n<=40;g.forEach((m,i)=>{if(showDots||i==n-1)el('circle',{cx:x(i),cy:y(m.placement),r:3,fill:'var(--acc)',stroke:'var(--panel)','stroke-width':2},svg)});
  $('#recentSub').textContent+=` · 最近一局第 ${g[n-1].placement} 名`;
  const cross=el('line',{y1:T,y2:H-B,stroke:'var(--mute)','stroke-width':1,visibility:'hidden'},svg);const ring=el('circle',{r:6,fill:'none',stroke:'var(--acc)','stroke-width':2,visibility:'hidden'},svg);
  const hit=el('rect',{x:L,y:T,width:W-L-R,height:H-T-B,fill:'transparent',tabindex:0},svg);
@@ -284,27 +296,26 @@ function recentChart(games){const box=$('#recent');box.replaceChildren();const g
  hit.addEventListener('pointerleave',()=>{hideTip();cross.setAttribute('visibility','hidden');ring.setAttribute('visibility','hidden')});
  hit.addEventListener('click',e=>{const m=g[pick(e)];if(m)pick_(m.id)})}
 
-function rolling(games){const box=$('#roll');box.replaceChildren();for(const k of [20,50,100]){const g=games.slice(-k);const d=document.createElement('div');
- const b=document.createElement('b');b.textContent=g.length?(g.reduce((a,m)=>a+m.placement,0)/g.length).toFixed(2):'-';const s=document.createElement('small');s.textContent=` 均名 · 样本 ${g.length}`;
- const h=document.createElement('div');h.className='mute';h.style.fontSize='12px';h.textContent=`最近 ${k} 条`;d.append(h,b,s);box.appendChild(d)}}
-
 function renderStats(){if(!SUM)return;const all=SUM.matches.filter(m=>m.placement).sort((a,b)=>(a.created||0)-(b.created||0));
  const cats=['all',...new Set(all.map(m=>catKey(m.category)))];$('#chips').innerHTML=cats.map(c=>`<button class="${c==CAT?'sel':''}" onclick="CAT='${c}';renderStats()">${c=='all'?'全部':esc(cat[c]||c)} <small>${c=='all'?all.length:all.filter(m=>catKey(m.category)==c).length}</small></button>`).join('');
  const g=CAT=='all'?all:all.filter(m=>catKey(m.category)==CAT);
  const avg=g.length?g.reduce((a,m)=>a+m.placement,0)/g.length:null,t1=g.filter(m=>m.placement==1).length,t4=g.filter(m=>m.placement<=4).length;
  let t=`<div class="tile"><small>参赛结果</small><b>${g.length}</b></div><div class="tile"><small>平均名次</small><b>${avg?avg.toFixed(2):'-'}</b></div><div class="tile"><small>第一</small><b>${g.length?(t1/g.length*100).toFixed(0)+'%':'-'}</b><small>${t1} 局</small></div><div class="tile"><small>前四</small><b>${g.length?(t4/g.length*100).toFixed(0)+'%':'-'}</b><small>${t4} 局</small></div>`;
  const elo=g.filter(m=>m.score_after!=null);if(elo.length)t+=`<div class="tile"><small>纯 AI Elo</small><b>${elo.at(-1).score_after.toFixed(1)}</b><small>${elo.length} 局${elo.length>=5?'':' · 满 5 局才有正式排名'}</small></div>`;
- const models={};g.forEach(m=>{const k=m.model||'?';(models[k]=models[k]||[]).push(m.placement)});
- t+=`<div class="tile" style="grid-column:span 2"><small>按模型版本</small>${Object.entries(models).map(([k,v])=>`<div>${esc(k)}：${v.length} 局，平均 <b style="display:inline;font-size:14px">${(v.reduce((a,b)=>a+b,0)/v.length).toFixed(2)}</b> 名</div>`).join('')||'-'}</div>`;
- $('#tiles').innerHTML=t;distChart(g);recentChart(g);rolling(g)}
+ t+=`<div class="tile"><small>当前模型</small><b>${esc(SUM.model||'-')}</b></div>`;
+ $('#tiles').innerHTML=t;distChart(g);recentChart(g)}
 
 async function loadSummary(){const r=await fetch('/api/summary');SUM=await r.json();const s=SUM;$('#me').textContent=s.me?('账号 '+s.me):'';$('#upd').textContent='更新于 '+new Date().toLocaleTimeString('zh-CN');
  const sy=s.sync||{};$('#sync').textContent=sy.error?('同步失败：'+String(sy.error).slice(0,80)):sy.time?(`已同步 ${sy.n} 局（${new Date(sy.time*1000).toLocaleTimeString('zh-CN')}）`):'';
  renderStats();
+ const liveM=s.matches.find(m=>m.live);$('#follow').className='btn'+(FOLLOW?' sel':'');$('#follow').textContent=FOLLOW?(liveM?'跟随中：正在打的对局':'跟随中：最近一局'):'看正在打的';
+ if(FOLLOW){const want=liveM?liveM.id:(s.matches[0]||{}).id;if(want&&want!==SEL){SEL=want;TURN=null;DEC=null;loadMatch()}}
  $('#list').innerHTML=s.matches.map(m=>`<div class="item ${m.id==SEL?'sel':''}" onclick="pick_('${esc(m.id)}')"><div class="pl ${m.placement?'p'+m.placement:'plive'}">${m.placement||(m.live?'●':'?')}</div><div><div>${esc(cat[m.category]||m.category)}${m.hero?' · '+esc(m.hero):''}${m.tier?' '+esc(m.tier)+' 本':''}</div><small>${fmtT(m.created)} · ${m.turns??'-'} 回合 · ${esc(m.model||'')}${m.score_after!=null?` · Elo ${(m.score_after-m.score_before>=0?'+':'')+(m.score_after-m.score_before).toFixed(1)}`:''}${m.live&&m.place_est?` · 预计 ${m.place_est} 名`:''}${m.records?'':' · 无逐步记录'}</small></div></div>`).join('')||'<div class="mute">还没有对局。</div>'}
 async function doSync(){$('#sync').textContent='同步中…';await fetch('/api/sync');loadSummary()}
-async function pick_(id){SEL=id;TURN=null;DEC=null;await loadMatch();loadSummary();$('#detail').scrollIntoView({behavior:'smooth',block:'start'})}
+async function pick_(id){FOLLOW=false;SEL=id;TURN=null;DEC=null;await loadMatch();loadSummary()}
+function followLive(){FOLLOW=true;SEL=null;loadSummary()}
 async function loadMatch(){if(!SEL)return;const r=await fetch('/api/match?id='+encodeURIComponent(SEL));DATA=await r.json();
+ if(FOLLOW&&!DATA.result){TURN=null;DEC=null}
  const turns=[...new Set(DATA.records.map(x=>x.turn))];if(TURN==null||!turns.includes(TURN))TURN=turns.at(-1);render();
  clearTimeout(timer);if(!DATA.result)timer=setTimeout(loadMatch,3000)}
 function cards(lst){if(!Array.isArray(lst)||!lst.length)return'<div class="mute">（空）</div>';return'<div class="cards">'+lst.map(c=>{if(!c||typeof c!='object')return'';const a=c.attack??c.atk,h=c.health??c.hp;const g=c.golden||String(c.id||'').endsWith('_G');
@@ -318,12 +329,12 @@ function curve(recs){const pts=recs.filter(r=>r.place!=null);if(pts.length<2)ret
 function render(){const D=DATA;if(!D)return;const res=D.result,recs=D.records;let h='';
  if(res){const me=(res.participants||[]).find(p=>p.username==D.me)||{};h+=`<h2>第 ${esc(me.placement??'?')} 名 <small>${esc(cat[res.category]||res.category)} · ${esc(res.turns)} 回合 · ${Math.round(res.duration_seconds||0)} 秒 · ${esc(res.human_count)} 个 AI + ${esc(res.bot_count)} 个机器人</small></h2>`;
   if(me.score_after!=null)h+=`<div>Elo ${me.score_before.toFixed(1)} → <b>${me.score_after.toFixed(1)}</b></div>`}
- else h+=`<h2>进行中 <small>每 3 秒刷新</small></h2>`;
+ else h+=`<h2>进行中 <small>每 3 秒刷新${FOLLOW?' · 跟着最新一步':' · 点“看正在打的”回到最新一步'}</small></h2>`;
  if(recs.length)h+=`<div class="mute" style="margin-top:8px">模型预计名次（每一步；越低越好）</div>`+curve(recs);
- const turns=[...new Set(recs.map(x=>x.turn))];if(turns.length)h+='<div class="turns">'+turns.map(t=>`<button class="${t==TURN?'sel':''}" onclick="TURN=${JSON.stringify(t)};DEC=null;render()">${t==0?'选将':'第 '+esc(t)+' 回合'}</button>`).join('')+'</div>';
- const tr=recs.filter(r=>r.turn==TURN);if(DEC==null||!tr.find(r=>r.n==DEC))DEC=tr.length?tr[0].n:null;const cur=tr.find(r=>r.n==DEC);
+ const turns=[...new Set(recs.map(x=>x.turn))];if(turns.length)h+='<div class="turns">'+turns.map(t=>`<button class="${t==TURN?'sel':''}" onclick="FOLLOW=false;TURN=${JSON.stringify(t)};DEC=null;render()">${t==0?'选将':'第 '+esc(t)+' 回合'}</button>`).join('')+'</div>';
+ const tr=recs.filter(r=>r.turn==TURN);if(DEC==null||!tr.find(r=>r.n==DEC))DEC=tr.length?(FOLLOW&&!res?tr.at(-1).n:tr[0].n):null;const cur=tr.find(r=>r.n==DEC);
  let view=null;for(const r of recs){if(r.n>DEC)break;if(r.view&&r.view.opponents)view=Object.assign({},r.view);if(r.n==DEC&&r.view)view=Object.assign({},view||{},r.view)}
- if(tr.length){h+='<div class="grid2"><div><div class="mute">这一回合的操作</div>'+tr.map(r=>`<div class="dec ${r.n==DEC?'sel':''}" onclick="DEC=${r.n};render()"><b>${esc(r.text)}</b>${r.guard?` <small>（${esc(r.guard)}）</small>`:''}<small class="mute"> · 预计 ${esc(r.place??'-')} 名 · 已用 ${esc(r.used??'-')} 次</small></div>`).join('')+'</div>';
+ if(tr.length){h+='<div class="grid2"><div><div class="mute">这一回合的操作</div>'+tr.map(r=>`<div class="dec ${r.n==DEC?'sel':''}" onclick="FOLLOW=false;DEC=${r.n};render()"><b>${esc(r.text)}</b>${r.guard?` <small>（${esc(r.guard)}）</small>`:''}<small class="mute"> · 预计 ${esc(r.place??'-')} 名 · 已用 ${esc(r.used??'-')} 次</small></div>`).join('')+'</div>';
   h+='<div>';if(cur){h+='<div class="mute">这一步的候选（模型概率）</div>'+(cur.top||[]).map(([a,p,t])=>`<div style="margin:4px 0">${a==cur.action?'▶ ':''}${esc(t)} <small class="mute">${(p*100).toFixed(1)}%</small><div class="bar"><i style="width:${(p*100).toFixed(1)}%"></i></div></div>`).join('')}h+='</div></div>';
   const me=(view&&view.me)||{};h+='<div style="margin-top:12px">'+scalars(me)+'</div>';
   for(const [lbl,keys] of [['场面',['board','warband']],['手牌',['hand']],['酒馆',['shop','tavern','store']],['待选',['choices','options','pending','discover','choice']]]){const z=zone(me,keys);if(z)h+=`<div class="mute">${lbl}</div>`+cards(z)}
