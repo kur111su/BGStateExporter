@@ -242,7 +242,7 @@ def check_targets():
     from tg.actions import A_BUY, A_END
     from tg.catalog import card_id, n_cards
     comps = load_target_comps()
-    assert len(comps) == 23 and {c["tier"] for c in comps} == {"S", "A", "B"}
+    assert len(comps) == 32 and {c["tier"] for c in comps} == {"S", "A", "B"}
     tea = next(c for c in comps if c["name"] == "喝茶流")
     assert {"BG_LOE_077"} <= tea["core"]                                 # 布莱恩·铜须
     c, fr = nearest_comp(list(tea["core"]) + ["BG26_135"], comps)

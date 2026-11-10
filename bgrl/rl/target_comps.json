@@ -1,5 +1,5 @@
 {
- "source": "https://bgbuddy.gg/zh-CN/comps（终局阵容梯度，补丁 255790，2026-11-02 抓取）：只有公开的汇总统计和核心卡",
+ "source": "https://bgbuddy.gg/zh-CN/comps（终局阵容梯度，补丁 255790，2026-11-02 抓取）：只有公开的汇总统计和核心卡；第 24–32 套（added 2026-11-10）和各套的打法说明 play 来自战棋小酒馆 S14 流派图鉴 https://niumadiruan.com/zh/comps（核心卡、评级；平均名次是 bgbuddy 的），只收模拟器卡池里凑得齐的",
  "tiers": {
   "S": 1.0,
   "A": 0.8,
@@ -53,7 +53,9 @@
     2.25,
     2.02
    ],
-   "support_states": 1122
+   "support_states": 1122,
+   "alias": "守门喝茶",
+   "play": "对守门融合怪放指向法术就触发喝茶；配尖尖箭、吨吨盾、鲜血宝石等法术，铜须补经济"
   },
   {
    "tier": "S",
@@ -100,7 +102,9 @@
     3.18,
     3.0
    ],
-   "support_states": 1043
+   "support_states": 1043,
+   "alias": "磁力机械",
+   "play": "用海盗和自动起床号拿磁力随从，B-Box 拳手循环"
   },
   {
    "tier": "S",
@@ -151,7 +155,9 @@
     2.27,
     2.24
    ],
-   "support_states": 794
+   "support_states": 794,
+   "alias": "元素·活化艾泽里特",
+   "play": "持续强化酒馆里的元素再买下"
   },
   {
    "tier": "S",
@@ -186,7 +192,9 @@
     3.1,
     2.99
    ],
-   "support_states": 270
+   "support_states": 270,
+   "alias": "无面亡语",
+   "play": "无面转化者配瑞文加身材"
   },
   {
    "tier": "S",
@@ -222,7 +230,9 @@
     1.94,
     1.9
    ],
-   "support_states": 206
+   "support_states": 206,
+   "alias": "电表亡灵",
+   "play": "海盗电表高频打牌，给亡灵叠身材"
   },
   {
    "tier": "S",
@@ -271,7 +281,9 @@
     1.62,
     1.54
    ],
-   "support_states": 543
+   "support_states": 543,
+   "alias": "电表绿猪",
+   "play": "刷酒馆身材，邪能野猪人吃身材；后期可配合合唱鱼人和拉鱼"
   },
   {
    "tier": "S",
@@ -322,7 +334,9 @@
     1.7,
     1.61
    ],
-   "support_states": 2124
+   "support_states": 2124,
+   "alias": "美味龙虾流",
+   "play": "一号位进击触发陆行鸟，陆行鸟触发龙虾，瑞文放大亡语"
   },
   {
    "tier": "A",
@@ -352,7 +366,9 @@
    "support_lift": [
     6.88
    ],
-   "support_states": 195
+   "support_states": 195,
+   "alias": "龙·希望信使",
+   "play": "反复触发圣盾成长，诗心龙保留身材"
   },
   {
    "tier": "A",
@@ -397,7 +413,9 @@
     1.9,
     1.81
    ],
-   "support_states": 239
+   "support_states": 239,
+   "alias": "鱼人·小学生",
+   "play": "教会鱼人法术，回合结束反复触发"
   },
   {
    "tier": "A",
@@ -495,7 +513,9 @@
     1.94,
     1.79
    ],
-   "support_states": 558
+   "support_states": 558,
+   "alias": "干扰吞噬流",
+   "play": "巴琳达配干扰者刷酒馆身材，乌祖尔或邪能野猪人吃酒馆"
   },
   {
    "tier": "A",
@@ -521,7 +541,9 @@
    "support": [],
    "support_names": [],
    "support_lift": [],
-   "support_states": 35
+   "support_states": 35,
+   "alias": "雷暴元素",
+   "play": "围绕无羁雷暴成长"
   },
   {
    "tier": "A",
@@ -558,7 +580,9 @@
     2.62,
     1.74
    ],
-   "support_states": 253
+   "support_states": 253,
+   "alias": "鱼人·下毒",
+   "play": "买下毒牌，靠毒换掉对手大哥"
   },
   {
    "tier": "A",
@@ -605,7 +629,9 @@
     3.01,
     2.87
    ],
-   "support_states": 1020
+   "support_states": 1020,
+   "alias": "时尚宰割亡灵",
+   "play": "围绕堕落屠夫和时尚魅影"
   },
   {
    "tier": "A",
@@ -640,7 +666,9 @@
     3.35,
     3.33
    ],
-   "support_states": 192
+   "support_states": 192,
+   "alias": "逃脱大师",
+   "play": "自伤让逃脱大师不断拿法术"
   },
   {
    "tier": "A",
@@ -679,7 +707,9 @@
     1.73,
     1.6
    ],
-   "support_states": 310
+   "support_states": 310,
+   "alias": "蝎子来来",
+   "play": "围绕甲虫成长，受伤触发和亡语召唤滚雪球"
   },
   {
    "tier": "A",
@@ -754,7 +784,9 @@
    "support": [],
    "support_names": [],
    "support_lift": [],
-   "support_states": 29
+   "support_states": 29,
+   "alias": "深潜野兽",
+   "play": "不断叠野兽攻击力，香蕉猛猿翻倍"
   },
   {
    "tier": "A",
@@ -784,7 +816,9 @@
    "support_lift": [
     1.62
    ],
-   "support_states": 184
+   "support_states": 184,
+   "alias": "炫彩无人机",
+   "play": "大量放法术触发磁力"
   },
   {
    "tier": "B",
@@ -804,7 +838,9 @@
    "support": [],
    "support_names": [],
    "support_lift": [],
-   "support_states": 0
+   "support_states": 0,
+   "alias": "无面亡语",
+   "play": "无面转化者配瑞文加身材"
   },
   {
    "tier": "B",
@@ -851,7 +887,9 @@
     1.93,
     1.72
    ],
-   "support_states": 577
+   "support_states": 577,
+   "alias": "宝箱海盗",
+   "play": "电表 + 宝箱海盗刷宝箱，钩牙全体加身材"
   },
   {
    "tier": "B",
@@ -875,7 +913,9 @@
    "support": [],
    "support_names": [],
    "support_lift": [],
-   "support_states": 121
+   "support_states": 121,
+   "alias": "法强进击",
+   "play": "六本龙放法术，要刷法强，诗心龙保留身材"
   },
   {
    "tier": "B",
@@ -914,6 +954,239 @@
     2.01
    ],
    "support_states": 312
+  },
+  {
+   "tier": "S",
+   "name": "飞机大队",
+   "avg_place": 3.0,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "黑客鱼人",
+    "怒胆喷毒鱼人",
+    "下水道逃生鱼人",
+    "海藻护卫",
+    "布莱恩·铜须"
+   ],
+   "core": [
+    "BG31_148",
+    "BG33_318",
+    "BG36_700",
+    "BG36_701",
+    "BG_LOE_077"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "下水道逃生鱼人给飞机鱼加关键词（毒、风怒、盾、复生），稳定拉手牌；手里攒下毒牌终结",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "A",
+   "name": "摩托抉择",
+   "avg_place": 3.4,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "极速野猪骑士",
+    "健身搏猪",
+    "鲜血精研者",
+    "堑壕斗士",
+    "棘刺挖掘工"
+   ],
+   "core": [
+    "BG31_323",
+    "BG31_326",
+    "BG33_885",
+    "BG34_684",
+    "BG36_331"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "用抉择反复刷极速野猪骑士",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "A",
+   "name": "牺牲亡语恶魔",
+   "avg_place": null,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "提图斯·瑞文戴尔",
+    "牺牲的愤怒卫士",
+    "鬼影幻术师"
+   ],
+   "core": [
+    "BG25_354",
+    "BG36_362",
+    "BG36_731"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "牺牲的愤怒卫士加身材，亡语加酒馆",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "A",
+   "name": "手牌宝石",
+   "avg_place": 4.0,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "热气球测绘员",
+    "鲜血精研者",
+    "得胜的地卜术师"
+   ],
+   "core": [
+    "BG30_121",
+    "BG33_885",
+    "BG36_370"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "把增强过的宝石放进手牌，集中贴到主力身上",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "B",
+   "name": "手牌鱼人",
+   "avg_place": 3.7,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "合唱鱼人",
+    "凶饿的觅食者",
+    "魔鳍真菌学家",
+    "巴琳达·斯通赫尔斯",
+    "萨满招潮者",
+    "布莱恩·铜须"
+   ],
+   "core": [
+    "BG26_354",
+    "BG27_556",
+    "BG33_891",
+    "BG35_883",
+    "BG36_704",
+    "BG_LOE_077"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "萨满招潮者给场上和手牌的鱼人加身材，合唱鱼人输出",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "B",
+   "name": "畸变怪·腐泥",
+   "avg_place": 3.2,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "达卡莱附魔师",
+    "邪火咒龙",
+    "黑暗傀儡师",
+    "梦魇侵蚀怪",
+    "神秘的克熙尔"
+   ],
+   "core": [
+    "BG26_ICC_901",
+    "BG32_821",
+    "BG36_104",
+    "BG36_115",
+    "BG36_320"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "反复弃掉腐泥侵蚀来强化；经济紧时达卡莱配克熙尔挂机",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "B",
+   "name": "机械·扩音机",
+   "avg_place": 3.3,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "多面辅助无人机",
+    "达卡莱附魔师",
+    "转运构筑机",
+    "机智的机器人"
+   ],
+   "core": [
+    "BG26_152",
+    "BG26_ICC_901",
+    "BG34_171",
+    "BG36_366"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "回合结束磁力吸附自动成长，达卡莱多触发",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "B",
+   "name": "龙·战吼",
+   "avg_place": 4.1,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "执念诗心龙",
+    "龙族看护员",
+    "海藻护卫",
+    "英勇的巢母",
+    "布莱恩·铜须",
+    "奥术守护者卡雷苟斯"
+   ],
+   "core": [
+    "BG29_813",
+    "BG34_633",
+    "BG36_701",
+    "BG36_849",
+    "BG_LOE_077",
+    "BGS_041"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "循环战吼强化龙",
+   "added": "2026-11-10"
+  },
+  {
+   "tier": "B",
+   "name": "亡灵·永恒骑士",
+   "avg_place": 3.6,
+   "top1": null,
+   "top4": null,
+   "games": null,
+   "core_names": [
+    "永恒骑士",
+    "永恒召唤者",
+    "永恒大亨"
+   ],
+   "core": [
+    "BG25_008",
+    "BG25_009",
+    "BG34_403"
+   ],
+   "support": [],
+   "support_names": [],
+   "support_lift": [],
+   "play": "召唤大量永恒骑士，越打越大",
+   "added": "2026-11-10"
   }
  ],
  "playbook": {
