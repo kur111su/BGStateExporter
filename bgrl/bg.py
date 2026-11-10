@@ -1,9 +1,7 @@
 """bgrl 的统一入口：python bg.py <命令> [参数]（Windows 上双击对应的 .bat 即可）。
 
   train     训练（train.bat = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
-  replay    A5 回放检查：用你的对局记录逐步检查模拟器（参数同 tools/tg_replay.py：--last N …）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
-  demos     把你的对局记录变成示范数据 runs/demos.npz（训练时模仿你的操作；tools/make_demos.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
   prodemos  高分对局回放（Firestone 6500+ 分享包的 rawxml-sanitized）→ 高分玩家决策样本 runs/pro_demos/
   nativedemos  别人的对局（TavernGym 观察格式 .npz）→ 决策样本 runs/h13_demos + 阵容库 runs/h13_boards.json
@@ -33,8 +31,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-TOOLS = {"train": "train", "replay": "tg_replay",
-         "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
+TOOLS = {"train": "train",
+         "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
          "profile": "opp_profile", "bench": "tg_bench"}
 
@@ -62,7 +60,7 @@ def _test() -> int:
 
 
 def _info() -> int:
-    from paths import DEFAULT_RUN, games_dir
+    from paths import DEFAULT_RUN
     print("Python", sys.version.split()[0])
     try:
         import torch
@@ -75,8 +73,6 @@ def _info() -> int:
         print("TavernGym", taverngym.version())
     except ImportError:
         print("TavernGym 没装（运行 setup.bat）")
-    g = games_dir()
-    print("对局记录", g, f"（{len(list(g.glob('*.jsonl')))} 局）" if g.exists() else "（不存在）")
     log = DEFAULT_RUN / "log.jsonl"
     if log.exists():
         rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]

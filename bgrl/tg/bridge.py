@@ -13,7 +13,7 @@ v2 起还会：
   - 随从计数器（counter）：按卡牌把插件的 scriptData 换算成 TavernGym 的 counter（COUNTERS 表）。
   - 黑暗之赐 / 磁力附着：从插件的附魔（enchantments）认出来，直接写进存档的 attached（不触发附着效果，
     攻防、关键词已经是插件里的实际值）。
-  - 对手阵容：局面带 _seen（logs.load_game 生成）时，把每个对手最近一次交手看到的阵容放到他的场上，
+  - 对手阵容：局面带 _seen（logs.load_records 生成）时，把每个对手最近一次交手看到的阵容放到他的场上，
     同时记成你“看到过”的阵容（scouted）。
 
 还没做的：卡池余量（按默认卡池）、其它没映射的玩家标签。

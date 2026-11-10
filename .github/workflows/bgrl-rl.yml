@@ -37,10 +37,6 @@ jobs:
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --resume --restore bgrl/runs/_smoke/snapshots/it00002.pt
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --recipe bgrl/configs/v3.json
-      - name: Demos from the replay fixture + tiny PPO run with imitation
-        run: |
-          python -X utf8 bgrl/bg.py demos --fixture bgrl/tests/fixtures/replay_v3.jsonl.gz
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --bc-coef 0.05 --boost-frac 1.0 --boost-from-turn 3 --bc-weights "upgrade:3,sell:3,buy:2" --bc-train-cap 0.6 --bc-smooth 0.1 --tempo-bonus 0.03 --refresh-waste-penalty 0.015
       - name: Pro-board library from a synthetic sample + tiny PPO run with pro boards
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json

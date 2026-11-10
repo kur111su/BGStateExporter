@@ -1,7 +1,7 @@
-"""模仿学习：你的对局示范（bc_*）和高分玩家示范（pro_*）的读取、加权、损失和命中率。
+"""模仿学习：高分玩家示范（pro_*）的读取、加权、损失和命中率。
 
 Trainer（rl/ppo.py）继承 ImitationMixin。这里用到 Trainer 的：cfg、model、dev、amp、obs、envs（检查示范格式）、
-bc_rng、bc_scale / pro_scale（存在检查点里）。_init_imitation() 在 Trainer.__init__ 里调用一次。
+bc_rng、pro_scale（存在检查点里）。_init_imitation() 在 Trainer.__init__ 里调用一次。
 数据格式和类别见 rl/demos.py。
 """
 from __future__ import annotations
@@ -12,40 +12,16 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .demos import KINDS, SHARD_KEYS, bought_in, load as load_demos, load_dir, permute_shop
+from .demos import KINDS, SHARD_KEYS, bought_in, load_dir, permute_shop
 
 
 class ImitationMixin:
     def _init_imitation(self):
         cfg = self.cfg
-        self.demos = self._load_demos()
         self.bc_rng = np.random.default_rng(cfg.seed + 7)
-        self.bc_w = self._bc_weights() if self.demos is not None else None
         self.pro = self._load_pro()
         self.pro_w = self._bc_weights(self.pro, cfg.pro_weights) if self.pro is not None else None
-        self.bc_scale = 1.0                            # 模仿强度的倍数（见 bc_train_cap；存在检查点里）
         self.pro_scale = 1.0                           # 模仿高手强度的倍数（见 pro_gap_cap；存在检查点里）
-
-    def _load_demos(self):
-        from paths import RUNS
-        path = Path(self.cfg.bc_data) if self.cfg.bc_data else RUNS / "demos.npz"
-        if not path.exists():
-            if self.cfg.bc_coef > 0:
-                print(f"没有示范数据 {path}（先运行 bg.py demos），这次不模仿", flush=True)
-            return None
-        try:
-            d = load_demos(path)
-        except Exception as ex:                        # noqa: BLE001
-            print(f"示范数据 {path} 读不了（{type(ex).__name__}: {ex}），这次不模仿", flush=True)
-            return None
-        if d["m"].shape[1] != self.model.L.actions or d["f"].shape[1:] != self.obs[self.envs[0][0]]["features"].shape[1:]:
-            print(f"示范数据 {path} 和当前环境的格式不一样（TavernGym 换过版本？），重新运行 bg.py demos", flush=True)
-            return None
-        d["train_idx"] = np.flatnonzero(d["split"] == 0)
-        d["val_idx"] = np.flatnonzero(d["split"] == 1)
-        print(f"示范数据：{d['meta'].get('games')} 局，训练 {len(d['train_idx'])} 条、验证 {len(d['val_idx'])} 条"
-              f"（{d['meta'].get('created')}）；模仿系数 {self.cfg.bc_coef}", flush=True)
-        return d
 
     def _load_pro(self):
         from paths import RUNS
@@ -86,9 +62,8 @@ class ImitationMixin:
         """示范的动作数、观察长度和当前环境一样（老师训练 tools/teacher.py 没有环境，只比动作数）。"""
         return d["m"].shape[1] == self.model.L.actions and d["f"].shape[1:] == self.obs[self.envs[0][0]]["features"].shape[1:]
 
-    def _demo_tensors(self, j, d=None, shuffle: bool = False):
+    def _demo_tensors(self, j, d, shuffle: bool = False):
         """示范第 j 条（数组）→ 张量。shuffle：酒馆顺序随机打乱（demo_shop_shuffle，只在训练时用，考试不打乱）。"""
-        d = self.demos if d is None else d
         f, c, m, cand = d["f"][j], d["c"][j], d["m"][j], d["cand"][j]
         if shuffle:
             f, c, m, cand = permute_shop(f, c, m, cand, self.bc_rng, self.model.L.fslices()["shop"][0], self.model.L.IF,
@@ -101,9 +76,7 @@ class ImitationMixin:
             logits = self.model(f, c, m, compressed=compressed)[0]
         return F.log_softmax(logits.float(), -1)
 
-    def _bc_weights(self, d=None, spec=None):
-        d = self.demos if d is None else d
-        spec = self.cfg.bc_weights if spec is None else spec
+    def _bc_weights(self, d, spec):
         w, tw = {}, []
         for part in str(spec or "").replace(" ", "").split(","):
             if ":" in part:
@@ -129,10 +102,7 @@ class ImitationMixin:
 
     _bought_in = staticmethod(bought_in)
 
-    def bc_loss(self, d=None, wts=None, batch=None):
-        d = self.demos if d is None else d
-        wts = self.bc_w if wts is None else wts
-        batch = batch or self.cfg.bc_batch
+    def bc_loss(self, d, wts, batch):
         j = self.bc_rng.choice(d["train_idx"], size=min(batch, len(d["train_idx"])))
         f, c, m, cand = self._demo_tensors(j, d, shuffle=self.cfg.demo_shop_shuffle)
         lp_all = self._demo_logp(f, c, m, bool(d.get("compressed")))
@@ -144,17 +114,6 @@ class ImitationMixin:
             nll = (1 - eps) * nll + eps * uni
         w = torch.as_tensor(wts[j], device=nll.device)
         return (nll * w).sum() / w.sum()
-
-    def adjust_bc(self, he: dict) -> None:
-        """按训练示范命中率调模仿强度（考试时调用）。"""
-        cap = self.cfg.bc_train_cap
-        tr = he.get("human_top1_train")
-        if cap <= 0 or tr is None:
-            return
-        if tr > cap:
-            self.bc_scale = max(self.cfg.bc_scale_min, self.bc_scale * 0.5)
-        elif tr < cap - 0.1:
-            self.bc_scale = min(1.0, self.bc_scale * 1.5)
 
     def adjust_pro(self, pe: dict) -> None:
         """按训练示范和留出局命中率的差距调模仿高手的强度（考试时调用）。"""
@@ -168,9 +127,8 @@ class ImitationMixin:
             self.pro_scale = min(1.0, self.pro_scale * 1.25)
 
     @torch.no_grad()
-    def human_eval(self, d=None, prefix: str = "human") -> dict:
+    def demo_eval(self, d, prefix: str = "pro") -> dict:
         """留出的验证局上：模型最可能的动作是不是示范里的那个（{prefix}_top1），按类别的命中率，平均交叉熵。"""
-        d = self.demos if d is None else d
         self.model.eval()
         out = {}
         val = d["val_idx"]

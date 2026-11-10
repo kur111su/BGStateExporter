@@ -131,19 +131,9 @@ class Config:
     # （tools/pro_library.py 生成 runs/pro_boards.json，带高本随从和它们的效果）。pro 时 strength = 每个机器人被换的概率
     boost_kind: str = "scale"
     pro_boards: str = ""           # 空 = runs/pro_boards.json；几个库用分号隔开（例如加上 runs/h13_boards.json）
-    # 升本节奏奖励的目标曲线：real = 你的对局（rl/real_profile.json）；pro = 6500+ 高分对局（rl/pro_profile.json）
+    # 升本节奏奖励的目标曲线：real = 真人对局的汇总（rl/real_profile.json）；pro = 6500+ 高分对局（rl/pro_profile.json）
     tempo_curve: str = "real"
-    # 模仿你的操作（tools/make_demos.py 生成 runs/demos.npz）：每个小批另外抽 bc_batch 条示范算交叉熵，乘 bc_coef 加进损失。
-    # 0 = 不模仿；有示范数据时日志照样记 human_top1 等（留出的验证局上模型和你的操作对得上多少）
-    bc_coef: float = 0.0
-    bc_data: str = ""              # 空 = runs/demos.npz
-    bc_batch: int = 256
-    # 按类别加权（竞技场里最缺的是升本、卖怪换怪、买随从）："upgrade:3,sell:3,buy:2"；没写的类别权重 1
-    bc_weights: str = ""
-    # 防止背下你的对局（示范只有十几局、两千来步）：每次考试看模型在训练用示范上的命中率，
-    # 高于 bc_train_cap 就把模仿强度减半，低于 cap - 0.1 再加回来（最多到 bc_coef）。0 = 不控制
-    # （第 2471–3047 轮：训练示范命中率 0.23 → 0.99，留出局只有 0.20，留出局交叉熵 3.2 → 8.2，完全是在背题）
-    bc_train_cap: float = 0.0
+    # 模仿示范时的标签平滑（见 rl/imitation.py 的 bc_loss）
     bc_smooth: float = 0.0         # 标签平滑：目标分一点给其它合法动作，避免对示范过分自信
     # 升本节奏奖励（课程，逐渐减到 0）：学习者升本时，如果升之前的等级低于真人同一回合的平均等级 + 0.5，
     # 当场加 tempo_bonus（一个名次约 0.29）。v3 在竞技场里第 9 回合平均 2.4 本（真人 5.0），77 个回合里
@@ -158,9 +148,8 @@ class Config:
     # 阵容测试（第 10350 轮，对高分阵容 256 局，平均名次 4.05）：第 8 / 9 回合升本率 31% / 26%（高手 64% / 36%），
     # 第 9 回合 4.46 本（高手 5.40）；对普通机器人第 8 回合升本 83%——被高分阵容压着时只买怪不升本 → 0.06
     tempo_deficit: float = 0.0
-    bc_scale_min: float = 0.01     # 模仿强度最低降到多少（见 bc_train_cap）
     # 模仿 6500+ 高分玩家（tools/make_pro_demos.py 从 Firestone 回放生成 runs/pro_demos/，约 10 万条决策）：
-    # 和“模仿你的操作”分开算，有自己的系数、按类别权重和留出局指标（pro_top1 / pro_upgrade / pro_end …）
+    # 有自己的系数、按类别权重和留出局指标（pro_top1 / pro_upgrade / pro_end …）
     pro_coef: float = 0.0
     pro_data: str = ""             # 空 = runs/pro_demos；几个目录用分号隔开（例如 "runs/pro_demos;runs/h13_demos"）
     pro_weights: str = ""          # 例如 "upgrade:3,end:2"
@@ -306,7 +295,7 @@ class Config:
     guard_patience: int = 3
     guard_decay: float = 0.7
     guard_max: int = 6
-    guard_keys: str = "teacher_coef,pro_coef,bc_coef"
+    guard_keys: str = "teacher_coef,pro_coef"
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -929,10 +918,6 @@ class Trainer(ShapingMixin, ImitationMixin):
                                    ("aux", aux.item()), ("kl", kl),
                                    ("clipfrac", ((ratio - 1).abs() > cfg.clip).float().mean().item())):
                         stats[k_].append(v_)
-                if self.demos is not None and cfg.bc_coef > 0 and len(self.demos["train_idx"]):
-                    bc = self.bc_loss()
-                    self.scaler.scale(cfg.bc_coef * self.bc_scale * bc).backward()
-                    stats["bc"].append(bc.item())
                 if self.pro is not None and cfg.pro_coef > 0 and len(self.pro["train_idx"]):
                     pb = self.bc_loss(self.pro, self.pro_w, cfg.pro_batch)
                     self.scaler.scale(cfg.pro_coef * self.pro_scale * pb).backward()
@@ -1294,7 +1279,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,
                     "league": self.league.to_json(), "model_kwargs": self.mkw,
                     "boost": {**self.adapt.to_json(), "kind": self.cfg.boost_kind} if self.adapt is not None else None, "tempo_t0": self.tempo_t0,
-                    "bc_scale": self.bc_scale, "pro_scale": self.pro_scale,
+                    "pro_scale": self.pro_scale,
                     "teacher": {"t0": self.teacher_t0, "id": getattr(self, "teacher_id", None)},
                     "repay_t0": self.repay_t0, "guard": self.guard_st, "ent_coef": self.cfg.ent_coef,
                     "warm_t0": getattr(self, "warm_t0", None)}, self.run / "latest.pt")
@@ -1308,7 +1293,6 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
-        self.bc_scale = float(ck.get("bc_scale", self.bc_scale))
         self.pro_scale = float(ck.get("pro_scale", self.pro_scale))
         tk = ck.get("teacher") or {}
         if getattr(self, "teacher", None) is not None and tk.get("t0") is not None and tk.get("id") == getattr(self, "teacher_id", None):
@@ -1569,12 +1553,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                         rec["eval_boost_top4"] = round(float(np.mean([p <= 4 for p in eps])), 3)
                         rec["eval_boost_score"] = round(place_score_equiv(eps, self.place_tab), 3)
                     rec.update(getattr(self, "last_comp", {}) or {})
-                if self.demos is not None:
-                    he = self.human_eval()
-                    self.adjust_bc(he)
-                    rec.update(he, bc_scale=round(self.bc_scale, 3))
                 if self.pro is not None:
-                    pe = self.human_eval(self.pro, "pro")
+                    pe = self.demo_eval(self.pro, "pro")
                     self.adjust_pro(pe)
                     rec.update(pe, pro_scale=round(self.pro_scale, 3))
                 if cfg.guard:

@@ -1,7 +1,6 @@
 """示范数据（模仿学习样本）的格式：读、写、动作类别。不需要 torch。
 
-三种来源写出来的格式一样，训练（rl/ppo.py）只认这里：
-  runs/demos.npz          你自己的对局（tools/make_demos.py，单个文件，观察是原始浮点）
+两种来源写出来的格式一样，训练（rl/ppo.py）只认这里：
   runs/pro_demos/         Firestone 6500+ 回放（tools/make_pro_demos.py，分片，观察是 soft_log 后的 float16）
   runs/h13_demos/         别人万三的对局（tools/native_demos.py，分片，同上）
 
@@ -11,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -29,35 +27,6 @@ def soft_log_np(x: np.ndarray) -> np.ndarray:
     """和 rl/model.py 的 soft_log_np 一样（这里不导入 rl.model：转换不需要 torch；tests/test_layout.py 核对两者一致）。"""
     a = np.abs(x)
     return np.where(a <= 1, x, np.sign(x) * (1 + np.log(np.maximum(a, 1)))).astype(np.float32)
-
-
-# ---------------- 单文件（你自己的对局） ----------------
-
-def save(rows, out: Path, meta: dict):
-    """rows：[(f, c, m, 候选动作, 类别名, 回合, split)]，写成一个 npz（先写临时文件再换名）。"""
-    n = len(rows)
-    cand = np.full((n, MAX_CANDS), -1, dtype=np.int16)
-    for i, r in enumerate(rows):
-        cand[i, :len(r[3])] = r[3]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp.npz")
-    np.savez_compressed(tmp, f=np.stack([r[0] for r in rows]).astype(np.float32),
-                        c=np.stack([r[1] for r in rows]).astype(np.int32),
-                        m=np.packbits(np.stack([r[2] for r in rows]), axis=1), cand=cand,
-                        kind=np.array([KINDS.index(r[4]) for r in rows], dtype=np.int8),
-                        turn=np.array([r[5] for r in rows], dtype=np.int16),
-                        split=np.array([r[6] for r in rows], dtype=np.int8),
-                        n_actions=np.int32(len(rows[0][2])), meta=np.array(json.dumps(meta, ensure_ascii=False)))
-    os.replace(tmp, out)
-
-
-def load(path) -> dict:
-    """训练用：返回各数组（m 已解包成 bool）。"""
-    z = np.load(path, allow_pickle=False)
-    d = {k: z[k] for k in z.files}
-    d["m"] = np.unpackbits(d["m"], axis=1)[:, :int(d["n_actions"])].astype(bool)
-    d["meta"] = json.loads(str(d["meta"]))
-    return d
 
 
 # ---------------- 分片目录（高分回放 / 万三对局） ----------------
@@ -79,7 +48,7 @@ def write_shard(out_dir: Path, k: int, arrays: dict, n_actions: int, meta: dict)
 
 
 def load_dir(path) -> dict | None:
-    """训练用：读目录里所有分片，拼成和 load 一样的字典（多一个 compressed=True）。"""
+    """训练用：读目录里所有分片，拼成一个字典（m 解包成 bool，compressed=True）。"""
     files = sorted(Path(path).glob("part_*.npz"))
     if not files:
         return None

@@ -38,7 +38,7 @@ SHARD = 4000
 
 
 def kind_of(a: int, hand_card_kind: str = "") -> str | None:
-    """动作 → 示范类别（tools/make_demos.KINDS）；选择 / 取消不在示范类别里，返回 None。
+    """动作 → 示范类别（rl/demos.KINDS）；选择 / 取消不在示范类别里，返回 None。
     打出手牌：手里那张是法术记成 cast，否则 play。"""
     fam = action_family(a)
     if fam in ("cancel", "choose"):

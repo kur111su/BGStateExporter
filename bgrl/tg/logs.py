@@ -1,23 +1,19 @@
-"""读插件的对局记录（games/*.jsonl，schema 2），整理成 TavernGym 桥接和回放校验要用的形式。
+"""对局记录（高分回放经 tg/hsreplay.py 转成的逐条局面记录）→ TavernGym 桥接要用的形式。
 
-  load_game(path)        → 本局所有招募阶段记录（去掉面板用的字段；标签名统一大写；补上 _heroBase、_seen、_dark_gifts）
-  GameHistory            → 逐条喂记录、给招募记录补上历史（load_game 用）
-  seen_boards(records)   → 每个回合开始战斗时看到的对手阵容 {回合: (对手英雄, 阵容)}
-  recruit_snapshots(...) → 每回合取一条“局面稳定”的招募记录（A4 用）
-  segment(records)       → 切成一个个动作，每个动作配上动作前、动作后的稳定局面（A5 用）
+  load_records(records, name) → 本局所有招募阶段记录（标签名统一大写；补上 _heroBase、_seen、_dark_gifts）
+  GameHistory                 → 逐条喂记录、给招募记录补上历史
+  segment(records)            → 切成一个个动作，每个动作配上动作前、动作后的稳定局面
 
 _seen：到这条记录为止，每个对手（按英雄）最近一次交手时的阵容，{"英雄": {"turn": 回合, "board": [...]}}。
 """
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DROP = ("simulation", "learning", "plugin", "turnLog")
 _SKIN = re.compile(r"_SKIN_[A-Z0-9]+$")
 _skins: dict[str, str] | None = None
 
@@ -68,45 +64,12 @@ def _normalize(s: dict) -> dict:
     return s
 
 
-def read_records(path: str | os.PathLike) -> list[dict]:
-    out = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            try:
-                s = json.loads(line)
-            except ValueError:
-                continue
-            if not s.get("isBattlegrounds") or s.get("mode") not in (None, "solo"):
-                continue
-            for k in DROP:
-                s.pop(k, None)
-            out.append(_normalize(s))
-    return out
-
-
-def seen_boards(records: list[dict]) -> dict[int, tuple[str, list[dict]]]:
-    """每回合战斗开始时对手的阵容（这一回合第一条带对手阵容的战斗记录 = 战斗前的阵容）。"""
-    out: dict[int, tuple[str, list[dict]]] = {}
-    for s in records:
-        if s.get("phase") != "combat":
-            continue
-        o = s.get("opponent") or {}
-        hero = o.get("heroCardId") or ""
-        t = int(s.get("turn") or 0)
-        if t in out or not hero or "BaconShopBob" in hero:
-            continue
-        board = o.get("board") or []
-        if board:
-            out[t] = (hero_base(hero), sorted(board, key=lambda c: c.get("position", 0)))
-    return out
-
-
 class GameHistory:
     """按时间顺序喂一局的插件记录（任何阶段），记下桥接要用、但单条记录里没有的历史：
       _seen       每个对手（按英雄）最近一次交手时的阵容 {"英雄": {"turn": 回合, "board": [...]}}
       _dark_gifts 花钱买过的黑暗之赐 {"uses": 次数, "used_turn": 本回合买过没有}：插件出现“黑暗之赐”待选项、
                   而且前几条记录里金币刚少了至少 3（卡牌效果送的黑暗之赐不花钱，不算）
-    load_game（回放、A4）用这一份逻辑。"""
+    load_records 用这一份逻辑。"""
 
     def __init__(self):
         self.seen_by_turn: dict[int, tuple[str, list[dict]]] = {}
@@ -144,26 +107,13 @@ class GameHistory:
 
 
 def load_records(records: list[dict], name: str) -> list[dict]:
-    """同 load_game，但记录已经在内存里（tg/hsreplay.py 从回放生成的）。"""
+    """本局的招募阶段记录（按顺序），每条加上 _file、_seen、_dark_gifts（见 GameHistory）。"""
     hist = GameHistory()
     out = []
     for s in records:
         if not s.get("isBattlegrounds") or s.get("mode") not in (None, "solo"):
             continue
         s = _normalize(s)
-        hist.feed(s)
-        if s.get("phase") == "recruit" and s.get("player"):
-            s["_file"] = name
-            out.append(hist.annotate(s))
-    return out
-
-
-def load_game(path: str | os.PathLike) -> list[dict]:
-    """本局的招募阶段记录（按顺序），每条加上 _file、_seen、_dark_gifts（见 GameHistory）。"""
-    name = os.path.basename(str(path))
-    hist = GameHistory()
-    out = []
-    for s in read_records(path):
         hist.feed(s)
         if s.get("phase") == "recruit" and s.get("player"):
             s["_file"] = name
@@ -184,22 +134,7 @@ def _settled(a: dict, b: dict) -> bool:
     return _key(a) == _key(b)
 
 
-def recruit_snapshots(records: list[dict]) -> list[dict]:
-    """每回合一条：本回合最后一条招募记录之前、局面已稳定的那条（A4 检查用）。"""
-    by_turn: dict[int, list[dict]] = {}
-    for s in records:
-        by_turn.setdefault(int(s.get("turn") or 0), []).append(s)
-    out = []
-    for t, lst in sorted(by_turn.items()):
-        if t < 1:
-            continue
-        mid = lst[len(lst) // 2:]
-        pick = next((x for x, y in zip(mid, mid[1:]) if _settled(x, y)), mid[0])
-        out.append(pick)
-    return out
-
-
-# ---------------- 动作切分（A5） ----------------
+# ---------------- 动作切分 ----------------
 
 @dataclass
 class Action:

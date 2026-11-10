@@ -1,17 +1,12 @@
-"""A5 现实闭环回放：用你真实对局里的每一步检验 TavernGym。
+"""对局记录里的动作 → TavernGym 动作（高分回放转决策样本用，见 tools/make_pro_demos.py）。
 
-对每个动作（logs.segment 切出来的）：
-  1. 用动作前的稳定局面在 TavernGym 里重建（bridge.build_game）。
-  2. 把你的动作翻译成 TavernGym 的动作编号执行；之后要选目标 / 发现 / 抉择的，挨个试，取最接近记录的一个
-     （记录里没有你选了哪个）。结果不一致时换几个随机种子再试（随机效果）。
-  3. 和记录里动作后的稳定局面比：场面（顺序、卡、金色、攻防、关键词）、手牌、酒馆、金币、等级。
-  4. 结果分四类：exact（完全一致）、aggregate（总攻防、张数一致，只是分配不同，多半是随机目标）、
-     mismatch（不一致）、illegal（TavernGym 不让做这个动作）；另有 skipped（记录合并了几个动作，或翻译不了）。
+  visible_log / visible_tg  记录 / TavernGym 局面里看得见的部分（场面、手牌、酒馆、金币、等级），diff 比两边
+  translate(action)         logs.segment 切出来的动作 → TavernGym 的动作编号
+  best_choice(g, reals)     动作之后要选目标 / 发现 / 抉择的，挨个试，取最接近记录的一个（记录里没有选了哪个）
 """
 from __future__ import annotations
 
 import json
-import random
 from collections import Counter
 
 from .actions import (A_ACTIVATE, A_BUY, A_CHOOSE, A_HERO_POWER, A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL,
@@ -75,14 +70,6 @@ def diff(pred: dict, real: dict, shop: bool = True) -> list[str]:
     if shop and pred["shop"] != real["shop"]:
         out.append(f"酒馆 少{sorted((real['shop'] - pred['shop']).elements())} 多{sorted((pred['shop'] - real['shop']).elements())}")
     return out
-
-
-def aggregate_ok(pred: dict, real: dict) -> bool:
-    """总量一致：金币、等级、场面张数和卡、总攻防、手牌张数（随机目标、发现 / 随机给的牌不同也算）。"""
-    def tot(v):
-        return (v["gold"], v["tier"], len(v["board"]), sum(b[2] or 0 for b in v["board"]),
-                sum(b[3] or 0 for b in v["board"]), sorted(b[0] for b in v["board"]), sum(v["hand"].values()))
-    return tot(pred) == tot(real)
 
 
 # ---------------- 动作翻译 ----------------
@@ -222,103 +209,3 @@ def _resolve(g, reals: list[dict], shop: bool, depth: int = 0) -> tuple:
         if best[0] == 0:
             break
     return best
-
-
-def _reseed(g, seed: int):
-    import taverngym
-    s = json.loads(g.state_json())
-    r = random.Random(seed)
-    s["rng"]["s"] = [r.getrandbits(64) | 1 for _ in range(4)]
-    return taverngym.Game.from_json(json.dumps(s))
-
-
-def _random_like(d: list[str]) -> bool:
-    return any(x.startswith("酒馆") for x in d) and not any(x.startswith(("待选", "等级", "场面")) for x in d)
-
-
-def check_action(a: Action, seed: int = 0, trials: int = 4, carry: dict | None = None) -> dict:
-    """carry：同一局上一个动作的 lagDelta（动画还没到账的攻防），用来认出“动作前的记录还没跟上”。"""
-    out = {"file": a.before.get("_file"), "turn": a.turn, "kind": a.kind, "card": base_id(a.card_id) or a.kind}
-    if a.kind == "multi":
-        out.update(result="skipped", why="记录合并了几个动作")
-        return out
-    acts = translate(a)
-    if not acts:
-        out.update(result="skipped", why="翻译不了")
-        return out
-    try:
-        g0, warns = build_game(a.before, seed=seed)
-    except Exception as ex:                       # noqa: BLE001
-        out.update(result="skipped", why=f"重建失败 {type(ex).__name__}: {ex}")
-        return out
-    if a.kind in ("cast", "magnetize"):
-        # 手牌消失也可能是“发动”（如：发动：弃一张牌……），记录里分不出来，一起试
-        board = json.loads(g0.view(0))["me"].get("board") or []
-        acts = acts + [A_ACTIVATE + i for i, m in enumerate(board) if m.get("activate_cost") is not None]
-    reals = [visible_log(x) for x in (a.afters or [a.after])]
-    shop = a.kind not in ("refresh", "upgrade")    # 刷新是随机的；升本后可能有“升级时刷新”的效果
-    best = None
-    legal = False
-    t = 0
-    while t < trials or (t < trials * 4 and best is not None and best[0] > 0 and _random_like(best[1])):
-        # 差异里有酒馆变化（随机吞食、随机刷新、随机目标……）的，多换几个随机种子
-        t += 1
-        gs = g0 if t == 1 else _reseed(g0, seed * 1000 + t)
-        for act in acts:
-            g = gs.copy()
-            try:
-                g.step(0, act)
-            except ValueError as ex:
-                out.setdefault("refused", str(ex))
-                continue
-            legal = True
-            r = _resolve(g, reals, shop)
-            if best is None or r[0] < best[0]:
-                best = r
-            if best[0] == 0:
-                break
-        if best is not None and best[0] == 0:
-            break
-    if not legal:
-        out.update(result="illegal", why=out.pop("refused", ""))
-        return out
-    score, d, pred, ci, _ = best
-    res = "exact" if score == 0 else "aggregate" if aggregate_ok(pred, reals[ci]) else "mismatch"
-    if res != "exact":
-        lag = _lag(a, pred, (a.afters or [a.after])[ci], carry)
-        if lag is not None:
-            res = "lag"
-            out["lagDelta"] = lag
-    out.update(result=res, diff=d[:6], warnings=warns[:3], afterIndex=ci)
-    return out
-
-
-def _lag(a: Action, pred: dict, real_rec: dict, carry: dict | None) -> dict | None:
-    """动画延迟：只有场上随从攻防不一致，而且每个不一致的随从都能这样解释——
-      往后：预测的攻防（和动作前不同）在之后十几条记录里出现了（记录还没跟上）；
-      往前：差值正好是上一个动作还没到账的那部分（carry，上一个动作的 lagDelta）。
-    能解释就返回这次还没到账的差值 {entityId: [攻, 血]}（给下一个动作用），否则 None。"""
-    real = visible_log(real_rec)
-    if pred["gold"] != real["gold"] or pred["tier"] != real["tier"] or pred["hand"] != real["hand"] or \
-            pred["pending"] != real["pending"] or [x[:2] for x in pred["board"]] != [x[:2] for x in real["board"]] or \
-            (a.kind not in ("refresh", "upgrade") and pred["shop"] != real["shop"]):
-        return None
-    rb = _by_pos(real_rec["player"].get("board"))
-    before = {c["entityId"]: (c.get("attack"), c.get("health")) for c in a.before["player"].get("board") or []}
-    carry = carry or {}
-    owe: dict = {}
-    bad = 0
-    for q, r, c in zip(pred["board"], real["board"], rb):
-        if q[2:4] == r[2:4]:
-            continue
-        eid = c["entityId"]
-        want = (q[2], q[3])
-        if want != before.get(eid) and any(
-                (m.get("attack"), m.get("health")) == want
-                for rec in a.later for m in rec["player"].get("board") or [] if m.get("entityId") == eid):
-            owe[str(eid)] = [q[2] - r[2], q[3] - r[3]]
-            continue
-        if carry.get(str(eid)) == [r[2] - q[2], r[3] - q[3]]:
-            continue
-        bad += 1
-    return owe if bad == 0 else None

@@ -42,7 +42,6 @@ class Teach(ImitationMixin):
         self.cfg, self.model, self.dev = cfg, model, dev
         self.amp = dev.type == "cuda"
         self.bc_rng = np.random.default_rng(cfg.seed + 11)
-        self.demos = None
 
     def _demo_format_ok(self, d) -> bool:
         return d["m"].shape[1] == self.model.L.actions
@@ -88,7 +87,7 @@ def main(argv=None) -> int:
     data = ";".join(str(_path(p)) for p in data.split(";") if p.strip())
     cfg = SimpleNamespace(pro_data=data, pro_coef=1.0, pro_weights=rc.get("pro_weights", ""), seed=a.seed,
                           bc_smooth=rc.get("bc_smooth", 0.1), demo_shop_shuffle=rc.get("demo_shop_shuffle", True),
-                          micro_batch=512, bc_batch=a.batch)
+                          micro_batch=512)
     torch.manual_seed(a.seed)
     dev = torch.device(a.device)
     model, kw = build(a.init, rc.get("size", "medium"), dev)
@@ -106,7 +105,7 @@ def main(argv=None) -> int:
         print(f"  第 {step} 步：留出局命中率 {pe.get('pro_top1')}（训练示范 {pe.get('pro_top1_train')}），"
               f"交叉熵 {pe.get('pro_nll')}；{kinds}{mark}", flush=True)
 
-    pe = t.human_eval(d, "pro")
+    pe = t.demo_eval(d, "pro")
     show(0, pe, "（开始）")
     best = (pe["pro_nll"], 0, copy.deepcopy(model.state_dict()), pe)
     bad, t0, losses = 0, time.time(), []
@@ -119,7 +118,7 @@ def main(argv=None) -> int:
         losses.append(loss.item())
         if step % a.eval_every and step != a.steps:
             continue
-        pe = t.human_eval(d, "pro")
+        pe = t.demo_eval(d, "pro")
         better = pe["pro_nll"] < best[0] - 1e-3
         el = time.time() - t0
         show(step, pe, f"；训练损失 {np.mean(losses):.3f}，{el / 60:.1f} 分钟" + ("，目前最好" if better else ""))

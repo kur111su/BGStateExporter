@@ -27,40 +27,6 @@ REAL_PROFILE = Path(__file__).resolve().parent / "real_profile.json"
 
 # ---------------- 画像 ----------------
 
-def real_profile(files: list[str]) -> dict:
-    """从对局记录统计：每回合对手阵容总攻防（中位数、四分位）、对手等级、对手血量+护甲、你的名次分布。"""
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tg.logs import read_records, seen_boards
-
-    board, tier, hp = defaultdict(list), defaultdict(list), defaultdict(list)
-    places = []
-    games = 0
-    for f in files:
-        r = read_records(f)
-        if len(r) < 50:
-            continue
-        games += 1
-        for t, (_h, b) in seen_boards(r).items():
-            board[t].append(sum((c.get("attack") or 0) + (c.get("health") or 0) for c in b))
-        last = {}
-        for s in r:
-            if s.get("phase") == "recruit" and s.get("leaderboard"):
-                last[s["turn"]] = s
-        for t, s in last.items():
-            for e in s["leaderboard"]:
-                if e.get("isPlayer") or e.get("dead"):
-                    continue
-                tier[t].append(e.get("tavernTier") or 0)
-                hp[t].append((e.get("health") or 0) + (e.get("armor") or 0))
-        fin = [s for s in r if s.get("leaderboard")]
-        me = [e for e in (fin[-1]["leaderboard"] if fin else []) if e.get("isPlayer")]
-        if me and me[0].get("place"):
-            places.append(me[0]["place"])
-    return {"source": "real", "games": games,
-            "avgPlace": round(sum(places) / len(places), 2) if places else None, "turns": _summ(board, tier, hp)}
-
-
 def _summ(board, tier, hp) -> dict:
     out = {}
     for t in PROFILE_TURNS:

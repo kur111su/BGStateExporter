@@ -1,82 +1,63 @@
-# BGStateExporter — 酒馆战旗局面导出和 AI 训练
+# 酒馆战旗 AI：模拟训练 + 竞技场
 
-项目分两部分：
+在 TavernGym 模拟器（MCG-NJU/AutoTavern，MIT）里用 PPO 训练一个实体 Transformer 策略，练出来的模型打竞技场（TavernArena，官方服务器上的模拟对局）。
 
-- **插件（`plugin/`）**：Hearthstone Deck Tracker（HDT）插件。实时读取酒馆战旗局面、用 HDT 自带的 Bob's Buddy 做对战模拟（本场胜率、对位胜率、站位优化），把局面通过本机接口 http://localhost:8765/state.json 提供出来，并把每局记录存下来。v0.10 起不再有自己的搜索建议器和网页面板。
-- **模型（`bgrl/`）**：在 TavernGym 模拟器（MCG-NJU/AutoTavern，MIT）里用 PPO 训练一个实体 Transformer 策略，练出来的模型打竞技场（TavernArena，官方服务器上的模拟对局）。插件存下来的对局记录用来检查模拟器、校准训练对手、给模型当示范。
+模型只在模拟器和竞技场的模拟对局里出动作，不操作真实的炉石客户端。
 
-插件**只读**：只读取 HDT 已经解析好的数据，不碰游戏进程，也不操作鼠标键盘；模型只在模拟器和竞技场的模拟对局里出动作，不操作真实的炉石客户端。
+> 这个分支（`dev`）只有模型部分。原来的 HDT 插件（局面导出、Bob's Buddy 模拟）、影子模式、回放检查、模仿自己对局的示范已经去掉；插件留在 `main` 分支和已发布的版本里。
 
 ## 功能一览
 
-| 部分 | 功能 | 入口 |
-| --- | --- | --- |
-| 插件 | 局面导出（state.json、`/state.json`、`/events` SSE、每局 `games\*.jsonl`） | 装好即用 |
-| 插件 | 本场胜率、对各对手胜率、站位优化（Bob's Buddy） | `/state.json` 的 `sim`、`/optimize` |
-| 插件 | 自动更新（GitHub Releases） | HDT 启动时 |
-| 模型 | 环境安装、测试 | `bgrl\setup.bat` |
-| 模型 | 训练（断点续训、对手库、自动回滚）；训练看板（曲线、关键指标、事件 → `runs\v3\dashboard.md`）；老师模型 | `bgrl\train.bat`、`bgrl\board.bat`、`bgrl\teacher.bat` |
-| 模型 | 回放检查：用你的对局逐步检查模拟器 | `bgrl\replay.bat` |
-| 模型 | 金币流向、阵容测试：模型和高分玩家并排比 | `bgrl\goldflow.bat`、`bgrl\comptest.bat` |
-| 模型 | 竞技场（TavernArena）：打包模型、练习 / 计分对局、对局查看器 | `bgrl\arena*.bat` |
+| 功能 | 入口 |
+| --- | --- |
+| 环境安装、测试 | `bgrl\setup.bat` |
+| 训练（断点续训、对手库、守护和自动回滚） | `bgrl\train.bat` |
+| 训练看板（曲线、关键指标、事件 → `runs\v3\dashboard.md`） | `bgrl\board.bat` |
+| 老师模型（只模仿高分示范） | `bgrl\teacher.bat` |
+| 高分对局 → 决策样本和阵容库 | `bgrl\prodemos.bat`，`bg.py prolib` / `nativedemos` |
+| 金币流向、阵容测试：模型和高分玩家并排比 | `bgrl\goldflow.bat`、`bgrl\comptest.bat`、`bgrl\comptest_seeded.bat` |
+| TavernBench 评测 | `bgrl\tavernbench.bat` |
+| 竞技场：打包模型、练习 / 计分对局、对局查看器 | `bgrl\arena*.bat` |
 
-插件细节（算法、权重、安装 / 编译 / 发布、JSON 格式）见 [docs/插件详细说明.md](docs/插件详细说明.md)；模型部分见 [bgrl/README.md](bgrl/README.md)。
+细节（每个命令、训练配方、训练记录）见 [bgrl/README.md](bgrl/README.md)。
 
-## 安装插件
-
-1. 到 [Releases](https://github.com/kur111su/BGStateExporter/releases/latest) 下载 `BGStateExporter-vX.Y.Z.zip`（不用解压）。
-2. 打开 HDT → 选项 → 跟踪器 → 插件，把 zip **拖进插件列表**。
-3. 勾选 **BG State Exporter**。局面在 http://localhost:8765/state.json，对局记录自动存进 `games\`。
-
-以后有新版本会自动下载，完全退出 HDT（托盘图标右键「退出」）再打开生效。
-
-## 项目结构
+## 目录
 
 ```
-plugin/                     HDT 插件（C#，.NET Framework 4.7.2）
-  BGStateExporter.csproj    版本号在这里改；推送到 main 自动编译发布
-  build.ps1                 本机编译并安装到 HDT 插件目录
-  src/Core/                 插件入口、局面读取、JSON 模型、本机 HTTP 服务（/state.json、/events、/optimize）、自动更新
-  src/Sim/                  Bob's Buddy 调用（反射）和模拟调度：本场胜率、对位胜率、站位优化
-bgrl/                       模型：模拟环境桥接、训练、竞技场（Python）
-  *.bat                     双击入口（setup、train、board、teacher、goldflow、comptest、comptest_seeded、prodemos、replay、tavernbench、arena×5）
+bgrl/                       全部代码（Python）
+  *.bat                     双击入口（setup、train、board、teacher、goldflow、comptest、comptest_seeded、prodemos、tavernbench、arena×5）
   bg.py                     统一命令入口（python bg.py <命令>）
-  paths.py                  路径和端口
+  paths.py                  路径
   configs/v3.json           训练配方（train.bat 的全部设置）
-  tg/                       TavernGym 桥接：动作编号、观察布局、卡牌目录、对局记录解析、局面重建、回放检查
-  rl/                       模型、PPO 训练（奖励塑形、模仿学习分开放）、示范格式、阵容打分、对手库
+  tg/                       TavernGym 桥接：动作编号、观察布局、卡牌目录、高分回放解析、局面重建
+  rl/                       模型、PPO 训练（奖励塑形、模仿学习分开放）、课程、示范格式、阵容打分、对手库
   tools/                    各命令的实现
   arena/                    竞技场：模型打包、契约核对、连接器策略、对局查看器
   tests/                    单元测试和 CI 用的局面样本
   taverngym/PIN.txt         锁定的 TavernGym 版本（改这里会重新编译安装包）
-docs/                       插件详细说明、样例数据
-examples/watch_state.py     订阅插件实时局面的最小示例
-.github/workflows/          插件编译发布、TavernGym 安装包、bgrl 检查
+.github/workflows/          TavernGym 安装包、bgrl 检查
 ```
 
 数据流：
 
 ```
-HDT ──读局面──▶ 插件 ──▶ :8765/state.json、state.json、games\*.jsonl（对局记录）
-                                │                  │
-                                │                  ├─▶ replay（检查模拟器）、demos（模仿你的操作）
-                                │                  └─▶ profile（对手强度画像，校准训练对手）
-                                ▼
-                                模型 runs\v3\latest.pt ◀── train（TavernGym 里 PPO 训练，配方 configs\v3.json）
-                                          │                      ▲
-                                          │                      └── 高分示范和阵容库（Firestone 6500+、万三；只在本机）
-                                          └─▶ goldflow / comptest、tavernbench、竞技场
+高分示范和阵容库（Firestone 6500+、万三；只在本机）
+        │  prolib / prodemos / nativedemos / cardvalue
+        ▼
+configs\v3.json ──▶ train（TavernGym 里 PPO 训练）──▶ runs\v3\latest.pt、best.pt、snapshots\
+                                                        │
+                        ┌───────────────┬───────────────┼───────────────┐
+                        ▼               ▼               ▼               ▼
+                  board（看板）   goldflow / comptest   tavernbench   arena（竞技场）
 ```
 
 ## 本机文件位置
 
 | 内容 | 位置 |
 | --- | --- |
-| 插件本体 | `%AppData%\HearthstoneDeckTracker\Plugins\BGStateExporter\` |
-| 当前局面、对局记录 | `%AppData%\HearthstoneDeckTracker\BGStateExporter\`（`state.json`、`games\`；旧版留下的 `advisor_weights.json`、`training\` 已不再使用，可以删掉） |
-| 训练进度、模型、对手库快照 | `bgrl\runs\v3\`（`log.jsonl`、`latest.pt`、`snapshots\`） |
-| 回放报告、安装日志 | `bgrl\reports\` |
+| 训练进度、模型、对手库快照 | `bgrl\runs\v3\`（`log.jsonl`、`latest.pt`、`best.pt`、`snapshots\`） |
+| 高分对局原始数据（不进 Git） | `bgrl\data\` |
+| 竞技场打包的模型、密钥、对局结果（不进 Git） | `bgrl\arena\model_bundle\`、`bgrl\arena\key.txt`、`bgrl\arena\results\` |
+| 评测报告、安装日志 | `bgrl\reports\` |
 
-v0.9.4 及以前插件里的搜索建议器（`plugin/src/Advisor/`）和网页面板（`plugin/www/index.html`）已移除，需要时可从提交 73fee12 取回（`git checkout 73fee12 -- plugin/src/Advisor plugin/www`）。
-
-旧的自研模拟器 `bgrl/bgsim` 和 Bob's Buddy 批量模拟接口 `bgrl/simhost` 已被 TavernGym 取代、从仓库移除；需要时可从提交 9b60201 取回（`git checkout 9b60201 -- bgrl/bgsim bgrl/simhost`）。
+`runs\`、`data\`、竞技场密钥和模型都不进 Git：别人的对局（Firestone、万三）生成的样本和阵容库只在本机，仓库里只有汇总数字（`rl/*.json`）。

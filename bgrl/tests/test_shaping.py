@@ -123,17 +123,9 @@ def main() -> int:
     # 高分示范按类别 + 按回合加权：t2:2 第 2 回合 ×2，t3-4:1.5 第 3–4 回合 ×1.5
     from rl.demos import KINDS
     d = {"kind": np.array([KINDS.index(k) for k in ("upgrade", "buy", "upgrade", "end")]), "turn": np.array([2, 3, 5, 4])}
-    w = Trainer._bc_weights(SimpleNamespace(cfg=SimpleNamespace(bc_weights=""), demos=None), d, "upgrade:3,t2:2,t3-4:1.5")
+    w = Trainer._bc_weights(SimpleNamespace(cfg=SimpleNamespace()), d, "upgrade:3,t2:2,t3-4:1.5")
     assert w.tolist() == [6.0, 1.5, 3.0, 1.5], w
 
-    # 模仿强度：训练示范命中率高于上限减半（最低 0.05），低于上限 - 0.1 回升
-    t3 = SimpleNamespace(cfg=SimpleNamespace(bc_train_cap=0.6, bc_scale_min=0.05), bc_scale=1.0)
-    for tr, want in ((0.99, 0.5), (0.95, 0.25), (0.55, 0.25), (0.4, 0.375), (0.3, 0.5625)):
-        Trainer.adjust_bc(t3, {"human_top1_train": tr})
-        assert abs(t3.bc_scale - want) < 1e-9, (tr, t3.bc_scale, want)
-    for _ in range(10):
-        Trainer.adjust_bc(t3, {"human_top1_train": 0.99})
-    assert t3.bc_scale == 0.05
     print("shaping OK")
     return 0
 
