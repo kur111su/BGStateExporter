@@ -2,7 +2,7 @@
 
   bg.py board                     画一次（默认 runs/v3，最近 3000 轮）
   bg.py board --window 1000       只看最近 1000 轮
-  bg.py board --run runs/v3 --open  画完用默认程序打开（board.bat 就是这个）
+  bg.py board --run runs/v3 --open  画完用默认程序打开
 """
 from __future__ import annotations
 

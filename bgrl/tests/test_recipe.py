@@ -2,7 +2,7 @@
 
 - 配方里的每一项都是 Config 的字段，值的类型能按默认值转换；
 - 配方里的值和把同样的值写成命令行参数得到的 Config 完全一样（配方和命令行是同一套参数）；
-- train.bat 用的是 configs/v3.json，而且命令行参数优先于配方。
+- 面板的“训练”（panel/jobs.py）用的是 configs/v3.json，而且命令行参数优先于配方。
 （改用配方时，train.bat 原来那串参数和配方的等价性在提交 cf7568a 里核对过。）
 """
 from __future__ import annotations
@@ -17,11 +17,11 @@ sys.path.insert(0, str(ROOT))
 
 
 def _bat_args() -> list[str]:
-    line = next(x for x in (ROOT / "train.bat").read_text(encoding="utf-8").splitlines() if "bg.py train" in x)
-    rest = line.split("bg.py train", 1)[1]
-    for k, v in (("%INIT%", ""), ("%*", ""), ("%NUMBER_OF_PROCESSORS%", "8")):
-        rest = rest.replace(k, v)
-    return shlex.split(rest.replace("\\", "/"))       # Windows 路径的反斜杠统一成 /（shlex 会把反斜杠当转义）
+    """面板里“训练”按钮跑的命令（panel/jobs.py）里 bg.py train 后面的参数。"""
+    from panel import jobs as J
+    step = J.SPECS["train"]["build"]({"threads": 8})[0]
+    args = step[step.index("train") + 1:]
+    return [a for k, a in enumerate(args) if a != "--init" and (k == 0 or args[k - 1] != "--init")]
 
 
 def _norm(cfg) -> dict:
@@ -54,7 +54,7 @@ def main() -> int:
         assert (got.replace("\\", "/") if isinstance(got, str) else got) == (v.replace("\\", "/") if isinstance(v, str) else v), k
     c2, a2 = parse(args + ["--comp-bonus", "0.02", "--run", "runs/x"])
     assert c2.comp_bonus == 0.02 and a2.run == "runs/x"
-    print(f"recipe OK：train.bat → configs/v3.json，{len(rec['config'])} 项设置")
+    print(f"recipe OK：面板的训练 → configs/v3.json，{len(rec['config'])} 项设置")
     return 0
 
 

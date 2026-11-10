@@ -1399,7 +1399,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             return None
         p = Path(str(cfg.teacher).replace("\\", "/"))
         if not p.exists():
-            print(f"没有老师模型 {cfg.teacher}（先运行 teacher.bat，约 15–25 分钟），这次不用", flush=True)
+            print(f"没有老师模型 {cfg.teacher}（先在面板“训练”里跑“老师模型”，约 15–25 分钟），这次不用", flush=True)
             return None
         from .model import load_model
         try:
@@ -1408,7 +1408,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             print(f"老师模型 {p} 读不了（{type(ex).__name__}: {ex}），这次不用", flush=True)
             return None
         if t.L.actions != self.model.L.actions:
-            print(f"老师模型 {p} 和当前环境的格式不一样（TavernGym 换过版本？），重新运行 teacher.bat", flush=True)
+            print(f"老师模型 {p} 和当前环境的格式不一样（TavernGym 换过版本？），重新跑一次面板里的“老师模型”", flush=True)
             return None
         for q in t.parameters():
             q.requires_grad_(False)
@@ -1488,6 +1488,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         end = self.iter + (iters or cfg.iters)
         if self.good is None:
             self.mark_good()
+        (Path(cfg.run_dir) / "STOP").unlink(missing_ok=True)     # 上次留下的停止请求不算
         while self.iter < end:
             self.learner.bad_rows = 0
             batch, n_dec, t_col, t_env, t_net = self.collect()
@@ -1631,4 +1632,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                 self._redraw_board()
             if on_log:
                 on_log(rec)
+            stop = Path(cfg.run_dir) / "STOP"              # 面板的“停止训练”：这一轮跑完，存盘退出（见 panel/runner.py）
+            if stop.exists():
+                stop.unlink(missing_ok=True)
+                print(f"收到停止请求：第 {self.iter} 轮已存盘，退出", flush=True)
+                break
         self.save()

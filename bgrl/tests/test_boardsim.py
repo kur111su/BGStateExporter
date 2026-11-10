@@ -757,7 +757,7 @@ def check_gifts():
 
 
 def check_comptest_seeded():
-    """comptest_seeded.bat（goldflow --seed-comps）：每局在给的回合把场面换成成型的 S / A 阵容，按阵容记名次。"""
+    """拿着成型阵容测试（goldflow --seed-comps）：每局在给的回合把场面换成成型的 S / A 阵容，按阵容记名次。"""
     from rl.comp import load_target_comps
     from tools.goldflow import play_model
     tea = next(c for c in load_target_comps() if c["name"] == "喝茶流")

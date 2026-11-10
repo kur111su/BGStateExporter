@@ -149,7 +149,7 @@ def main(argv=None) -> int:
     data = a.pro_data or rc.get("pro_data") or "runs/pro_demos"
     d = load(data)
     if d is None:
-        print(f"没有高分决策样本 {data}（先运行 prodemos.bat）", flush=True)
+        print(f"没有高分决策样本 {data}（先在面板“数据”里跑“高分样本”）", flush=True)
         return 1
     r = build(d, a.min_lift)
     p = Path(a.out)

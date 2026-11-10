@@ -1,6 +1,7 @@
-"""bgrl 的统一入口：python bg.py <命令> [参数]（Windows 上双击对应的 .bat 即可）。
+"""bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：双击 panel.bat，按钮跑的就是这些命令）。
 
-  train     训练（train.bat = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
+  panel     程序看板（网页）：训练看板 + 所有操作的按钮（panel/app.py；panel.bat 就是它）
+  train     训练（面板里的“训练” = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
   prodemos  高分对局回放（Firestone 6500+ 分享包的 rawxml-sanitized）→ 高分玩家决策样本 runs/pro_demos/
@@ -11,6 +12,8 @@
   teacher   老师模型：只模仿高分示范、按留出局挑最好的一版 → runs/teacher.pt（训练时在模型自己的局面上教；tools/teacher.py）
   board     训练看板：读 runs/v3/log.jsonl 画曲线 → runs/v3/dashboard.md + board/*.svg（训练时也会每 10 轮自动重画；tools/board.py）
   goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
+  arena     竞技场：check / practice / match / loop / view（tools/arena_run.py）
+  cleanup   清理旧的训练目录、旧快照、去掉的功能留下的文件（tools/cleanup.py；不加 --yes 只列出来）
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
@@ -34,7 +37,7 @@ sys.path.insert(0, str(ROOT))
 TOOLS = {"train": "train",
          "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
-         "profile": "opp_profile", "bench": "tg_bench"}
+         "profile": "opp_profile", "bench": "tg_bench", "arena": "arena_run", "cleanup": "cleanup"}
 
 
 def _run_tool(name: str, args: list[str]) -> int:
@@ -46,7 +49,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 def _test() -> int:
     rc = 0
     for t in ("test_calibrate.py", "test_rl.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
-              "test_layout.py", "test_recipe.py", "test_boardsim.py"):
+              "test_layout.py", "test_recipe.py", "test_boardsim.py", "test_panel.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")
@@ -92,6 +95,38 @@ def main() -> int:
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd in TOOLS:
         return _run_tool(cmd, args)
+    if cmd == "panel":
+        import socket
+        import subprocess
+        import threading
+        import time
+        import webbrowser
+        url = "http://127.0.0.1:8770"
+
+        def up() -> bool:
+            with socket.socket() as sk:
+                sk.settimeout(0.5)
+                return sk.connect_ex(("127.0.0.1", 8770)) == 0
+
+        if up():                                   # 面板已经开着：直接打开页面
+            print("面板已经在运行：", url)
+            webbrowser.open(url)
+            return 0
+
+        def opener():                              # 等服务起来再开浏览器
+            for _ in range(120):
+                if up():
+                    webbrowser.open(url)
+                    return
+                time.sleep(0.5)
+        if "--no-browser" in args:
+            args = [x for x in args if x != "--no-browser"]
+        else:
+            threading.Thread(target=opener, daemon=True).start()
+        print("面板：", url, "（只在本机能打开；关掉这个窗口面板就关了，正在跑的训练和任务不受影响）", flush=True)
+        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(ROOT / "panel" / "app.py"),
+                                "--server.address", "127.0.0.1", "--server.port", "8770", "--server.headless", "true",
+                                "--browser.gatherUsageStats", "false", *args], cwd=str(ROOT))
     if cmd == "test":
         return _test()
     if cmd == "info":

@@ -56,13 +56,13 @@ def _load():
     bundle = HERE / "model_bundle"
     compat_path = HERE / "compat.json"
     if not compat_path.exists():
-        raise SystemExit("还没有核对竞技场契约（先运行 arena.bat check）")
+        raise SystemExit("还没有核对竞技场契约（先在面板“竞技场”里点“打包并检查”）")
     compat = json.loads(compat_path.read_text(encoding="utf-8"))
     if not compat.get("ok"):
         raise SystemExit(f"竞技场契约核对没通过：{compat.get('problems')}")
     meta = json.loads((bundle / "meta.json").read_text(encoding="utf-8"))
     if compat.get("model_version") != meta["model_version"]:
-        raise SystemExit("模型换过了，重新运行 arena.bat check")
+        raise SystemExit("模型换过了，重新在面板“竞技场”里点“打包并检查”")
     L = Layout.from_dict(meta["layout"], meta["floats"], meta["cards"], meta["actions"])
     ck = torch.load(bundle / "model.pt", map_location="cpu", weights_only=True)
     comp = bundle / "comp.npz"                     # 体系感知的阵容查表（arena/export.py 打包；旧的打包没有 → 输入全是 0）
@@ -84,7 +84,7 @@ def _no_taverngym():
     if spec is not None:
         where = spec.origin or list(spec.submodule_search_locations or [])
         raise SystemExit(f"连接器的环境里找得到一个 taverngym：{where}。它来自 PYTHONPATH 或当前目录；"
-                         f"arena.bat 用 -E -s 运行时不该出现，请把这行发给我")
+                         f"连接器用 -E -s 运行时不该出现，请把这行发给我")
 
 
 _no_taverngym()
@@ -101,7 +101,7 @@ ZH_KIND = {"buy": "买", "sell": "卖", "play": "打出", "upgrade": "升本", "
 
 
 def _say(msg: str) -> None:
-    """打到窗口（stderr；stdout 是连接器的结果，arena.bat 把它写进 json）。出错不影响出牌。"""
+    """打到窗口（stderr；stdout 是连接器的结果，tools/arena_run.py 把它写进 json）。出错不影响出牌。"""
     try:
         print(msg, file=sys.stderr, flush=True)
     except Exception:                              # noqa: BLE001

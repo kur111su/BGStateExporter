@@ -87,5 +87,5 @@ if /i "%~1"=="bench" (
   )
 )
 echo.
-echo Setup OK. Next: train.bat (training), comptest.bat (does it form comps), arena.bat (arena).
+echo Setup OK. Next: panel.bat - the dashboard with a button for everything.
 pause

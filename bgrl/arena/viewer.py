@@ -6,7 +6,7 @@ arena/records/<对局>.jsonl（agent.py 每一步记下的可见局面、模型�
   - 战绩：各赛道局数、平均名次、第一 / 前四比例、Elo 变化，按模型版本分开；名次分布（条形图）、近期表现（折线图）；
   - 单局：预计名次曲线、每回合每一步（选了什么、前 5 个候选的概率）、当时的场面 / 手牌 / 酒馆、最终 8 席阵容；
   - 正在打的对局每几秒刷新。
-只用标准库；除了同步公开战绩不连网，不读密钥。用法：arena_view.bat（或 python arena/viewer.py --port 8767）
+只用标准库；除了同步公开战绩不连网，不读密钥。用法：面板“竞技场”里的对局查看器（或 python arena/viewer.py --port 8767）
 """
 from __future__ import annotations
 
@@ -336,7 +336,7 @@ loadSummary();setInterval(loadSummary,10000);
 
 
 def print_last(path: str) -> int:
-    """arena_loop.bat 用：把一局结果打印成一行（不打印整段 JSON）。"""
+    """连续计分局（bg.py arena loop）用：把一局结果打印成一行（不打印整段 JSON）。"""
     try:
         d = json.loads(Path(path).read_text(encoding="utf-8").strip().splitlines()[-1])
     except (OSError, ValueError, IndexError):

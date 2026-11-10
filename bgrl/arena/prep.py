@@ -149,5 +149,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except Unreachable as ex:
         print(f"连不上竞技场：{ex}\n这是网络问题（网站暂时不可用，或网络 / 代理拦住了），不是模型或代码的问题；"
-              f"过一会儿再运行 arena.bat check。")
+              f"过一会儿再点“打包并检查”。")
         sys.exit(2)

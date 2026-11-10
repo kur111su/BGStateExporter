@@ -265,7 +265,7 @@ def render(run: Path, window: int = 3000) -> Path | None:
             md += ["## 阵容测试", "", line, ""]
         except (ValueError, OSError):
             pass
-    cs = run / "comptest_seeded.json"                      # comptest_seeded.bat：拿着高手的成型阵容对全强度高分阵容
+    cs = run / "comptest_seeded.json"                      # 面板的“拿着成型阵容测试”：拿着高手的成型阵容对全强度高分阵容
     if cs.exists():
         try:
             c = json.loads(cs.read_text(encoding="utf-8"))

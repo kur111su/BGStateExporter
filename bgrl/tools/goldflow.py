@@ -740,7 +740,7 @@ def main() -> int:
                                                     "结果文件名后面加 _late")
     ap.add_argument("--late-from", type=int, default=10)
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
-                                                     "（comptest_seeded.bat），结果写进 comptest_seeded.json")
+                                                     "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
     a = ap.parse_args()
     prof = json.loads(PROFILE.read_text(encoding="utf-8")) if PROFILE.exists() else {}
     if a.pro:

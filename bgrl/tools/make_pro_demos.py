@@ -265,7 +265,7 @@ def main() -> int:
         where = "这个文件夹不存在" if not src.exists() else "里面没有回放"
         print(f"{src.resolve()}：{where}。\n"
               f"把 Firestone 分享包的 zip（firestone-bg-rawxml-sanitized-part1.zip … part4.zip，不用解压）放进这个文件夹，\n"
-              f"或者在 prodemos.bat 后面写 zip 所在的文件夹，例如：prodemos.bat D:\\Downloads\\firestone")
+              f"或者把 zip 所在的文件夹写在命令后面，例如：bg.py prodemos D:\\Downloads\\firestone")
         return 1
     mmr = _mmr(src)
     keep = {k: float(v) for k, v in (p.split(":") for p in a.keep.split(",") if ":" in p)}

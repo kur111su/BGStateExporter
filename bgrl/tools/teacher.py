@@ -94,7 +94,7 @@ def main(argv=None) -> int:
     t = Teach(cfg, model, dev)
     d = t._load_pro()
     if d is None:
-        print("没有高分决策样本（先运行 prodemos.bat）", flush=True)
+        print("没有高分决策样本（先在面板“数据”里跑“高分样本”）", flush=True)
         return 1
     w = t._bc_weights(d, cfg.pro_weights)
     opt = torch.optim.Adam(model.parameters(), lr=a.lr, eps=1e-5)
@@ -133,7 +133,7 @@ def main(argv=None) -> int:
     nll, step, sd, pe = best
     if step == 0:
         print(f"最好的一版就是开始时那一版（留出局交叉熵 {nll}），等于什么都没学到，不存老师模型。"
-              f"{'从头学试试：teacher.bat --init none' if str(a.init).lower() != 'none' else '把这段输出发给 Claude'}", flush=True)
+              f"{'从头学试试：bg.py teacher --init none' if str(a.init).lower() != 'none' else '把这段输出发给 Claude'}", flush=True)
         return 1
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ def main(argv=None) -> int:
                             "val": {k: v for k, v in pe.items() if k.startswith("pro_")}}}, out)
     print(f"老师模型 → {out}：第 {step} 步那一版，留出局命中率 {pe.get('pro_top1')}、交叉熵 {nll}"
           f"（选择 {pe.get('pro_choose')}、买 {pe.get('pro_buy')}、升本 {pe.get('pro_upgrade')}）", flush=True)
-    print("接着照常运行 train.bat：配方里 teacher_coef > 0 时会自动用它（启动时会打印“老师模型：…”）", flush=True)
+    print("接着照常开始训练：配方里 teacher_coef > 0 时会自动用它（启动时会打印“老师模型：…”）", flush=True)
     return 0
 
 
