@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from panel import jobs as J  # noqa: E402
 from panel import runner as R  # noqa: E402
@@ -201,6 +202,41 @@ def check_arena_summary(tmp: Path):
     assert "queue timeout" in buf.getvalue()
 
 
+def check_data(tmp: Path):
+    """面板要显示的数据（panel/data.py）：看板的指标 / 曲线 / 表，竞技场的战绩、对局列表、单局每一步。"""
+    import gui_smoke as S
+    from panel import data as D
+    from rl import board as B
+    S.fake_run(tmp / "run")
+    S.fake_arena(tmp / "arena2")
+    rows, _ev = B.load(tmp / "run")
+    ks = D.kpis(rows)
+    assert len(ks) >= 12 and ks[0][0] == "考试等效名次" and ks[0][3] is True and ks[0][2] is not None, ks[:2]
+    ch = D.charts(rows, 300)
+    assert len(ch) >= 9 and ch[0][2] and all(len(ln[1]) == len(ln[2]) == len(ln[3]) for c in ch for ln in c[3])
+    assert min(ch[2][3][0][1]) >= rows[-1]["iter"] - 300 and min(ch[0][3][0][1]) < rows[-1]["iter"] - 300      # 考试那张看全程
+    tabs = D.md_tables(tmp / "run")
+    cg = next(t for t in tabs if t["title"].startswith("送整套阵容"))
+    assert cg["head"][0] == "阵容" and any(r[0] == "圣盾流龙族" for r in cg["rows"]) and "第 5–11 回合" in cg["text"], cg
+    assert "第 22200 轮" in D.header(rows) and D.header([]) == "还没有训练日志"
+    V = D.load_viewer(tmp / "arena2")
+    s = V.summary()
+    assert s["model"] == "capri-it22170" and s["matches"][0]["live"] and len(s["matches"]) == 177
+    st = D.arena_stats(s["matches"])
+    assert st["n"] == 176 and sum(st["dist"]) == 176 and st["top1"] == st["dist"][0] and len(st["recent"]) == 100
+    assert [c[0] for c in st["cats"]][0] == "all" and sum(c[2] for c in st["cats"][1:]) == 176
+    one = D.arena_stats(s["matches"], "standard")
+    assert one["n"] == one["elo_n"] > 0 and one["elo"] is not None and D.arena_stats(s["matches"], "practice")["elo"] is None
+    assert D.match_line(s["matches"][0])[0] == "●" and "预计" in D.match_line(s["matches"][0])[1]
+    live = D.match_view(V.match("live001"), follow=True)
+    assert live["live"] and live["turn"] == 6 and live["n"] == live["steps"][-1][0] and live["cands"][0] == ("升本", 0.62, True)
+    assert dict(live["zones"])["手牌"] == ["★希望信使 2/3"] and ("gold", 6) in live["scalars"] and not live["final"]
+    done = D.match_view(V.match("m0175"), turn=2)
+    assert not done["live"] and done["title"].startswith("第 ") and done["turn"] == 2 and done["n"] == done["steps"][0][0]
+    assert len(done["final"]) == 2 and done["final"][0][5] != done["final"][1][5]
+    assert D.match_view(V.match("m0100"))["note"] and not D.match_view(V.match("m0100"))["turns"]
+
+
 def main() -> int:
     check_specs()
     with tempfile.TemporaryDirectory() as d:
@@ -212,6 +248,7 @@ def main() -> int:
         check_cleanup(d)
         check_arena_key(d)
         check_arena_summary(d)
+        check_data(d)
     print("panel OK：任务排队 / 停止 / 中断、清理、竞技场密钥")
     return 0
 

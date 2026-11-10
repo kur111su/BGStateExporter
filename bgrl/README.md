@@ -9,15 +9,15 @@
 | 文件 | 做什么 |
 | --- | --- |
 | `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 |
-| `panel.bat` | **面板**：浏览器打开 http://127.0.0.1:8770（只在本机能打开）。训练看板 + 下面所有操作的按钮 + 任务输出。第一次会装 Streamlit（约 200 MB）。关掉这个窗口面板就关了，正在跑的训练和任务不受影响，再双击能接着看 |
+| `panel.bat` | **面板**（桌面程序，不开浏览器）：训练看板 + 所有操作 + 竞技场对局 + 任务输出，都在一个窗口里。第一次会装 PySide6 和 pyqtgraph（约 200 MB）。关掉窗口不影响正在跑的训练和任务，再双击能接着看 |
 
 ## 面板（`panel.bat`）
 
-顶上一行状态（训练在不在跑、轮数、最近考试、正在跑 / 排队的任务数），下面七页：
+顶上一行状态（训练在不在跑、轮数、最近考试、正在跑 / 排队的任务数），左边选页：
 
 | 页 | 按钮 | 跑的命令 | 说明 / 结果 |
 | --- | --- | --- | --- |
-| 看板 | — | — | 关键指标（和 500 轮前比）、曲线（可选最近多少轮）、“送整套阵容”“拿着成型阵容打”等表、事件；每分钟自动刷新 |
+| 看板 | — | — | 关键指标（和 500 轮前比，绿 = 变好）、曲线（可选范围，拖动平移 / 缩放）、“送整套阵容”“拿着成型阵容打”等表、事件；日志变了自动刷新 |
 | 训练 | 训练 | `bg.py train --recipe configs\v3.json --resume` | 训练 `runs\v3`（设置全在 `configs\v3.json`，见下面“训练配方”），停止 = 这一轮跑完、存好进度再退出，再点开始接着练；`runs\v3` 还没有模型时从 `runs\v2\latest.pt` 开始。命令行再写的参数优先：`train.bat --threads 4` → `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
 | 训练 | 老师模型 | `bg.py teacher` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从头学，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 15–25 分钟） |
 | 训练 | 重画看板 | `bg.py board` | 按最新日志重画 `runs\v3\dashboard.md` |
@@ -27,12 +27,12 @@
 | 测试 | TavernBench 评测 | `bg.py tavernbench` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 |
 | 数据 | 高分样本 | `bg.py prodemos data/firestone` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） |
 | 数据 | 卡牌价值 / 阵容配套卡 | `bg.py cardvalue` / `bg.py playbook` | 高手怎么挑卡 → `rl/card_value.json`；目标阵容的配套卡 → `rl/target_comps.json` |
-| 竞技场 | 打包并检查 / 练习局 / 计分局 / 连续计分局；下面直接嵌着对局查看器 | `bg.py arena check / practice / match / loop [--update]`（查看器单独开：`bg.py arena view`） | 打包当前模型并核对竞技场契约；一局不计分练习；一局计分对局；一局接一局打计分对局（勾“自动换新模型”= 训练出的模型比打包的新 2 小时以上就重新打包）。对局查看器（战绩、每局每一步）跟着面板自动启动，就显示在这一页下面。计分的两个按钮要先勾确认。结果在 `arena\results\` |
-| 维护 | 看看会删什么 / 清理旧文件 | `bg.py cleanup [--keep-from N] [--yes]` | 旧的训练目录、第 N 轮以前的快照（每 1000 轮留一个）、去掉的功能留下的文件（包括旧的 .bat）。先看再删，删之前要勾确认；训练在跑时排在训练后面 |
+| 竞技场 | 打包并检查 / 练习局 / 计分局 / 连续计分局 | `bg.py arena check / practice / match / loop [--update]` | 上面一排：操作按钮、战绩（局数、平均名次、第一、前四、Elo、当前模型）、名次分布、近期表现；左边对局列表，右边单局（预计名次曲线、每回合每一步、候选概率、场面 / 手牌 / 酒馆、最终 8 席），默认跟着正在打的那一局。计分的两个按钮会先弹确认框。结果在 `arena\results\` |
+| 维护 | 看看会删什么 / 清理旧文件 | `bg.py cleanup [--keep-from N] [--yes]` | 旧的训练目录、第 N 轮以前的快照（每 1000 轮留一个）、去掉的功能留下的文件（包括旧的 .bat）。先看再删，删之前弹确认框；训练在跑时排在训练后面 |
 | 维护 | 自检 / 环境信息 | `bg.py test` / `bg.py info` | 单元测试；Python、PyTorch、TavernGym 版本 |
 | 任务输出 | — | — | 选一个任务看它的实时输出；任务记录（什么时候跑的、结果） |
 
-两层：**任务层** `panel/jobs.py` + `panel/runner.py`（只用标准库）——每个任务一个独立进程，状态和输出在 `reports\panel\jobs\`；同一组的任务一次跑一个、后来的排队（训练 / 老师模型 / 清理一组，测试一组，数据一组，竞技场一组），不同组可以同时跑。**界面层** `panel/app.py`（Streamlit）只显示和点按钮。
+三层：**任务层** `panel/jobs.py` + `panel/runner.py`（只用标准库）——每个任务一个独立进程，状态和输出在 `reports\panel\jobs\`；同一组的任务一次跑一个、后来的排队（训练 / 老师模型 / 清理一组，测试一组，数据一组，竞技场一组），不同组可以同时跑。**数据层** `panel/data.py`——看板的指标 / 曲线 / 表、竞技场的战绩和单局每一步（不依赖界面库，单元测试直接测）。**界面层** `panel/gui.py`（PySide6 + pyqtgraph）只显示和点按钮。原来的网页版 `panel/app.py`（Streamlit）还留着备用：`bg.py panel --web`。
 能跑什么全写在 `panel/jobs.py` 的 `SPECS` 里：命令是固定的，参数只有表里那几项（局数、用哪个模型……），按类型和范围检查；页面上没有能输入任意命令的地方。
 
 竞技场上的模型名是 `capri-it<训练轮数>`（`arena/export.py` 的 `NAME`，打包时写进 `arena\model_bundle\meta.json`，连接器用 `--model-version` 发出去）。
@@ -60,7 +60,7 @@
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
 | `arena` | `tools/arena_run.py` | 竞技场：`check` / `practice` / `match` / `loop [--update]` / `view` |
 | `cleanup` | `tools/cleanup.py` | 清理旧文件：不加 `--yes` 只列出来；`--keep-from N` 快照留到第几轮为止 |
-| `panel` | `panel/app.py` | 面板（`panel.bat` 就是它） |
+| `panel` | `panel/gui.py` | 面板（`panel.bat` 就是它）；`--web` = 网页版（`panel/app.py`） |
 | `test` | `tests/test_*.py` | 单元测试 |
 | `info` | — | 环境、对局记录数、训练进度 |
 
@@ -181,3 +181,4 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | 目标阵容 23 → 32 套 | 第 21800 轮起 | 按战棋小酒馆 S14 流派图鉴补 9 套模拟器卡池里凑得齐的：飞机大队（S）、摩托抉择 / 牺牲亡语恶魔 / 手牌宝石（A）、手牌鱼人 / 畸变怪·腐泥 / 机械·扩音机 / 龙·战吼 / 亡灵·永恒骑士（B），每套加了打法说明 `play`。前 23 套的顺序、核心卡不动（模型按格子认阵容，新格子从 0 学起）。电表红龙、警戒恶霸、站地灾变投球等核心卡不在模拟器卡池里，没收。配套卡要在本机跑一次 `bg.py playbook` | comptest 的“成型阵容”表里会出现新的几套 |
 | 送整套阵容 + 成型场面提前 | 第 21800 轮起 | 规律：把牌放到手里 / 场上让它自己尝到好处的办法有用（送牌课程、成型阵容课程），只改奖励或酒馆的没用。`cgift_*`（`rl/calibrate.py` 的 `CompGifts`）：20% 的机器人局开局定一套本局凑得成的目标阵容，第 5–11 回合每回合 70% 的机会送一张这套还没有的核心卡到手里（酒馆等级 + 2 以内，齐了送配套卡）；零散送牌 `gift_frac` 0.25 → 0.15；成型阵容课程 `seed_comp_turns` 5–11、第 9 回合以前给做到一半的场面（原来 6–11、第 8 回合以前） | `place_cgift`、`cgift_formed`，看板“送整套阵容”表（每套做成的比例、名次） |
 | 面板 | 第 22200 轮前后 | `panel.bat`：一个网页（Streamlit，只在本机）里放训练看板和所有操作；原来 14 个 .bat 删掉，它们的流程搬进 `bg.py`（竞技场 → `tools/arena_run.py`，清理 → `tools/cleanup.py`）。任务层 `panel/jobs.py` + `panel/runner.py` 和界面层 `panel/app.py` 分开。训练加了“这一轮跑完存盘退出”（`runs\v3\STOP` 文件） | 旧的 .bat 用面板“维护 → 清理旧文件”删 |
+| 面板改成桌面程序 | 第 22200 轮以后 | 网页版（Streamlit）曲线卡、布局难调 → `panel/gui.py`（PySide6 + pyqtgraph），竞技场对局查看器也用原生重写；数据从界面里拆到 `panel/data.py`。CI（`bgrl-gui.yml`）用假数据无屏幕打开每一页、点一遍、留截图 | `bg.py panel --web` 还能开网页版 |

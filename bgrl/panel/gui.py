@@ -481,24 +481,32 @@ class DashboardPage(QtWidgets.QScrollArea):
                 bl = QtWidgets.QVBoxLayout(box)
                 bl.setContentsMargins(10, 8, 10, 8)
                 bl.addWidget(label(title + ("（全程）" if full else ""), "h2"))
+                leg = label("", wrap=True)                 # 图例放在图上面（放在图里会挡住线）
+                leg.setTextFormat(Qt.RichText)
+                bl.addWidget(leg)
                 p = Plot()
                 bl.addWidget(p)
                 bl.addWidget(label(note, "mute", wrap=True))
                 self.grid.addWidget(box, len(self.plots) // 2, len(self.plots) % 2)
-                self.plots[title] = (p, p.addLegend(offset=(8, 4), labelTextSize="8pt"))
+                self.plots[title] = (p, leg)
             p, leg = self.plots[title]
             p.clear()
-            leg.clear()
+            leg.setText("　".join(f"<span style='color:{PALETTE[k % len(PALETTE)]}'>━</span> {ln[0]}" for k, ln in enumerate(lines)))
             for k, (name, xs, raw, sm, sparse) in enumerate(lines):
                 c = PALETTE[k % len(PALETTE)]
                 if sparse:
-                    p.plot(xs, sm, pen=pg.mkPen(c, width=2), name=name, symbol="o", symbolSize=4, symbolBrush=c, symbolPen=None)
+                    p.plot(xs, sm, pen=pg.mkPen(c, width=2), symbol="o", symbolSize=4, symbolBrush=c, symbolPen=None)
                 else:
                     qc = QtGui.QColor(c)
                     qc.setAlpha(60)
                     p.plot(xs, raw, pen=pg.mkPen(qc, width=1))
-                    p.plot(xs, sm, pen=pg.mkPen(c, width=2), name=name)
-            p.enableAutoRange()
+                    p.plot(xs, sm, pen=pg.mkPen(c, width=2))
+            ys = [v for ln in lines for v in ln[2]]
+            if max(ys) - min(ys) < 1e-6:                   # 全是同一个数：自动范围会把刻度写成一长串小数
+                p.setYRange(min(ys) - 0.05, max(ys) + 0.05, padding=0)
+                p.enableAutoRange(axis="x")
+            else:
+                p.enableAutoRange()
         clear_layout(self.tables)
         for t in D.md_tables(self.win.run):
             self.tables.addWidget(label(t["title"], "h1"))
@@ -585,6 +593,9 @@ class ArenaPage(QtWidgets.QWidget):
         ll.addLayout(lh)
         self.list = QtWidgets.QListWidget()
         self.list.setObjectName("matches")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setWordWrap(True)
+        self.list.setTextElideMode(Qt.ElideRight)
         self.list.currentRowChanged.connect(self.pick)
         ll.addWidget(self.list)
         split.addWidget(left)
@@ -868,6 +879,8 @@ class ArenaPage(QtWidgets.QWidget):
         self.steps.blockSignals(False)
         fill_table(self.cands, ["候选", "概率", ""], [[("▶ " if hit else "") + t, f"{p:.1%}", "█" * max(1, round(p * 30))] for t, p, hit in v["cands"]],
                    bold_rows=[i for i, c in enumerate(v["cands"]) if c[2]])
+        for i in range(self.cands.rowCount()):
+            self.cands.item(i, 2).setForeground(QtGui.QColor("#2f6fdf"))
         html = ""
         if v["scalars"]:
             html += "　".join(f"<span style='color:#6b6b70'>{k}</span> <b>{val}</b>" for k, val in v["scalars"]) + "<br>"
