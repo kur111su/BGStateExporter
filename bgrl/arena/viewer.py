@@ -336,18 +336,39 @@ loadSummary();setInterval(loadSummary,10000);
 
 
 def print_last(path: str) -> int:
-    """连续计分局（bg.py arena loop）用：把一局结果打印成一行（不打印整段 JSON）。"""
+    """一局打完以后的小结（bg.py arena practice / match / loop 用）：名次、分数、英雄和最后的场面，不打印整段 JSON。
+    结果读不出来（连接器出错）时原样打印，方便看错在哪。"""
     try:
-        d = json.loads(Path(path).read_text(encoding="utf-8").strip().splitlines()[-1])
-    except (OSError, ValueError, IndexError):
+        text = Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
         print("（没有结果）")
         return 1
-    m = d.get("match") or {}
+    try:
+        d = json.loads(text.splitlines()[-1])
+        m = d["match"]
+        assert isinstance(m, dict) and m.get("participants")
+    except (ValueError, IndexError, KeyError, AssertionError, TypeError):
+        print(text or "（没有结果）")
+        return 1
     me = _me(_history() or [m])
-    p = next((x for x in m.get("participants") or [] if x.get("username") == me), {})
-    elo = (f"，Elo {p['score_before']:.1f} → {p['score_after']:.1f}" if p.get("score_after") is not None else "")
-    print(f"结果：第 {p.get('placement')} 名（{m.get('category')}，{m.get('human_count')} 个 AI + {m.get('bot_count')} 个机器人，"
-          f"{m.get('turns')} 回合）{elo}", flush=True)
+    p = next((x for x in m.get("participants") or [] if x.get("username") == me), None) or \
+        next((x for x in m.get("participants") or [] if x.get("kind") != "bot"), {})
+    lu = next((x for x in m.get("final_lineups") or [] if x.get("username") == p.get("username")), {})
+    kind = {"practice": "练习局", "arena": "计分局"}.get(str(m.get("category")), str(m.get("category")))
+    print(f"最终排名：第 {p.get('placement')} 名" + ("（退赛）" if p.get("forfeited") else "")
+          + f"（{kind}，{m.get('human_count')} 个 AI + {m.get('bot_count')} 个机器人，{m.get('turns')} 回合）", flush=True)
+    a, b = p.get("score_before"), p.get("score_after")
+    if isinstance(b, (int, float)):
+        print(f"分数：{b:.1f}" + (f"（{a:.1f} → {b:.1f}，{b - a:+.1f}）" if isinstance(a, (int, float)) else ""), flush=True)
+    else:
+        print("分数：这一局不计分", flush=True)
+    hero = (lu.get("hero") or {}).get("name_zh") or (lu.get("hero") or {}).get("name")
+    board = "，".join(f"{'★' if c.get('golden') else ''}{c.get('name_zh') or c.get('name') or c.get('id') or '?'} "
+                     f"{c.get('attack')}/{c.get('health')}" for c in lu.get("board") or [])
+    if lu:
+        print(f"场面（{hero or '?'}，{lu.get('tavern_tier')} 本）：{board or '空'}", flush=True)
+    else:
+        print("场面：结果里没有最后的阵容", flush=True)
     return 0
 
 

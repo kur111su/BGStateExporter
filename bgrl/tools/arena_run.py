@@ -116,13 +116,13 @@ def key_env() -> dict | None:
     return dict(os.environ, ARENA_API_KEY=k)
 
 
-def _client(args, out: Path, env=None) -> int:
-    """跑官方连接器，结果（JSON）存到 out 并打印出来。"""
+def _client(args, out: Path, env=None, show: bool = True) -> int:
+    """跑官方连接器，结果（JSON）存到 out；show = 把它原样打印出来。"""
     RESULTS.mkdir(parents=True, exist_ok=True)
     with out.open("wb") as f:
         rc = _run([APY, "-E", "-s", "-X", "utf8", "arena/arena_client.py", "--url", url(), *args], stdout=f, env=env)
-    text = out.read_text(encoding="utf-8", errors="replace").strip()
-    print(text, flush=True)
+    if show:
+        print(out.read_text(encoding="utf-8", errors="replace").strip(), flush=True)
     return rc
 
 
@@ -150,11 +150,13 @@ def play(rated: bool) -> int:
     out = RESULTS / ("arena_last.json" if rated else "practice_last.json")
     print(("计分对局（一局）" if rated else "练习局（不计分）") + f"，模型 {c['model_version']} ……", flush=True)
     rc = _client(["--mode", "arena" if rated else "practice", "--games", "1", "--policy", "agent:act",
-                  "--catalog-sha256", c["catalog_sha256"], "--model-version", c["model_version"]], out, env)
+                  "--catalog-sha256", c["catalog_sha256"], "--model-version", c["model_version"]], out, env, show=False)
     text = out.read_text(encoding="utf-8", errors="replace").strip()
     if text:
         with (RESULTS / "history.jsonl").open("a", encoding="utf-8") as f:
             f.write(text + "\n")
+    print("\n===== 这一局的结果 =====", flush=True)       # 只打印名次、分数、最后的场面；整段结果在 arena\results\ 里
+    _run([APY, "-X", "utf8", "arena/viewer.py", "--print-last", out])
     return rc
 
 
@@ -172,7 +174,6 @@ def loop(update: bool, max_games: int = 0, wait: float = 60.0) -> int:
         n += 1
         print(f"\n===== 第 {n} 局计分对局（{time.strftime('%Y-%m-%d %H:%M:%S')}）=====", flush=True)
         rc = play(True)
-        _run([APY, "-X", "utf8", "arena/viewer.py", "--print-last", RESULTS / "arena_last.json"])
         if rc == 0:
             fails = 0
             continue

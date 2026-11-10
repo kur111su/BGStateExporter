@@ -162,6 +162,36 @@ def check_arena_key(tmp: Path):
             os.environ["ARENA_API_KEY"] = old_env
 
 
+def check_arena_summary(tmp: Path):
+    """一局打完只打印名次、分数、最后的场面；结果读不出来时原样打印。"""
+    import contextlib
+    import importlib.util
+    import io
+    import json
+    spec = importlib.util.spec_from_file_location("arena_viewer", Path(__file__).resolve().parent.parent / "arena" / "viewer.py")
+    V = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(V)
+    V.RESULTS, V.SITE = tmp / "none.jsonl", tmp / "none.json"
+    m = {"id": "m1", "category": "arena", "human_count": 3, "bot_count": 5, "turns": 13,
+         "participants": [{"username": "me", "kind": "agent", "placement": 2, "score_before": 1500.0, "score_after": 1512.4},
+                          {"username": "b1", "kind": "bot", "placement": 1}],
+         "final_lineups": [{"username": "me", "hero": {"name_zh": "托里姆"}, "tavern_tier": 5,
+                            "board": [{"name_zh": "布莱恩·铜须", "attack": 12, "health": 14, "golden": True}]}]}
+    p = tmp / "last.json"
+    p.write_text(json.dumps({"type": "match_finished", "match": m}, ensure_ascii=False), encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert V.print_last(str(p)) == 0
+    out = buf.getvalue()
+    assert "第 2 名" in out and "1512.4" in out and "+12.4" in out and "★布莱恩·铜须 12/14" in out and "托里姆" in out, out
+    assert len(out.strip().splitlines()) == 3 and "participants" not in out, out
+    p.write_text('{"error": "queue timeout"}', encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert V.print_last(str(p)) == 1
+    assert "queue timeout" in buf.getvalue()
+
+
 def main() -> int:
     check_specs()
     with tempfile.TemporaryDirectory() as d:
@@ -172,6 +202,7 @@ def main() -> int:
         check_train_state(d)
         check_cleanup(d)
         check_arena_key(d)
+        check_arena_summary(d)
     print("panel OK：任务排队 / 停止 / 中断、清理、竞技场密钥")
     return 0
 
