@@ -350,9 +350,10 @@ def print_last(path: str) -> int:
     except (ValueError, IndexError, KeyError, AssertionError, TypeError):
         print(text or "（没有结果）")
         return 1
-    me = _me(_history() or [m])
-    p = next((x for x in m.get("participants") or [] if x.get("username") == me), None) or \
-        next((x for x in m.get("participants") or [] if x.get("kind") != "bot"), {})
+    parts = m.get("participants") or []
+    real = [x for x in parts if x.get("kind") != "bot" and not x.get("is_bot")] or parts
+    me = _me((_history() or []) + [m])                     # 自己 = 每一局都在的那个账号；只有一个不是机器人的就是它
+    p = real[0] if len(real) == 1 else (next((x for x in real if x.get("username") == me), None) or real[0])
     lu = next((x for x in m.get("final_lineups") or [] if x.get("username") == p.get("username")), {})
     kind = {"practice": "练习局", "arena": "计分局"}.get(str(m.get("category")), str(m.get("category")))
     print(f"最终排名：第 {p.get('placement')} 名" + ("（退赛）" if p.get("forfeited") else "")

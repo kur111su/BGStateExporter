@@ -185,6 +185,15 @@ def check_arena_summary(tmp: Path):
     out = buf.getvalue()
     assert "第 2 名" in out and "1512.4" in out and "+12.4" in out and "★布莱恩·铜须 12/14" in out and "托里姆" in out, out
     assert len(out.strip().splitlines()) == 3 and "participants" not in out, out
+    m2 = dict(m, id="m0", participants=[{"username": "me", "kind": "agent", "placement": 5}, {"username": "other", "kind": "agent", "placement": 1}])
+    m["participants"].append({"username": "rival", "kind": "agent", "placement": 3})
+    V.RESULTS = tmp / "hist.jsonl"                          # 这一局有两个 AI：按历史对局里每局都在的账号认出自己
+    V.RESULTS.write_text(json.dumps({"type": "match_finished", "match": m2}, ensure_ascii=False) + "\n", encoding="utf-8")
+    p.write_text(json.dumps({"type": "match_finished", "match": m}, ensure_ascii=False), encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert V.print_last(str(p)) == 0
+    assert "第 2 名" in buf.getvalue(), buf.getvalue()
     p.write_text('{"error": "queue timeout"}', encoding="utf-8")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
