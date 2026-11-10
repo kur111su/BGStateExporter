@@ -28,7 +28,7 @@ PANELS = [
     ("win", "吃鸡率 / 前四率（考试）", [("eval_boost_top1", "吃鸡率"), ("eval_boost_top4", "前四率")],
      "8 个人随便打：吃鸡 12.5%、前四 50%", False, True),
     ("place", "训练对局名次", [("place_bot", "机器人局"), ("place_boost", "加强局"), ("place_seeded", "成型阵容课程局"),
-                          ("place_gift", "送牌局"), ("place_league", "对历史版本")],
+                          ("place_gift", "送牌局"), ("place_cgift", "送整套阵容的局"), ("place_league", "对历史版本")],
      "越低越好", True, False),
     ("boost", "加强局强度（自适应）", [("boost_strength", "前期换成高分阵容的概率"), ("boost_floor", "下限")],
      "模型越强它越高；第 10 回合起固定全强度；下限从第 19650 轮起慢慢抬到 0.7", False, False),
@@ -51,7 +51,8 @@ KPIS = [("eval_boost_score", "考试等效名次", True, 3), ("eval_boost_place"
         ("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_top4", "前四率", False, 3),
         ("place_bot", "机器人局名次", True, 3), ("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
         ("cs_late", "第 10 回合后场面强度", False, 3), ("grow", "后期每回合养场面", False, 3),
-        ("place_gift", "送牌局名次", True, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
+        ("place_gift", "送牌局名次", True, 3), ("place_cgift", "送整套阵容的局名次", True, 3),
+        ("cgift_formed", "送整套阵容：最后做成这套的比例", False, 3), ("unspent", "每回合剩钱", True, 3), ("ent", "熵", None, 3),
         ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3), ("pro_top1", "和高手同一动作", False, 3)]
 
 
@@ -277,6 +278,29 @@ def render(run: Path, window: int = 3000) -> Path | None:
             md += [line, ""]
         except (ValueError, OSError):
             pass
+    cagg = {}                                              # 送整套阵容：各套 [局数, 名次和, 吃鸡和, 做成这套的和]
+    for r in rows:
+        if r["iter"] >= lo and isinstance(r.get("cgift_by_comp"), dict):
+            for k, v in r["cgift_by_comp"].items():
+                n, avg, top1, fm = v[:4]
+                a = cagg.setdefault(k, [0, 0.0, 0.0, 0.0])
+                a[0] += n
+                a[1] += avg * n
+                a[2] += top1 * n
+                a[3] += fm * n
+    if cagg:
+        tot = sum(a[0] for a in cagg.values())
+        md += ["## 送整套阵容（最近 %d 轮）" % window, "",
+               "开局给模型定一套本局凑得成的目标阵容，第 5–11 回合把这套的核心卡一张张送到手里，其它全看它自己。"
+               "“做成了”= 局末场面按严格标准成了送的这一套（只有 S / A 级的会算）。做成的比例高、名次比机器人局好的，是它已经会用的阵容。", "",
+               f"一共 {tot} 局，做成了 {sum(a[3] for a in cagg.values()) / max(1, tot):.0%}，"
+               f"平均名次 {sum(a[1] for a in cagg.values()) / max(1, tot):.2f}，"
+               f"吃鸡 {sum(a[2] for a in cagg.values()) / max(1, tot):.0%}", "",
+               "| 阵容 | 局数 | 做成了 | 平均名次 | 吃鸡率 |", "| --- | --- | --- | --- | --- |"]
+        for k, (n, s_avg, s_top, s_fm) in sorted(cagg.items(), key=lambda kv: -kv[1][3] / max(1, kv[1][0])):
+            if n >= 5:
+                md.append(f"| {k} | {n} | {s_fm / n:.0%} | {s_avg / n:.2f} | {s_top / n:.0%} |")
+        md.append("")
     agg = {}                                               # 成型阵容课程：各套阵容拿到手以后的名次（最近 window 轮）
     for r in rows:
         if r["iter"] >= lo and isinstance(r.get("seeded_by_comp"), dict):

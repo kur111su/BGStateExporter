@@ -279,6 +279,12 @@ class Config:
     gift_turns: str = "4,5,6,7,8,9,10,11,12"
     gift_p: float = 0.6
     gift_min_lift: float = 2.0
+    # 送整套阵容（rl/calibrate.CompGifts，第 21800 轮起）：cgift_frac 的机器人局里，开局定一套本局凑得成的目标阵容，
+    # cgift_turns 每回合招募开始时按 cgift_p 的机会把这套还没有的核心卡送一张到手里（齐了送配套卡）。
+    # 这些局不再送零散的牌、不换成型场面，名次和“最后做成这套没有”单独记（place_cgift / cgift_formed）。0 = 不用
+    cgift_frac: float = 0.0
+    cgift_turns: str = "5,6,7,8,9,10,11"
+    cgift_p: float = 0.7
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -552,6 +558,15 @@ class Trainer(ShapingMixin, ImitationMixin):
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
                   f"高手抢着买、模型不买的牌（{len(self.gifts.pool)} 种）", flush=True)
         self.gift_places: list[int] = []
+        self.cgifts = None
+        if cfg.cgift_frac > 0 and cfg.games_bot:
+            from .calibrate import CompGifts
+            cg_turns = [int(x) for x in str(cfg.cgift_turns).split(",") if x.strip()]
+            self.cgifts = CompGifts(cfg.cgift_frac, cg_turns, p=cfg.cgift_p, seed=cfg.seed)
+            print(f"送整套阵容：{cfg.cgift_frac:.0%} 的机器人局开局定一套本局凑得成的目标阵容（{len(self.cgifts.comps)} 套），"
+                  f"第 {cfg.cgift_turns} 回合每回合 {cfg.cgift_p:.0%} 的机会送一张这套还没有的核心卡", flush=True)
+        self.cgift_by: dict[str, list] = {}            # 送整套阵容：阵容 → [(名次, 最后做成这套没有)]（上次考试以来）
+        self.cgift_iter: list = []                     # 同上，这一轮的
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
         self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
@@ -620,6 +635,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             self.seeder.plan.clear()
         if name == "bot" and self.gifts is not None:
             self.gifts.plan.clear()
+        if name == "bot" and self.cgifts is not None:
+            self.cgifts.plan.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -728,7 +745,15 @@ class Trainer(ShapingMixin, ImitationMixin):
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
                             gifted = name == "bot" and self.gifts is not None and self.gifts.finish(int(i))
-                            if gifted and not seeded:      # 送牌局：单独记名次
+                            cg = self.cgifts.finish(int(i)) if name == "bot" and self.cgifts is not None else ""
+                            if cg and not seeded:          # 送整套阵容的局：单独记名次、最后做成这套没有
+                                row = (int(info["placement"][i]), self._comp_name(fcomp) == cg)
+                                self.cgift_by.setdefault(cg, []).append(row)
+                                self.cgift_iter.append(row)
+                                if self.booster is not None:
+                                    self.booster.finish(int(i))
+                                seeded = True              # 不算进 place_bot / 加强强度
+                            elif gifted and not seeded:    # 送牌局：单独记名次
                                 self.gift_places.append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
@@ -761,16 +786,28 @@ class Trainer(ShapingMixin, ImitationMixin):
                         continue
                     self.t_boost += time.time() - tc
                 broke = False
-                if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
+                if name == "bot" and self.cgifts is not None:     # 送整套阵容：往手里放一张核心卡（场面不动，不切 GAE）
                     try:
-                        if self.gifts.apply(env, self.obs[name]["features"]):
+                        if self.cgifts.apply(env, self.obs[name]["features"]):
                             self.obs[name] = env.observe()
                     except BaseException as ex:            # noqa: BLE001
                         if not is_panic(ex):
                             raise
                         self._rebuild_env(ei, ex)
                         continue
-                skip = self.gifts.active() if name == "bot" and self.gifts is not None else None
+                if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
+                    try:
+                        if self.gifts.apply(env, self.obs[name]["features"], skip=self.cgifts.active() if self.cgifts else None):
+                            self.obs[name] = env.observe()
+                    except BaseException as ex:            # noqa: BLE001
+                        if not is_panic(ex):
+                            raise
+                        self._rebuild_env(ei, ex)
+                        continue
+                skip = None
+                if name == "bot":
+                    skip = (self.gifts.active() if self.gifts is not None else set()) | \
+                           (self.cgifts.active() if self.cgifts is not None else set())
                 for sd in ((self.seeder,) if name == "bot" else ()):
                     if sd is None:                         # 成型阵容课程（换整个场面）
                         continue
@@ -1382,6 +1419,13 @@ class Trainer(ShapingMixin, ImitationMixin):
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
 
+    def _comp_name(self, k) -> str:
+        """_final_comp 的序号 → 阵容名字（没成 → 空字符串）。"""
+        if getattr(self, "_comp_names", None) is None:
+            from .comp import load_target_comps
+            self._comp_names = [c["name"] for c in load_target_comps()]
+        return self._comp_names[int(k)] if k is not None and 0 <= int(k) < len(self._comp_names) else ""
+
     def _final_comp(self, s: int) -> int:
         """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""
         from .model import K_MAX
@@ -1527,6 +1571,13 @@ class Trainer(ShapingMixin, ImitationMixin):
                     rec["boost_place_avg"] = self.adapt.mean()
                     self._apply_boost_floor(rec)
                 self.t_boost = 0.0
+            if self.cgifts is not None:
+                rec.update(self.cgifts.take_stats())
+                cur, self.cgift_iter = self.cgift_iter, []
+                if cur:
+                    rec["place_cgift"] = round(float(np.mean([p for p, _ in cur])), 3)
+                    rec["cgift_games"] = len(cur)
+                    rec["cgift_formed"] = round(float(np.mean([f for _, f in cur])), 3)
             if self.gifts is not None:
                 rec.update(self.gifts.take_stats())
                 if self.gift_places:
@@ -1549,6 +1600,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
+                    if self.cgift_by:                      # 送整套阵容：每套 [局数, 平均名次, 吃鸡率, 做成这套的比例]
+                        rec["cgift_by_comp"] = {k: [len(v), round(float(np.mean([p for p, _ in v])), 2),
+                                                    round(float(np.mean([p == 1 for p, _ in v])), 3),
+                                                    round(float(np.mean([f for _, f in v])), 3)]
+                                                for k, v in sorted(self.cgift_by.items())}
+                        self.cgift_by = {}
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
                         rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}
