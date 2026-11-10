@@ -17,8 +17,10 @@ taverngym._core.layout() 读，避免两套编码器漂移（论文教训）。
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -482,3 +484,31 @@ def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64, tab
 
 def n_params(m: nn.Module) -> int:
     return sum(p.numel() for p in m.parameters())
+
+
+def load_model(path: str | Path, device: str = "cpu"):
+    """读 latest.pt（含模型大小）或对手库快照（只有参数，大小从同一训练目录的 config.json 读）。"""
+    path = Path(path)
+    ck = torch.load(path, map_location=device, weights_only=False)
+    info = {"path": str(path), "mtime": path.stat().st_mtime}
+    if isinstance(ck, dict) and "model" in ck:
+        state, kw = ck["model"], ck.get("model_kwargs")
+        info["iter"] = ck.get("iter")
+    else:
+        state, kw = ck, None
+    if not kw:
+        cfg = None
+        for d in (path.parent, path.parent.parent):
+            if (d / "config.json").exists():
+                cfg = json.loads((d / "config.json").read_text(encoding="utf-8"))
+                break
+        kw = dict(SIZES[(cfg or {}).get("size", "medium")])
+        for k in ("d", "layers", "heads", "dc"):
+            if cfg and cfg.get(k):
+                kw[k] = cfg[k]
+    if any(torch.is_tensor(v) and v.is_floating_point() and not torch.isfinite(v).all() for v in state.values()):
+        raise ValueError(f"{path.name} 的参数有 NaN / inf（训练出过问题），不能用")
+    model = build_model(**kw).to(device).eval()
+    model.load_state_dict(state)
+    info["size"] = kw
+    return model, info

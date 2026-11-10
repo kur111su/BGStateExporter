@@ -117,31 +117,6 @@ def main() -> int:
         env2.step(acts)
     assert early == 0 and late > 0, (early, late)
     print("pro boards late OK：前期不换、后期全换", pb2.take_stats())
-    # 起步课程：第 4–6 回合把最弱的随从换成一套本局凑得成的 S / A 阵容的起步卡（核心 → 配套 → 本族），场上不超过 7 个
-    from rl.calibrate import StartSeeder
-    from tg.catalog import catalog
-    det = catalog()
-    sd = StartSeeder(frac=1.0, turns=(4, 5, 6), seed=1)
-    apm = next(c for c in sd.comps if c["name"] == "机械 APM")
-    st = sd.starters(apm, 3, None)
-    assert 2 <= len(st) <= 3 and all(det[k]["tier"] <= 3 for k in st), st
-    assert all(k in apm["core"] or k in (apm.get("support") or []) or "MECHANICAL" in det[k]["races"] for k in st), st
-    env3 = taverngym.BatchEnv(16, seed=3, controlled=(0,), threads=1)
-    planted = 0
-    for _ in range(2500):
-        o = env3.observe()
-        if sd.seed(env3, o["features"]):
-            o = env3.observe()
-            for g in sd.seeded_slots:
-                b = json.loads(env3.save(g))["game"]["players"][0]["board"]
-                assert 2 <= len(b) <= 7, len(b)
-                planted += 1
-        m, r = o["action_mask"], o["ready"]
-        acts = np.array([rng.choice(np.flatnonzero(mm)) if rr and mm.any() else 0 for mm, rr in zip(m, r)], dtype=np.int64)
-        env3.step(acts)
-    st3 = sd.take_stats()
-    assert planted > 50 and st3["start_missing"] <= planted // 10 and len(sd.names) >= 10, (planted, st3, sd.names)
-    print("起步课程 OK", st3, f"{len(sd.names)} 套")
     return 0
 
 

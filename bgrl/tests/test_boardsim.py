@@ -430,7 +430,7 @@ def check_seeder():
     t = int(np.rint(obs["features"][0, 0] * 20))
     sd = CompSeeder({t: [{"tier": 4, "board": board}]}, frac=1.0, turns=(t,), seed=0)
     assert sd.size() == 1
-    assert not sd.seed(env, obs["features"], skip=set(range(env.n_games)))   # 阵容练习局：不换
+    assert not sd.seed(env, obs["features"], skip=set(range(env.n_games)))   # 送牌局：不换
     sd = CompSeeder({t: [{"tier": 4, "board": board}]}, frac=1.0, turns=(t,), seed=0)
     assert sd.seed(env, obs["features"]) and 0 in sd.seeded_slots
     obs = env.observe()
@@ -503,14 +503,11 @@ def check_repay():
     cfg.shape_repay_keys = "target,engine"                                     # 阵容强度不扣
     assert abs(ShapingMixin._shape_close(t, 0) + (0.6 * 0.5 + 0.4 * 1.0)) < 1e-9
     cfg.shape_repay_keys = "target,engine,combat"
-    assert abs(ShapingMixin._shape_close(t, 0, keep_target=1.0) + (0.4 * 1.0 + 0.3 * 1.2)) < 1e-9   # 练习局：目标阵容不扣
-    assert abs(ShapingMixin._shape_close(t, 0, keep_target=0.5) + (0.3 * 0.5 + 0.4 * 1.0 + 0.3 * 1.2)) < 1e-9
-    assert t.mix["prac_fin_n"] == 2 and abs(t.mix["prac_fin_sum"] - 1.0) < 1e-9
     t.iter = 50                                                                 # 退回到爬坡开始之前：不扣，不是反着加
     assert ShapingMixin._shape_close(t, 0) == 0.0
     cfg.shape_repay = 0.0
     t.iter = 200
-    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 8     # 不扣时照样记局末还挂着多少
+    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 6     # 不扣时照样记局末还挂着多少
     return round(full, 3)
 
 
@@ -649,7 +646,6 @@ def check_board():
                 r["seeded_by_comp"] = {"龙虾流野兽": [6, 2.5, 0.333], "机械 APM": [5, 3.2, 0.2]}
             if it == 70:                                               # 新格式：后三项是其中加强局的局数 / 平均名次 / 吃鸡率
                 r["seeded_by_comp"] = {"龙虾流野兽": [4, 2.5, 0.25, 2, 3.0, 0.0]}
-                r["practice_by_comp"] = {"喝茶流": [6, 3.5, 0.167, 0.5]}
             lines.append(r)
             if it == 40:
                 lines.append({"iter": 40, "time": "", "rollback": "策略连续 10 轮变乱：熵 1.9"})
@@ -667,7 +663,6 @@ def check_board():
         assert "第 **120** 轮" in md and "吃鸡 25.0%" in md and "守护换回 best.pt" in md, md[:400]
         assert "| 龙虾流野兽 | 10 | 2.50 | 30% | 2 | 3.00 | 0% |" in md, md
         assert "| 机械 APM | 5 | 3.20 | 20% | 0 | - | - |" in md, md
-        assert "## 阵容练习局" in md and "| 喝茶流 | 6 | 50% | 3.50 | 17% |" in md, md
         assert "拿着成型阵容的阵容测试" in md and "3 局平均名次 2.67，吃鸡 33.3%，前四 67%" in md, md
         svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
         assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
@@ -730,89 +725,6 @@ def check_grow():
     return t.mix["grow_n"]
 
 
-def check_practice():
-    """阵容练习局（ShopPractice）：开局定一套本局凑得成的 S / A；练的回合招募开始时酒馆里换进这套的卡，场面不动；
-    局末 finish 返回练的那套；成型阵容课程跳过这些局（skip）。"""
-    import json as _json
-    from taverngym import BatchEnv
-    from rl.calibrate import ShopPractice
-    pr = ShopPractice(frac=1.0, turns=(2, 3, 4), seed=1, n_slots=2, weights=(0.5, 0.3, 0.2))
-    env = BatchEnv(4, seed=21, controlled=(0,), threads=1)
-    rng = np.random.default_rng(0)
-    seen, boards_same = 0, True
-    for _ in range(3000):
-        obs = env.observe()
-        before = [_json.loads(env.save(g))["game"]["players"][0]["board"] for g in range(4)]
-        if pr.apply(env, obs["features"]):
-            obs = env.observe()
-            for g in range(4):
-                game = _json.loads(env.save(g))["game"]
-                me = game["players"][0]
-                boards_same &= [m["card"] for m in me["board"]] == [m["card"] for m in before[g]]
-                cur = pr.plan[g]
-                if cur[1] is not None and cur[2] == game["turn"] and game["turn"] in (2, 3, 4):
-                    groups = pr._groups(cur[1], int(me["tier"]), None)
-                    allowed = {pr.det[k]["cid"] for grp in groups for k in grp}
-                    shop = [sl["item"]["Minion"]["card"] for sl in me["shop"] if "Minion" in sl["item"]]
-                    seen += sum(c in allowed for c in shop) >= 1
-        if min(int(round(f * 20)) for f in obs["features"][:, 0]) > 4:
-            break
-        acts = np.array([rng.choice(np.flatnonzero(m)) for m in obs["action_mask"]])
-        env.step(acts)
-    assert seen >= 4 and boards_same, (seen, boards_same)
-    assert pr.active() == {0, 1, 2, 3}
-    name = pr.finish(0)
-    assert name and name in {c["name"] for c in pr.comps} and 0 not in pr.active()
-    return seen
-
-
-def check_expert():
-    """练习局“照着凑”的建议动作（ShopPractice.expert）：买核心卡 > 升本（落后于节奏）> 买配套；打出这套的随从；
-    场上满了、手里压着核心卡就卖最没用的；场上满了还有杂牌、酒馆里没能换的就刷新。"""
-    from rl.calibrate import ShopPractice
-    from tg.actions import A_BUY, A_PLAY, A_REFRESH, A_SELL, A_UPGRADE, N_ACTIONS, N_POS
-    from tg.catalog import base_of_index, n_cards
-    from tg.obs import C_BOARD, C_HAND, C_SHOP, F_TIER, F_TURN, TIER_SCALE, TURN_SCALE
-    pr = ShopPractice(frac=1.0, seed=0)
-    tea = next(c for c in pr.comps if c["name"] == "喝茶流")
-    pr.plan[0] = [0, tea, -1]
-    idx = {}
-    for i in range(1, n_cards()):
-        idx.setdefault(base_of_index(i), i)
-    brann, fruit, junk = idx["BG_LOE_077"], idx["BG36_346"], idx["BG26_135"]          # 布莱恩（核心）、水果商贩（配套）、南海卖艺者
-
-    def state(turn, tier, shop=(), hand=(), board=(), legal=()):
-        f = np.zeros(32, dtype=np.float32)
-        f[F_TURN], f[F_TIER] = turn / TURN_SCALE, tier / TIER_SCALE
-        c = np.zeros(60, dtype=np.int64)
-        for k, x in enumerate(shop):
-            c[C_SHOP + k] = x
-        for k, x in enumerate(hand):
-            c[C_HAND + k] = x
-        for k, x in enumerate(board):
-            c[C_BOARD + k] = x
-        m = np.zeros(N_ACTIONS, dtype=bool)
-        m[list(legal)] = True
-        return c, m, f
-    c, m, f = state(8, 4, shop=[junk, fruit, brann], legal=[A_BUY, A_BUY + 1, A_BUY + 2, A_UPGRADE, A_REFRESH])
-    assert pr.expert(0, c, m, f) == A_BUY + 2                                    # 核心卡先买
-    m[A_BUY + 2] = False
-    assert pr.expert(0, c, m, f) == A_UPGRADE                                    # 第 8 回合 4 本：先升本
-    m[A_UPGRADE] = False
-    assert pr.expert(0, c, m, f) == A_BUY + 1                                    # 再买配套卡
-    c, m, f = state(8, 5, hand=[junk, brann], board=[junk] * 3, legal=[A_PLAY + 1 * N_POS + p for p in range(4)] + [A_PLAY + p for p in range(4)])
-    assert pr.expert(0, c, m, f) == A_PLAY + 1 * N_POS + 3                       # 打出布莱恩（最右边），不打杂牌
-    c, m, f = state(9, 5, hand=[brann], board=[junk] * 6 + [fruit], legal=[A_SELL + i for i in range(7)] + [A_REFRESH])
-    assert pr.expert(0, c, m, f) == A_SELL + 0                                   # 场上满了：卖杂牌给布莱恩腾位置
-    c, m, f = state(9, 5, board=[junk] * 6 + [fruit], legal=[A_REFRESH, A_SELL])
-    assert pr.expert(0, c, m, f) == A_REFRESH                                    # 场上满了还有杂牌、酒馆没东西：刷新
-    c, m, f = state(5, 3, board=[junk] * 6 + [fruit], legal=[A_REFRESH])
-    assert pr.expert(0, c, m, f) == -1                                           # 第 7 回合以前不刷
-    pr.plan[0] = [0, None, -1]
-    assert pr.expert(0, *state(8, 4, shop=[brann], legal=[A_BUY])) == -1         # 普通局不给建议
-    return True
-
-
 def check_gifts():
     """送牌课程（CardGifts）：送牌局在给的回合招募开始时往学习者手里放一张池子里的牌（等级够得着），场面不动；
     纯加金币的法术不进池子；finish 返回是不是送牌局；成型阵容课程跳过这些局。"""
@@ -842,26 +754,6 @@ def check_gifts():
     assert given >= 2, given
     assert gf.active() == {0, 1, 2, 3} and gf.finish(0) and 0 not in gf.active()
     return given
-
-
-def check_lookahead():
-    """comptest --lookahead-from：后期每个决策在副本上推演几步（随机数换过）、选结束时场面最强的；只在明显更强时才换。"""
-    from tools.goldflow import play_model
-    lib = {t: [{"tier": 3, "board": [["BG26_135", t, t]] * 3}] for t in range(2, 16)}
-    rng = np.random.default_rng(5)
-    W = rng.normal(size=245)
-
-    def logits(f, c, m):
-        return np.where(np.asarray(m, dtype=bool), W[None, :] + 0.01 * np.asarray(f)[:, :1], -np.inf)
-
-    def act(f, c, m):
-        return logits(f, c, m).argmax(1)
-    _, info = play_model("runs/_no_such/latest.pt", 3, 9, 1, True, "cpu", policy=(act, {"iter": 0, "logits": logits}),
-                         look_from=4, look_k=3, look_depth=4, judge_lib=lib)
-    st = info["look"]
-    assert st["n"] > 0 and 0 <= st["changed"] <= st["n"], st
-    assert st["changed"] == 0 or st["gain"] / st["changed"] >= 0.02 - 1e-9
-    return st["n"], st["changed"]
 
 
 def check_comptest_seeded():
@@ -937,10 +829,7 @@ def main() -> int:
     check_board()
     check_seed_row_floor()
     check_grow()
-    check_practice()
-    check_expert()
     check_gifts()
-    check_lookahead()
     check_comptest_seeded()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"

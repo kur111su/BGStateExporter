@@ -125,7 +125,7 @@ def load_net(ckpt: str, device: str, smoke: bool):
         from rl.model import build_model
         torch.manual_seed(0)
         return Net(build_model(d=64, layers=2, heads=2, dc=32), device), {"iter": 0, "path": "随机小模型（冒烟测试）"}
-    from rl.advisor import load_model
+    from rl.model import load_model
     p = Path(ckpt) if ckpt else DEFAULT_RUN / "latest.pt"
     if not p.exists():
         runs = sorted(DEFAULT_RUN.parent.glob("*/latest.pt"), key=lambda x: x.stat().st_mtime)

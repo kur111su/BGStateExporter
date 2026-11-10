@@ -1,4 +1,4 @@
-"""bgrl 用到的路径和端口，集中在这里（其它模块和脚本都从这里取默认值）。"""
+"""bgrl 用到的路径，集中在这里（其它模块和脚本都从这里取默认值）。"""
 from __future__ import annotations
 
 import os
@@ -6,12 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent          # bgrl/
 RUNS = ROOT / "runs"                            # 训练目录（每次训练一个子目录，含 log.jsonl、latest.pt、snapshots/）
-REPORTS = ROOT / "reports"                      # 各种报告（回放、测速、影子模式记录）
+REPORTS = ROOT / "reports"                      # 各种报告（回放、TavernBench）
 FIXTURES = ROOT / "tests" / "fixtures"          # CI 用的局面 / 回放样本
 DEFAULT_RUN = RUNS / "v3"                       # 当前的正式训练（第二阶段：机器人按真人强度加强；v2 是第一阶段）
 
-PLUGIN_PORT = 8765                              # 插件的 /state.json、/optimize（v0.10 起没有网页面板）
-SHADOW_PORT = 8766                              # 影子模式的页面和 /advice.json
 
 
 def plugin_data() -> Path:

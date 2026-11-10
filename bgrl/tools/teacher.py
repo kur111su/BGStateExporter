@@ -54,7 +54,7 @@ def _path(p: str) -> Path:
 
 
 def build(init: str, size: str, dev):
-    from rl.advisor import load_model
+    from rl.model import load_model
     from rl.model import SIZES, build_model
     if init and init.lower() != "none":
         p = _path(init)

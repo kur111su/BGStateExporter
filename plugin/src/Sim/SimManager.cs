@@ -310,7 +310,7 @@ namespace BGStateExporter
 							}
 							if(accept || evaluated % 5 == 0)
 							{
-								// 定期更新进度，影子模式页面上能看到“已试 N 种站位”
+								// 定期更新进度（state.json 里能看到“已试 N 种站位”）
 								var progress = Next("running");
 								progress.Evaluated = evaluated;
 								progress.BestOrder = best.Select(m => m.Id).ToList();

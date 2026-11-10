@@ -23,7 +23,7 @@ jobs:
           curl -sSfL -o "$whl" "https://github.com/${{ github.repository }}/releases/download/$tag/$whl"
           python -m pip install numpy "$whl"
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Unit tests (model / action heads / GAE / shadow advisor) via the bg.py entry point
+      - name: Unit tests (model / action heads / GAE) via the bg.py entry point
         run: |
           python -X utf8 bgrl/bg.py info
           python -X utf8 bgrl/bg.py test
@@ -45,7 +45,7 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --practice-frac 0.5 --practice-turns 2,3 --practice-keep-target 1.0 --expert-coef 0.3 --practice-expert-from 2 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --target-bonus 0.5
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --target-bonus 0.5
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
         run: |
           python -X utf8 bgrl/tests/test_hsreplay.py --write-sample bgrl/runs/_replays
@@ -58,7 +58,7 @@ jobs:
           python -X utf8 bgrl/bg.py playbook --pro-data bgrl/runs/pro_demos --out bgrl/runs/_target_comps_ci.json
           python -X utf8 bgrl/bg.py teacher --init bgrl/runs/_smoke/latest.pt --pro-data bgrl/runs/pro_demos --steps 6 --eval-every 3 --batch 16 --out bgrl/runs/_teacher_ci.pt
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --teacher bgrl/runs/_teacher_ci.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-core-mult 3 --aux-comp-coef 0.05 --target-bonus 0.3 --target-from-turn 2 --keep-penalty 0.05 --engine-bonus 0.4 --engine-from-turn 2
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 7 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --pro-coef 0.05 --teacher bgrl/runs/_teacher_ci.pt --teacher-coef 0.03 --target-bonus 0.3 --target-from-turn 2 --engine-bonus 0.4 --engine-from-turn 2 --combat-bonus 0.3 --combat-from-turn 2 --shape-repay 1 --shape-repay-ramp 2 --guard true --guard-window 1 --guard-patience 1 --guard-margin 0 --ent-target 1.0 --warmup-iters 2 --seed-start-frac 0.5 --seed-start-turns 2,3 --place-reward 1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 7 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --pro-coef 0.05 --teacher bgrl/runs/_teacher_ci.pt --teacher-coef 0.03 --target-bonus 0.3 --target-from-turn 2 --engine-bonus 0.4 --engine-from-turn 2 --combat-bonus 0.3 --combat-from-turn 2 --shape-repay 1 --shape-repay-ramp 2 --guard true --guard-window 1 --guard-patience 1 --guard-margin 0 --ent-target 1.0 --warmup-iters 2 --place-reward 1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1
           test -f bgrl/runs/_smoke/best.pt
           python -X utf8 bgrl/bg.py board --run bgrl/runs/_smoke
           test -f bgrl/runs/_smoke/dashboard.md

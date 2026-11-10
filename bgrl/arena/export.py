@@ -42,7 +42,7 @@ def main() -> int:
     import taverngym._core as c
     import torch
     from paths import DEFAULT_RUN
-    from rl.advisor import load_model
+    from rl.model import load_model
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=str(DEFAULT_RUN / "latest.pt"))

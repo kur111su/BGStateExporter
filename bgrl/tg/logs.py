@@ -1,7 +1,7 @@
 """读插件的对局记录（games/*.jsonl，schema 2），整理成 TavernGym 桥接和回放校验要用的形式。
 
   load_game(path)        → 本局所有招募阶段记录（去掉面板用的字段；标签名统一大写；补上 _heroBase、_seen、_dark_gifts）
-  GameHistory            → 逐条喂记录、给招募记录补上历史（load_game 和影子模式共用）
+  GameHistory            → 逐条喂记录、给招募记录补上历史（load_game 用）
   seen_boards(records)   → 每个回合开始战斗时看到的对手阵容 {回合: (对手英雄, 阵容)}
   recruit_snapshots(...) → 每回合取一条“局面稳定”的招募记录（A4 用）
   segment(records)       → 切成一个个动作，每个动作配上动作前、动作后的稳定局面（A5 用）
@@ -106,7 +106,7 @@ class GameHistory:
       _seen       每个对手（按英雄）最近一次交手时的阵容 {"英雄": {"turn": 回合, "board": [...]}}
       _dark_gifts 花钱买过的黑暗之赐 {"uses": 次数, "used_turn": 本回合买过没有}：插件出现“黑暗之赐”待选项、
                   而且前几条记录里金币刚少了至少 3（卡牌效果送的黑暗之赐不花钱，不算）
-    load_game（回放、A4）和影子模式共用这一份逻辑。"""
+    load_game（回放、A4）用这一份逻辑。"""
 
     def __init__(self):
         self.seen_by_turn: dict[int, tuple[str, list[dict]]] = {}

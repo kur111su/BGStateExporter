@@ -1,9 +1,7 @@
 """bgrl 的统一入口：python bg.py <命令> [参数]（Windows 上双击对应的 .bat 即可）。
 
   train     训练（train.bat = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
-  shadow    影子模式：http://localhost:8766/ 显示模型建议和插件的 Bob's Buddy 模拟结果（参数同 tools/shadow.py：--ckpt、--device …）
   replay    A5 回放检查：用你的对局记录逐步检查模拟器（参数同 tools/tg_replay.py：--last N …）
-  shadow-eval  影子模式评估：模型建议和你实际操作对得上多少（tools/shadow_eval.py）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   demos     把你的对局记录变成示范数据 runs/demos.npz（训练时模仿你的操作；tools/make_demos.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
@@ -35,7 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-TOOLS = {"train": "train", "shadow": "shadow", "replay": "tg_replay", "shadow-eval": "shadow_eval",
+TOOLS = {"train": "train", "replay": "tg_replay",
          "tavernbench": "tavernbench", "demos": "make_demos", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
          "profile": "opp_profile", "bench": "tg_bench"}
@@ -49,7 +47,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 
 def _test() -> int:
     rc = 0
-    for t in ("test_calibrate.py", "test_rl.py", "test_shadow.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
+    for t in ("test_calibrate.py", "test_rl.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
               "test_layout.py", "test_recipe.py", "test_boardsim.py"):
         print(f"=== {t} ===", flush=True)
         try:

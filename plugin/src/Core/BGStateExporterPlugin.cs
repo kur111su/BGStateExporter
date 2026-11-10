@@ -14,7 +14,6 @@ namespace BGStateExporter
 	public class BGStateExporterPlugin : IPlugin
 	{
 		private const int Port = 8765;          // /state.json、/events、/optimize（没有网页面板了）
-		private const int ShadowPort = 8766;    // bgrl 影子模式的页面：模型建议 + 这里的模拟结果
 
 		private static readonly JsonSerializerSettings JsonSettings = new()
 		{
@@ -37,8 +36,8 @@ namespace BGStateExporter
 		private DateTime _lastErrorLog = DateTime.MinValue;
 
 		public string Name => "BG State Exporter";
-		public string Description => "实时导出酒馆战旗局面和对局记录、Bob's Buddy 对战模拟（本场胜率、对位胜率、站位优化）。建议来自 PPO 模型的影子模式：bgrl\\shadow.bat，页面 http://localhost:8766/";
-		public string ButtonText => "打开影子模式页面";
+		public string Description => "实时导出酒馆战旗局面和对局记录、Bob's Buddy 对战模拟（本场胜率、对位胜率、站位优化）。局面接口 http://localhost:8765/state.json，对局记录给 bgrl 训练用";
+		public string ButtonText => "打开局面接口页面";
 		public string Author => "炉石酒馆项目";
 		public Version Version => UpdateChecker.CurrentVersion;
 
@@ -48,7 +47,7 @@ namespace BGStateExporter
 			{
 				if(_menuItem == null)
 				{
-					_menuItem = new MenuItem { Header = "影子模式（模型建议）" };
+					_menuItem = new MenuItem { Header = "BG State Exporter（局面接口）" };
 					_menuItem.Click += (_, _) => OpenPanel();
 				}
 				return _menuItem;
@@ -103,7 +102,7 @@ namespace BGStateExporter
 				if(UpdateChecker.UpdateReady && _menuItem != null && !_menuNoticeShown)
 				{
 					_menuNoticeShown = true;
-					_menuItem.Header = $"影子模式（新版本 {UpdateChecker.LatestVersion} 已下载，重启 HDT 生效）";
+					_menuItem.Header = $"BG State Exporter（新版本 {UpdateChecker.LatestVersion} 已下载，重启 HDT 生效）";
 				}
 				if(_sim != null)
 				{
@@ -175,7 +174,7 @@ namespace BGStateExporter
 		{
 			try
 			{
-				Process.Start(new ProcessStartInfo($"http://localhost:{ShadowPort}/") { UseShellExecute = true });
+				Process.Start(new ProcessStartInfo($"http://localhost:{Port}/") { UseShellExecute = true });
 			}
 			catch(Exception ex)
 			{

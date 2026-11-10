@@ -110,7 +110,7 @@ def train_rules(ckpt: str) -> dict:
 def model_policy(ckpt: str, device: str, greedy: bool):
     """检查点 → (选动作的函数 act(features, cards, mask) -> 动作数组, 检查点信息)。"""
     import torch
-    from rl.advisor import load_model
+    from rl.model import load_model
     model, info = load_model(ckpt, device)
 
     def act(f, c, m):
@@ -122,28 +122,19 @@ def model_policy(ckpt: str, device: str, greedy: bool):
             a = lg.argmax(-1) if greedy else torch.distributions.Categorical(logits=lg).sample()
         return a.cpu().numpy()
 
-    def logits(f, c, m):                               # 推演用：每个动作的分数（不合法 = -inf）
-        with torch.no_grad():
-            mm = torch.as_tensor(np.asarray(m, dtype=bool), device=device)
-            lg = model(torch.as_tensor(np.asarray(f, dtype=np.float32), device=device),
-                       torch.as_tensor(np.asarray(c, dtype=np.int64), device=device), mm)[0].float()
-            return lg.masked_fill(~mm, float("-inf")).cpu().numpy()
     info["name"] = Path(ckpt).name
-    info["logits"] = logits
     return act, info
 
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
-               look_from: int = 0, look_k: int = 6, look_depth: int = 8, judge_lib: dict | None = None):
+               judge_lib: dict | None = None):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
     （rl/calibrate.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。
     late：(act, info)，第 late_from 回合起换它来打（例如老师模型），看后期换个打法场面能不能养起来。
-    look_from > 0：第 look_from 回合起每个决策先推演（见 lookahead）：模型最想走的 look_k 步 + 结束回合，各在这局的副本上走一步、
-    再让模型自己把这回合打完（最多 look_depth 步，不结束回合），拿同一组同期高分阵容量结束时的场面，选最强的那一步
-    （比模型自己的选择强 0.02 以上才换）。副本的随机数先换掉，推演看不到真实的下一个酒馆。judge_lib：测试用，代替高分阵容库。"""
+    judge_lib：测试用，代替高分阵容库。"""
     import time as _t
     from taverngym import BatchEnv
     from tools.cardvalue import PickStats
@@ -170,17 +161,6 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     if lib:
         from rl.boardsim import BoardJudge
         judge = BoardJudge(lib, k=12, n=3, seed=0)
-    look = None                                        # 推演：(每个动作分数的函数, 统计)
-    if look_from > 0:
-        lg_fn = (info or {}).get("logits") if isinstance(info, dict) else None
-        if judge is None or lg_fn is None:
-            print("推演要高分阵容库（runs/pro_boards.json）和模型的动作分数，这次不推演", flush=True)
-        else:
-            from rl.boardsim import BoardJudge
-            # 推演用另一组考官（种子 1）：阵容强度表（种子 0 那组）还是独立的检查，不是“对着考题练”
-            look = (lg_fn, {"n": 0, "changed": 0, "gain": 0.0, "by_kind": {}}, BoardJudge(lib, k=12, n=3, seed=1))
-            print(f"推演：第 {look_from} 回合起每个决策试模型最想走的 {look_k} 步 + 结束回合，各自打完这回合（最多 {look_depth} 步），"
-                  f"选结束时场面最强的", flush=True)
     seeder, seeded_comp = None, {}                     # 拿着成型阵容打：槽位 → 换成的那套阵容（空 = 没换成）
     if seed_comps:
         from rl.calibrate import CompSeeder
@@ -243,14 +223,6 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                     a[~lo] = np.asarray(act(f[~lo], cr[~lo], m[~lo]))
                 if lo.any():
                     a[lo] = np.asarray(late[0](f[lo], cr[lo], m[lo]))
-            if look is not None:                       # 推演：第 look_from 回合起每个决策在副本上试几步
-                tt = np.rint(f[:, 0] * 20).astype(int)
-                rows = [k for k in range(len(ready)) if tt[k] >= look_from and m[k].sum() > 1]
-                if rows:
-                    L = look[0](f[rows], obs["cards"][ready][rows], m[rows])
-                    for r, k in enumerate(rows):
-                        a[k] = lookahead(env, int(ready[k]), int(tt[k]), m[k], L[r], int(a[k]), look[2], look[0],
-                                         look_k, look_depth, look[1], rng_seed=seed * 1000003 + step_no * 31 + k)
             for k, i in enumerate(ready):
                 fi = f[k]
                 ci = obs["cards"][i]
@@ -321,89 +293,9 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     info["starts"] = {i: v for i, v in starts.items()}
     info["places"] = places
     info["judge"], info["lib"] = judge, lib
-    if look is not None:
-        st = look[1]
-        print(f"\n推演：{st['n']} 个决策，换掉模型选择的 {st['changed'] / max(1, st['n']):.0%}，"
-              f"换的那些平均让结束时的场面强 {st['gain'] / max(1, st['changed']):+.3f}；换成："
-              + "、".join(f"{k} {v}" for k, v in sorted(st["by_kind"].items(), key=lambda kv: -kv[1])), flush=True)
-        info["look"] = {k: v for k, v in st.items()}
     if seeder is not None:
         info["seeded"] = show_seeded(places, seeded_comp, seed_comps)
     return [x.turns for x in logs], info
-
-
-def lookahead(env, i: int, t: int, m, lg, a0: int, judge, lg_fn, k: int = 6, depth: int = 8, st=None,
-              margin: float = 0.02, rng_seed: int = 0) -> int:
-    """槽位 i 这个决策的推演（见 play_model 的 look_from）：返回要走的动作。
-    候选 = 模型自己的选择 + 分数最高的 k 个 + 结束回合；每个候选在同一个副本（随机数换过）上走一步，模型接着打完这回合
-    （遇到结束回合就停、最多 depth 步），然后拿同一组同期高分阵容实打（judge），比结束时的场面。"""
-    import json as _json
-    from taverngym import _core
-    from tg.actions import A_END, action_family
-    legal = np.flatnonzero(m)
-    order = legal[np.argsort(-np.asarray(lg)[legal], kind="stable")]
-    cand = [int(a0)] + [int(x) for x in order[:k] if int(x) != int(a0)]
-    if m[A_END] and A_END not in cand:
-        cand.append(A_END)
-    g, seat = env.slot(int(i))
-    s = _json.loads(env.game(int(g)).state_json())
-    r = np.random.default_rng(rng_seed)
-    s["rng"]["s"] = [int(x) for x in r.integers(1, 2 ** 63, size=4)]   # 推演看不到真实的下一个酒馆
-    base = _core.Game.from_json(_json.dumps(s))
-    runs = []
-    for a in cand:
-        G = base.copy()
-        if a != A_END:
-            try:
-                G.step(int(seat), int(a))
-            except ValueError:
-                continue
-        runs.append([a, G, a == A_END])
-    for _ in range(depth):
-        live = [x for x in runs if not x[2]]
-        if not live:
-            break
-        F, C, M = [], [], []
-        for x in live:
-            fb, cb = x[1].observe(int(seat))
-            F.append(np.frombuffer(fb, dtype=np.float32))
-            C.append(np.frombuffer(cb, dtype=np.int32))
-            M.append(np.frombuffer(x[1].legal_mask(int(seat)), dtype=np.uint8).astype(bool))
-        Mx = np.stack(M)
-        if not Mx.any(axis=1).all():
-            for x, mm in zip(live, Mx):
-                if not mm.any():
-                    x[2] = True
-            continue
-        L2 = lg_fn(np.stack(F), np.stack(C), Mx)
-        for x, l2, mm in zip(live, L2, Mx):
-            b = int(np.argmax(np.where(mm, l2, -np.inf)))
-            if b == A_END:
-                x[2] = True
-                continue
-            try:
-                x[1].step(int(seat), b)
-            except ValueError:
-                x[2] = True
-    best_a, best_v, v0 = int(a0), None, None
-    for a, G, _ in runs:
-        v = judge.judge(G, int(seat), int(t))
-        if v is None:
-            continue
-        if a == int(a0):
-            v0 = v
-        if best_v is None or v > best_v:
-            best_v, best_a = v, a
-    if v0 is None or best_v is None or best_v < v0 + margin:
-        best_a = int(a0)
-    if st is not None:
-        st["n"] += 1
-        if best_a != int(a0):
-            st["changed"] += 1
-            st["gain"] += float(best_v - v0)
-            kd = action_family(best_a)
-            st["by_kind"][kd] = st["by_kind"].get(kd, 0) + 1
-    return best_a
 
 
 def show_seeded(places: dict, comp_of: dict, turns: str = "") -> dict:
@@ -847,10 +739,6 @@ def main() -> int:
     ap.add_argument("--late-ckpt", default="", help="第 --late-from 回合起换这个模型打（例如 runs\\teacher.pt：老师后期会不会养场面），"
                                                     "结果文件名后面加 _late")
     ap.add_argument("--late-from", type=int, default=10)
-    ap.add_argument("--lookahead-from", type=int, default=0, help="例如 9：第 9 回合起每个决策先在副本上推演几步、选结束时场面最强的"
-                                                               "（comptest_lookahead.bat），结果文件名后面加 _look")
-    ap.add_argument("--lookahead-k", type=int, default=6)
-    ap.add_argument("--lookahead-depth", type=int, default=8)
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（comptest_seeded.bat），结果写进 comptest_seeded.json")
     a = ap.parse_args()
@@ -876,8 +764,7 @@ def main() -> int:
         print(f"第 {a.late_from} 回合起换 {a.late_ckpt} 打 …", flush=True)
         late = model_policy(a.late_ckpt, dev, not a.sample)
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
-                             late=late, late_from=a.late_from, look_from=a.lookahead_from, look_k=a.lookahead_k,
-                             look_depth=a.lookahead_depth)
+                             late=late, late_from=a.late_from)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
@@ -933,50 +820,16 @@ def main() -> int:
                                            else "goldflow.json")
     if late is not None:
         out = out.with_name(out.stem + "_late.json")
-    if a.lookahead_from > 0:
-        out = out.with_name(out.stem + "_look.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games, "seed": a.seed,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
                                "places": [p for p in (info.get("places") or {}).values() if p > 0],
                                "seeded": info.get("seeded"),
-                               "late": {"ckpt": a.late_ckpt, "from": a.late_from} if late is not None else None,
-                               "look": info.get("look")},
+                               "late": {"ckpt": a.late_ckpt, "from": a.late_from} if late is not None else None},
                               ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
-    if a.lookahead_from > 0:
-        compare_look(out.with_name(out.name.replace("_look.json", ".json")), out)
     return 0
-
-
-def compare_look(base: Path, look: Path):
-    """推演那一次和同一个模型、同一批对局不推演的那一次（comptest_lookahead.bat 先后跑的两次）并排比。"""
-    try:
-        b, k = (json.loads(p.read_text(encoding="utf-8")) for p in (base, look))
-    except (OSError, ValueError):
-        return
-    if any(b.get(x) != k.get(x) for x in ("ckpt", "iter", "games", "seed")):
-        print(f"（{base.name} 不是同一个模型 / 同一批对局，不并排比）")
-        return
-
-    def rate(ps, f):
-        return f"{np.mean([f(p) for p in ps]):.0%}" if ps else "-"
-    pb, pk = b.get("places") or [], k.get("places") or []
-    print(f"\n和不推演的同一批对局比（{base.name}，第 {k.get('iter')} 轮，{len(pk)} 局）：")
-    print(f"  平均名次 {np.mean(pb):.2f} → {np.mean(pk):.2f}，吃鸡 {rate(pb, lambda p: p == 1)} → {rate(pk, lambda p: p == 1)}，"
-          f"前四 {rate(pb, lambda p: p <= 4)} → {rate(pk, lambda p: p <= 4)}")
-    sb, sk = (x.get("strength") or {} for x in (b, k))
-    sb = sb.get("rows", sb) if isinstance(sb, dict) else {}
-    sk = sk.get("rows", sk) if isinstance(sk, dict) else {}
-    for key, name in (("model", "场面强度"), ("grow", "养了多少")):
-        cells = []
-        for t in range(9, 15):
-            x, y = (s_.get(str(t), s_.get(t, {})) or {} for s_ in (sb, sk))
-            if x.get(key) is not None and y.get(key) is not None:
-                cells.append(f"第 {t} 回合 {x[key]:.2f}→{y[key]:.2f}")
-        if cells:
-            print(f"  {name}：" + "，".join(cells))
 
 
 if __name__ == "__main__":

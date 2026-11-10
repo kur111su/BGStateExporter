@@ -16,7 +16,7 @@ N_POS, N_BOARD, N_HAND, N_SHOP, N_CHOICE = 8, 7, 10, 8, 16
 
 
 def is_noop(a):
-    """“不改变局面”的动作：冻结、调站位（训练里有小惩罚，影子模式里不列成步骤）。
+    """“不改变局面”的动作：冻结、调站位（训练里有小惩罚）。
     a 可以是整数，也可以是 numpy 数组（逐个判断）。"""
     return (a == A_FREEZE) | (a >= A_MOVE)
 

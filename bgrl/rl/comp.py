@@ -386,7 +386,7 @@ COMP_F = 10         # 每套阵容的输入：凑得成、核心卡占比、占�
 
 def model_tables(comps: list[dict] | None = None, ids: list[str] | None = None) -> dict:
     """给模型（rl/model.CompSense）用的查表，全是 numpy 数组：模型自己从卡牌编号和观察里算每套阵容做到几成，
-    训练、影子模式、竞技场都一样（竞技场的打包里存一份 comp.npz，不用装 TavernGym）。"""
+    训练、竞技场都一样（竞技场的打包里存一份 comp.npz，不用装 TavernGym）。"""
     from tg.catalog import base_of_index, n_cards
     from tg.obs import F_LOBBY, LOBBY_IDX
     comps = load_target_comps() if comps is None else comps

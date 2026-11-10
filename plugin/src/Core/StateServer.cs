@@ -9,7 +9,7 @@ namespace BGStateExporter
 {
 	/// <summary>
 	/// 本机 HTTP 服务（只监听 localhost）：
-	///   GET /            说明（网页面板已去掉：建议看 bgrl 影子模式 http://localhost:8766/）
+	///   GET /            说明（网页面板已去掉）
 	///   GET /state.json  当前局面
 	///   GET /events      Server-Sent Events，局面变化时推送
 	///   GET /optimize    请求站位优化
@@ -174,8 +174,7 @@ namespace BGStateExporter
 
 		private const string IndexHtml = "<!doctype html><meta charset=utf-8><title>BG State Exporter</title>"
 			+ "<p>插件只导出局面和对局记录：<a href=/state.json>/state.json</a>、/events（推送）、/optimize（站位优化）。</p>"
-			+ "<p>模型建议、本场胜率、对位胜率、站位优化都在影子模式页面：运行 bgrl\\shadow.bat 后打开 "
-			+ "<a href=http://localhost:8766/>http://localhost:8766/</a>。</p>";
+			+ "<p>本场胜率、对位胜率、站位优化结果都在 state.json 的 sim 里；对局记录（games 目录）给 bgrl 的训练和回放检查用。</p>";
 
 		public void Dispose()
 		{

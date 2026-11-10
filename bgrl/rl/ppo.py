@@ -73,7 +73,7 @@ class Config:
     ent_adapt: float = 0.03
     ent_coef_min: float = 0.0005
     ent_coef_max: float = 0.01
-    # 每次调站位 / 冻结扣一点点奖励：这两个动作不推进游戏，第一版模型学会了一直点（影子模式的方案里 69% 是调站位）。
+    # 每次调站位 / 冻结扣一点点奖励：这两个动作不推进游戏，第一版模型学会了一直点（给出的方案里 69% 是调站位）。
     # 30 次约等于 0.2 个名次，正常需要的一两次几乎不受影响
     noop_penalty: float = 0.003
     epochs: int = 1
@@ -277,34 +277,12 @@ class Config:
     # 前 shape_repay_ramp 轮从 0 慢慢加到这个数（价值头跟着改）
     shape_repay: float = 0.0
     shape_repay_ramp: int = 300
-    # 起步课程（rl/calibrate.StartSeeder）：seed_start_frac 的机器人局里，学习者到了 seed_start_turns 里随机一个回合，
-    # 从本局凑得成的 S / A 阵容里均匀抽一套，把场上最弱的 seed_start_n 个随从换成这套现在就买得到的起步卡
-    # （核心卡 → 配套卡 → 本族随从，卡牌原始身材）。之后自己决定要不要沿着做下去。这些局单独记 place_started，
-    # 不算进 place_bot / 加强强度；GAE 在换卡处切断（Rollout.cut）。0 = 不用
     # 名次奖励表（"1:1,2:0.55,…,8:-1"；空 = 引擎自带的线性 1 → -1，每差一名 0.29）。
     # 为什么（第 18611 轮起）：线性奖励下第 1 名和第 2 名只差 0.29，和第 4 / 5 名一样——稳定进前四、不冒险就是最优，
     # 正好是现在的打法：考试（全强度高分阵容）平均 4.2–4.6 名，吃鸡率只有 1.3–2.2%（8 个人平均 12.5%），
     # 第 12–14 回合场面 0.52 / 0.39 / 0.26（高手 0.67 / 0.60 / 0.68）。要吃鸡就得后期场面压过所有人，
     # 这一段线性奖励几乎不给额外的分。表换掉的只是局末那一下（引擎给的线性部分扣掉、换成表里的值），违规扣分照旧
     place_reward: str = ""
-    seed_start_frac: float = 0.0
-    seed_start_turns: str = "4,5,6"
-    seed_start_n: int = 3
-    # 阵容练习局（rl/calibrate.ShopPractice，第 20020 轮起）：practice_frac 的机器人局开局定一套本局凑得成的 S / A，
-    # practice_turns 每回合招募开始时把酒馆里 practice_slots 个随从换成这套现在买得到的卡（核心 / 配套 / 本族），
-    # 场面、手牌、金币不动，买不买、做不做全看模型；这些局不再换成型场面，单独记名次和“做成这套没有”。0 = 不用
-    practice_frac: float = 0.0
-    practice_turns: str = "7,8,9,10,11,12,13"
-    practice_slots: int = 2
-    # 练习局里目标阵容那一项（target_bonus × Φ）局末少扣多少（第 20240 轮起）：1 = 不扣，局末凑成几成就白拿 target_bonus（v3 是 0.6）× 几成。
-    # 普通局照常扣回（shape_repay），所以只有练习局里“凑阵容”本身值分；练出来的买法拿到普通局里值不值，还是名次说了算
-    practice_keep_target: float = 0.0
-    # 照着凑（第 20350 轮起）：练习局第 practice_expert_from 回合起，ShopPractice.expert 按“照着这套凑”的规则给每个决策一个
-    # 建议动作（发现选这套的牌 → 打出这套的随从 → 买核心卡 → 按高手节奏升本 → 买配套 / 本族 → 场上满了卖最没用的 →
-    # 场上满了还有杂牌就刷新找核心卡），没有规则可用的决策不管。更新时这些决策加一项交叉熵 expert_coef × (-log π(建议))，
-    # 按整批的决策数平均。0 = 不用
-    expert_coef: float = 0.0
-    practice_expert_from: int = 7
     # 送牌课程（rl/calibrate.CardGifts，第 20800 轮起）：gift_frac 的机器人局里，gift_turns 每回合招募开始时按 gift_p 的机会
     # 往学习者手里放一张“高手抢着买（rl/card_value.json 挑中倍率 ≥ gift_min_lift）、模型从来不买”的牌；纯加金币的法术不送。
     # 这些局不再换成型场面，名次单独记（place_gift），不算进 place_bot / 加强强度。0 = 不用
@@ -319,7 +297,7 @@ class Config:
     # 考试守护（三天无人看着跑用）：每次加强局考试（eval_every 轮一次、eval_games 局、全强度高分阵容）记下名次，
     # 最近 guard_window 次的平均比历史最好低（名次数字大）guard_margin 以上、连续 guard_patience 次 →
     # 换回最好的那一版参数（runs/<run>/best.pt，优化器重新开始），guard_keys 里的模仿 / 老师系数 × guard_decay。
-    # 最多 guard_max 次，之后只记不改。平均变好时把当前参数存成 best.pt（影子模式 / 竞技场 / comptest 用它）。
+    # 最多 guard_max 次，之后只记不改。平均变好时把当前参数存成 best.pt（竞技场 / comptest 用它）。
     # 拿第 12000–16850 轮的日志模拟（6 次平均、0.3、连续 3 次）：会在第 12500（变乱）、14700 / 15100（老师 0.02）、
     # 16700（引擎奖励）四个地方出手，正好是那几段变差的时候
     guard: bool = False
@@ -460,14 +438,13 @@ class Rollout:
         self.cuts: set[int] = set()
         self.seed_cut: dict[tuple, int] = {}
 
-    def add(self, slots, f, c, m, a, logp, v, r0=None, exp=None):
+    def add(self, slots, f, c, m, a, logp, v, r0=None):
         k = len(slots)
         if not k:
             return
         slots = np.asarray(slots, dtype=np.int64)
-        exp = np.full(k, -1, dtype=np.int16) if exp is None else np.asarray(exp, dtype=np.int16)
         for name, x in (("slot", slots), ("ep", self.ep[slots]), ("f", np.asarray(f, dtype=np.float16)), ("c", c),
-                        ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v), ("exp", exp)):
+                        ("m", np.packbits(m, axis=1)), ("a", a), ("logp", logp), ("v", v)):
             self.parts[name].append(np.asarray(x))
         self.last[slots] = np.arange(self.n, self.n + k)
         self.r.extend([0.0] * k if r0 is None else [float(x) for x in r0])
@@ -578,23 +555,6 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.seed_places: list[int] = []
         self.seed_by: dict[str, list] = {}             # 成型阵容课程：阵容 → [(名次, 是不是加强局)]
         self.boost_floor: float | None = None          # 前期强度下限（boost_min_strength），从启动时的强度慢慢爬上去
-        self.starter = None
-        if cfg.seed_start_frac > 0 and cfg.games_bot:
-            from .calibrate import StartSeeder
-            st_turns = [int(x) for x in str(cfg.seed_start_turns).split(",") if x.strip()]
-            self.starter = StartSeeder(cfg.seed_start_frac, st_turns, seed=cfg.seed, n_plant=cfg.seed_start_n)
-            print(f"起步课程：{cfg.seed_start_frac:.0%} 的机器人局在第 {cfg.seed_start_turns} 回合把学习者场上最弱的 "
-                  f"{cfg.seed_start_n} 个随从换成一套本局凑得成的 S / A 阵容的起步卡（{len(self.starter.comps)} 套均匀抽）", flush=True)
-        self.start_places: list[int] = []
-        self.practice = None
-        if cfg.practice_frac > 0 and cfg.games_bot:
-            from .calibrate import ShopPractice
-            pr_turns = [int(x) for x in str(cfg.practice_turns).split(",") if x.strip()]
-            self.practice = ShopPractice(cfg.practice_frac, pr_turns, seed=cfg.seed, n_slots=cfg.practice_slots)
-            if cfg.expert_coef > 0:
-                print(f"照着凑：练习局第 {cfg.practice_expert_from} 回合起，按规则给建议动作，交叉熵系数 {cfg.expert_coef}", flush=True)
-            print(f"阵容练习局：{cfg.practice_frac:.0%} 的机器人局开局定一套本局凑得成的 S / A（{len(self.practice.comps)} 套均匀抽），"
-                  f"第 {cfg.practice_turns} 回合每回合把酒馆里 {cfg.practice_slots} 个随从换成这套的卡", flush=True)
         self.gifts = None
         if cfg.gift_frac > 0 and cfg.games_bot:
             from .calibrate import CardGifts
@@ -603,8 +563,6 @@ class Trainer(ShapingMixin, ImitationMixin):
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
                   f"高手抢着买、模型不买的牌（{len(self.gifts.pool)} 种）", flush=True)
         self.gift_places: list[int] = []
-        self.prac_places: list[int] = []
-        self.prac_by: dict[str, list] = {}             # 阵容练习局：阵容 → [(名次, 做成这套没有)]
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
         self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
@@ -671,10 +629,6 @@ class Trainer(ShapingMixin, ImitationMixin):
             self.booster.last_turn.clear()
         if name == "bot" and self.seeder is not None:
             self.seeder.plan.clear()
-        if name == "bot" and self.starter is not None:
-            self.starter.plan.clear()
-        if name == "bot" and self.practice is not None:
-            self.practice.plan.clear()
         if name == "bot" and self.gifts is not None:
             self.gifts.plan.clear()
         self.obs[name] = new.observe()
@@ -755,9 +709,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                         r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64), c[o:o + k])
                         r0 = self._combat_shape(env, off, idx, f[o:o + k], ak, r0)
                         r0 = self._grow_shape(env, off, idx, f[o:o + k], ak, r0)
-                        exp = self._expert_labels(name, idx, f[o:o + k], c[o:o + k], m[o:o + k], ak)
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
-                                         res[1][o:o + k], res[2][o:o + k], r0=r0, exp=exp)
+                                         res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
                         n_dec += k
                         self.n_noop += int(noop.sum())
@@ -780,34 +733,22 @@ class Trainer(ShapingMixin, ImitationMixin):
                         if dones[i] and self.place_tab is not None and 1 <= int(info["placement"][i]) <= 8:
                             pl = int(info["placement"][i])         # 局末名次奖励换成表里的值（违规扣分留着）
                             r_env += float(self.place_tab[pl]) - linear_place_reward(pl)
-                        kt = (float(cfg.practice_keep_target) if dones[i] and name == "bot" and self.practice is not None
-                              and self.practice.is_active(int(i)) else 0.0)
-                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i), keep_target=kt))
-                                         if dones[i] else 0.0)
+                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i))) if dones[i] else 0.0)
                         fcomp = self._final_comp(off + int(i)) if dones[i] else None
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i], fcomp)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
-                            started = name == "bot" and self.starter is not None and self.starter.finish(int(i))
-                            practiced = name == "bot" and self.practice is not None and self.practice.finish(int(i))
                             gifted = name == "bot" and self.gifts is not None and self.gifts.finish(int(i))
                             if gifted and not seeded:      # 送牌局：单独记名次
                                 self.gift_places.append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
                                 seeded = True              # 不算进 place_bot / 加强强度
-                            elif practiced and not seeded:   # 阵容练习局：单独记名次、做成练的那套没有
-                                self.prac_places.append(int(info["placement"][i]))
-                                self.prac_by.setdefault(practiced, []).append(
-                                    (int(info["placement"][i]), self._comp_name(fcomp) == practiced))
-                                if self.booster is not None:
-                                    self.booster.finish(int(i))
-                                seeded = True              # 不算进 place_bot / 加强强度
-                            elif seeded or started:        # 换过场面 / 起步卡的局单独记，不算进 place_bot / 加强强度
-                                (self.seed_places if seeded else self.start_places).append(int(info["placement"][i]))
+                            elif seeded:                   # 换过场面的局单独记，不算进 place_bot / 加强强度
+                                self.seed_places.append(int(info["placement"][i]))
                                 bst = self.booster.finish(int(i)) if self.booster is not None else None
-                                if seeded:                 # 拿着哪套成型阵容打、打了第几、对手是不是加强过（考试那轮汇总进日志）
-                                    self.seed_by.setdefault(str(seeded), []).append((int(info["placement"][i]), bool(bst)))
+                                # 拿着哪套成型阵容打、打了第几、对手是不是加强过（考试那轮汇总进日志）
+                                self.seed_by.setdefault(str(seeded), []).append((int(info["placement"][i]), bool(bst)))
                                 seeded = True
                             else:
                                 self.stats.append((name, int(info["placement"][i])))
@@ -831,15 +772,6 @@ class Trainer(ShapingMixin, ImitationMixin):
                         continue
                     self.t_boost += time.time() - tc
                 broke = False
-                if name == "bot" and self.practice is not None:   # 阵容练习局：换酒馆里的几张（场面不动，不切 GAE）
-                    try:
-                        if self.practice.apply(env, self.obs[name]["features"]):
-                            self.obs[name] = env.observe()
-                    except BaseException as ex:            # noqa: BLE001
-                        if not is_panic(ex):
-                            raise
-                        self._rebuild_env(ei, ex)
-                        continue
                 if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
                     try:
                         if self.gifts.apply(env, self.obs[name]["features"]):
@@ -849,15 +781,9 @@ class Trainer(ShapingMixin, ImitationMixin):
                             raise
                         self._rebuild_env(ei, ex)
                         continue
-                skip = None
-                if name == "bot":
-                    skip = set()
-                    if self.practice is not None:
-                        skip |= self.practice.active()
-                    if self.gifts is not None:
-                        skip |= self.gifts.active()
-                for sd in ((self.starter, self.seeder) if name == "bot" else ()):
-                    if sd is None:                         # 起步课程（换几张起步卡）、成型阵容课程（换整个场面）
+                skip = self.gifts.active() if name == "bot" and self.gifts is not None else None
+                for sd in ((self.seeder,) if name == "bot" else ()):
+                    if sd is None:                         # 成型阵容课程（换整个场面）
                         continue
                     try:
                         if sd.seed(env, self.obs[name]["features"], skip=skip):
@@ -968,14 +894,6 @@ class Trainer(ShapingMixin, ImitationMixin):
                             loss = loss + cfg.aux_comp_coef * aux_c
                             stats["aux_comp"].append(aux_c.item())
                             stats["comp_acc"].append(float((self.model.last_comp_logits[has_k].argmax(-1) == K[has_k]).float().mean()))
-                    if getattr(cfg, "expert_coef", 0) > 0 and "exp" in b:
-                        E = t(b["exp"][j].astype(np.int64), torch.long)
-                        has_e = E >= 0
-                        if has_e.any():                # 练习局“照着凑”：建议动作的交叉熵（按整批平均）
-                            ce = -logp_all[has_e].gather(1, E[has_e].unsqueeze(1)).squeeze(1)
-                            loss = loss + cfg.expert_coef * ce.sum() / len(j)
-                            stats["expert_ce"].append(ce.mean().item())
-                            stats["expert_agree"].append(float((logp_all[has_e].argmax(-1) == E[has_e]).float().mean()))
                     if use_anchor:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
                             ref = F.log_softmax(self.anchor(f, c, m, compressed=True)[0].float(), -1)
@@ -1458,7 +1376,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if not p.exists():
             print(f"没有老师模型 {cfg.teacher}（先运行 teacher.bat，约 15–25 分钟），这次不用", flush=True)
             return None
-        from .advisor import load_model
+        from .model import load_model
         try:
             t, info = load_model(p, str(self.dev))
         except Exception as ex:                        # noqa: BLE001
@@ -1475,29 +1393,6 @@ class Trainer(ShapingMixin, ImitationMixin):
         print(f"老师模型：{p}（{meta.get('created', '?')}，留出局命中率 {val.get('pro_top1', '?')}、交叉熵 {val.get('pro_nll', '?')}）；"
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
-
-    def _expert_labels(self, name, idx, f, c, m, ak):
-        """练习局里“照着凑”的建议动作（见 Config.expert_coef）：没有建议 / 不是练习局 = -1。顺便记跟着走的比例。"""
-        cfg = self.cfg
-        if name != "bot" or self.practice is None or cfg.expert_coef <= 0:
-            return None
-        exp = np.full(len(idx), -1, dtype=np.int16)
-        tt = np.rint(f[:, 0] * 20).astype(int)
-        for j in range(len(idx)):
-            g = int(idx[j])
-            if tt[j] >= cfg.practice_expert_from and self.practice.is_active(g):
-                exp[j] = self.practice.expert(g, c[j], m[j], f[j])
-        lab = exp >= 0
-        self.mix["exp_n"] += int(lab.sum())
-        self.mix["exp_follow"] += int((np.asarray(ak)[lab] == exp[lab]).sum())
-        return exp
-
-    def _comp_name(self, k) -> str:
-        """_final_comp 的序号 → 阵容名字（没成 / 不认识 → 空字符串）。"""
-        if k is None:
-            return ""
-        comps = ShapingMixin._target_tables(self)[1] or []
-        return comps[int(k)]["name"] if 0 <= int(k) < len(comps) else ""
 
     def _final_comp(self, s: int) -> int:
         """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""
@@ -1604,11 +1499,6 @@ class Trainer(ShapingMixin, ImitationMixin):
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3),
                        comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
-            if mx.get("exp_n"):                        # 练习局里有建议的决策、模型自己就选了建议的比例
-                rec["expert_follow"] = round(mx["exp_follow"] / mx["exp_n"], 3)
-                rec["expert_n"] = int(mx["exp_n"])
-            if mx.get("prac_fin_n"):                   # 练习局局末目标阵容做到几成（0–1）
-                rec["practice_tgt"] = round(mx["prac_fin_sum"] / mx["prac_fin_n"], 3)
             if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
                 rec["grow"] = round(mx["grow_sum"] / mx["grow_n"], 4)
                 rec["grow_n"] = int(mx["grow_n"])
@@ -1649,24 +1539,12 @@ class Trainer(ShapingMixin, ImitationMixin):
                     rec["boost_place_avg"] = self.adapt.mean()
                     self._apply_boost_floor(rec)
                 self.t_boost = 0.0
-            if self.starter is not None:
-                rec.update(self.starter.take_stats())
-                if self.start_places:
-                    rec["place_started"] = round(float(np.mean(self.start_places)), 3)
-                    rec["started_games"] = len(self.start_places)
-                self.start_places = []
             if self.gifts is not None:
                 rec.update(self.gifts.take_stats())
                 if self.gift_places:
                     rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
                     rec["gift_games"] = len(self.gift_places)
                 self.gift_places = []
-            if self.practice is not None:
-                rec.update(self.practice.take_stats())
-                if self.prac_places:
-                    rec["place_practice"] = round(float(np.mean(self.prac_places)), 3)
-                    rec["practice_games"] = len(self.prac_places)
-                self.prac_places = []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
@@ -1683,12 +1561,6 @@ class Trainer(ShapingMixin, ImitationMixin):
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
-                    if self.prac_by:                       # 阵容练习局：每套 [局数, 平均名次, 吃鸡率, 做成这套的比例]
-                        rec["practice_by_comp"] = {k: [len(v), round(float(np.mean([p for p, _ in v])), 2),
-                                                       round(float(np.mean([p == 1 for p, _ in v])), 3),
-                                                       round(float(np.mean([f for _, f in v])), 3)]
-                                                   for k, v in sorted(self.prac_by.items())}
-                        self.prac_by = {}
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
                         rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}
