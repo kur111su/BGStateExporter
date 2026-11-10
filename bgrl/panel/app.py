@@ -40,6 +40,16 @@ def fmt_dur(sec) -> str:
 
 # ---------------- 任务：按钮、状态、输出 ----------------
 
+@st.cache_data(ttl=1.5, show_spinner=False)
+def all_jobs() -> list[dict]:
+    """最近的任务。页面上十来块东西各自几秒刷新一次，都从这里拿：1.5 秒内只读一次磁盘。"""
+    return J.jobs(limit=60)
+
+
+def active_jobs() -> list[dict]:
+    return [j for j in all_jobs() if j["state"] in J.ACTIVE]
+
+
 def param_inputs(key: str) -> dict:
     """SPECS 里这个任务的参数 → 输入框，返回填的值。"""
     out = {}
@@ -56,28 +66,63 @@ def param_inputs(key: str) -> dict:
     return out
 
 
-def job_card(key: str) -> None:
-    """一个任务：说明、参数、开始按钮（要确认的先勾确认）、正在跑的话显示状态和停止按钮。"""
+# 卡片上的一句话说明（详细的在标题旁边的问号里）；每行 4 张卡片，同一行一样高
+SHORT = {
+    "train": "接着 runs\\v3 练。停止 = 这一轮跑完存盘再退出。",
+    "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
+    "board": "按最新日志重画 dashboard.md 和曲线图。",
+    "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
+    "comptest_seeded": "第 8–10 回合换成高手的成型场面，再自己打。",
+    "goldflow": "前几回合的钱花在哪，和 6500+ 高手比。",
+    "tavernbench": "论文的 368 题评测集，只用 CPU。",
+    "prodemos": "data\\firestone 的高分对局 → 决策样本。",
+    "cardvalue": "高手怎么挑卡：挑中倍率、关键卡、经济卡。",
+    "playbook": "各套目标阵容的配套卡。改过阵容表后跑一次。",
+    "arena_check": "打包 latest.pt，核对竞技场契约（不计分）。",
+    "arena_practice": "打一局练习，不计分。",
+    "arena_match": "打一局计分对局，打完就停。",
+    "arena_loop": "一局接一局打计分对局，直到点停止。",
+    "cleanup_preview": "只列出会删什么、各有多大，不删。",
+    "cleanup": "删旧训练目录、旧快照、去掉的功能留下的文件。",
+    "selftest": "跑一遍单元测试，几分钟。",
+    "info": "Python、PyTorch / 显卡、TavernGym 版本。",
+}
+PER_ROW = 4
+
+
+def card_height(key: str) -> int:
+    """卡片要多高：标题 + 一句说明 + 每个参数一行 + 确认框 + 按钮。同一行取最高的那张。"""
     spec = J.SPECS[key]
-    with st.container(border=True):
-        st.markdown(f"**{spec['title']}**")
-        st.caption(spec["desc"])
-        params = param_inputs(key)
-        mine = [j for j in J.active() if j["key"] == key]
+    h = 200
+    for kind, *_ in spec["params"].values():
+        h += 52 if kind == "bool" else 90
+    return h + (96 if spec.get("confirm") else 0)
+
+
+def job_card(key: str, height: int) -> None:
+    """一个任务：标题、一句说明、参数、开始按钮（要确认的先勾确认）；正在跑的话显示状态和停止按钮。"""
+    spec = J.SPECS[key]
+    with st.container(border=True, height=height):
+        mine = [j for j in active_jobs() if j["key"] == key]
+        state = f"　{ICON[mine[0]['state']]} {J.STATUS_ZH[mine[0]['state']]}" if mine else ""
+        st.markdown(f"**{spec['title']}**{state}", help=spec["desc"])
+        st.caption(SHORT.get(key, spec["desc"]))
         if mine:
             j = mine[0]
-            st.info(f"{ICON[j['state']]} {J.STATUS_ZH[j['state']]}（{fmt_time(j['started'] or j['created'])} 起）")
+            st.caption(f"{fmt_time(j['started'] or j['created'])} 起 · 输出在下面")
             asked = J.stop_requested(j["id"])
-            c1, c2 = st.columns(2)
-            if c1.button("停止", key=f"stop_{key}", disabled=bool(asked)):
+            if st.button("停止", key=f"stop_{key}", disabled=bool(asked)):
                 J.stop(j["id"])
-                st.rerun()
-            if asked and j["stop"] == "file" and c2.button("不等了，直接结束", key=f"kill_{key}"):
-                J.stop(j["id"], hard=True)
+                all_jobs.clear()
                 st.rerun()
             if asked:
                 st.caption("已请求停止" + ("：这一轮跑完、存好进度就退出（一般 1 分钟内）。" if j["stop"] == "file" else "。"))
+                if j["stop"] == "file" and st.button("不等了，直接结束", key=f"kill_{key}"):
+                    J.stop(j["id"], hard=True)
+                    all_jobs.clear()
+                    st.rerun()
             return
+        params = param_inputs(key)
         ok = True
         if spec.get("confirm"):
             ok = st.checkbox(f"我确认：{spec['confirm']}", key=f"ok_{key}")
@@ -86,24 +131,47 @@ def job_card(key: str) -> None:
                 j = J.start(key, params)
                 st.session_state["watch"] = j["id"]
                 st.toast(f"已开始：{spec['title']}")
+                all_jobs.clear()
                 st.rerun()
             except (RuntimeError, ValueError) as ex:
                 st.error(str(ex))
 
 
-@st.fragment(run_every=5)
-def cards(keys: list[str], per_row: int = 3) -> None:
-    for i in range(0, len(keys), per_row):
-        cols = st.columns(per_row)
-        for col, key in zip(cols, keys[i:i + per_row]):
+@st.fragment(run_every=6)
+def cards(keys: list[str]) -> None:
+    """一页的任务卡片：每行 PER_ROW 张、一样宽，同一行一样高。"""
+    for i in range(0, len(keys), PER_ROW):
+        row = keys[i:i + PER_ROW]
+        h = max(card_height(k) for k in row)
+        for col, key in zip(st.columns(PER_ROW), row):
             with col:
-                job_card(key)
+                job_card(key, h)
+
+
+@st.fragment(run_every=4)
+def tab_output(keys: list[str]) -> None:
+    """这一页最近跑的那个任务的输出（最后一段）；全部任务的输出在“任务输出”页。"""
+    js = [j for j in all_jobs()[:40] if j["key"] in keys]
+    if not js:
+        st.caption("这一页还没有跑过任务。点上面的“开始”，输出会显示在这里。")
+        return
+    j = next((x for x in js if x["state"] == "running"), js[0])
+    dur = ((j["ended"] or time.time()) - j["started"]) if j["started"] else None
+    st.markdown(f"**输出：{j['title']}**　{ICON[j['state']]} {J.STATUS_ZH[j['state']]} · 开始 {fmt_time(j['started'])} · 用时 {fmt_dur(dur)}")
+    with st.container(border=True, height=380):
+        st.code("\n".join((J.tail(j["id"], 12000) or "（还没有输出）").splitlines()[-60:]), language=None)
+
+
+def page(keys: list[str], note: str) -> None:
+    st.caption(note)
+    cards(keys)
+    tab_output(keys)
 
 
 @st.fragment(run_every=3)
 def status_bar() -> None:
     ts = J.train_state()
-    act = J.active()
+    act = active_jobs()
     tr = next((j for j in act if j["key"] == "train" and j["state"] == "running"), None)
     outside = tr is None and ts["age"] is not None and ts["age"] < 180
     c = st.columns(5)
@@ -120,7 +188,7 @@ def status_bar() -> None:
 @st.fragment(run_every=2)
 def output_view() -> None:
     """任务输出：默认看最近开始的那个，可以换。"""
-    js = J.jobs(limit=40)
+    js = all_jobs()[:40]
     if not js:
         st.caption("还没有跑过任务。")
         return
@@ -140,7 +208,7 @@ def output_view() -> None:
 
 
 def history() -> None:
-    js = J.jobs(limit=60)
+    js = all_jobs()[:60]
     if not js:
         st.caption("还没有跑过任务。")
         return
@@ -318,20 +386,19 @@ tabs = st.tabs(["📈 看板", "🏋️ 训练", "🧪 测试", "📦 数据", "
 with tabs[0]:
     dashboard()
 with tabs[1]:
-    st.caption("训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
-    cards(["train", "teacher", "board"])
+    page(["train", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
 with tabs[2]:
-    st.caption("测试一次跑一个，后点的排队；结果在“任务输出”里，阵容测试的汇总也会出现在看板上。")
-    cards(["comptest", "comptest_seeded", "goldflow", "tavernbench"])
+    page(["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。")
 with tabs[3]:
-    st.caption("从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。")
-    cards(["prodemos", "cardvalue", "playbook"])
+    page(["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。")
 with tabs[4]:
     st.caption("参赛密钥单独放在 bgrl\\arena\\key.txt，面板不显示也不记录它。模型只在竞技场的模拟对局里出动作。")
-    cards(["arena_check", "arena_practice", "arena_match", "arena_loop"], per_row=4)
+    cards(["arena_check", "arena_practice", "arena_match", "arena_loop"])
     arena_viewer()
+    with st.expander("竞技场任务的输出"):
+        tab_output(["arena_check", "arena_practice", "arena_match", "arena_loop"])
 with tabs[5]:
-    cards(["cleanup_preview", "cleanup", "selftest", "info"], per_row=2)
+    page(["cleanup_preview", "cleanup", "selftest", "info"], "清理前先点“看看会删什么”。训练在跑的时候，清理会排在训练后面。")
 with tabs[6]:
     output_view()
     with st.expander("任务记录"):
