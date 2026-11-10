@@ -4,7 +4,7 @@
 
 需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
 
-## 双击入口（14 个 .bat）
+## 双击入口（15 个 .bat）
 
 | 文件 | 做什么 | 结果在哪 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | `prodemos.bat` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） | `runs\pro_demos\`（只在本机） |
 | `teacher.bat` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从头学，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 15–25 分钟） | `runs\teacher.pt`（只在本机） |
 | `tavernbench.bat` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 | `reports\tavernbench\<模型>\report.txt` |
+| `cleanup.bat` | 清理旧文件（先关掉训练窗口）：删掉旧的训练目录（`runs\_bench`、`_smoke`、`main`、`v2`、`pro_demos_old`）、`runs\v3\snapshots` 里第 19000 轮以前的快照（每 1000 轮留一个；`cleanup.bat 20000` 换个界线）和已去掉的功能留下的文件。下次 `train.bat` 启动时自动把删掉的快照从对手库里去掉 | |
 | `arena.bat` | 竞技场：`check` 打包当前模型并核对竞技场契约、`practice` 一局不计分练习、`match` 一局计分对局。`check --ckpt …` 打包别的模型 | `arena\model_bundle\`、`arena\results\` |
 | `arena_practice.bat` | 双击 = `arena.bat practice` | `arena\results\` |
 | `arena_match.bat` | 双击 = `arena.bat match`（一局计分对局后停） | `arena\results\` |

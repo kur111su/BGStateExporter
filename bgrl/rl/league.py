@@ -183,6 +183,13 @@ class League:
     def exam_members(self) -> list[Member]:
         return [m for m in self.members if m.exam] or [m for m in self.members if m.name == "bot"]
 
+    def drop_missing(self) -> int:
+        """去掉快照文件已经不在的成员（手动清理过 snapshots 目录以后），返回去掉了几个。"""
+        keep = [m for m in self.members if not m.path or Path(m.path).exists()]
+        n = len(self.members) - len(keep)
+        self.members = keep
+        return n
+
     def to_json(self) -> dict:
         return {"members": [{"name": m.name, "path": m.path, "exam": m.exam, "dist": m.dist,
                              "profile": m.profile} for m in self.members]}

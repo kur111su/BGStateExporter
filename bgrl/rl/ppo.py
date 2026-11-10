@@ -1292,6 +1292,10 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.opt.load_state_dict(grow_opt_state(self.opt, ck["opt"]))
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
+        gone = self.league.drop_missing()
+        if gone:
+            print(f"对手库：{gone} 个快照的文件已经不在（清理过 snapshots），从对手库里去掉，还剩 "
+                  f"{sum(1 for m in self.league.members if m.name != 'bot')} 个", flush=True)
         self.tempo_t0 = ck.get("tempo_t0", self.tempo_t0)
         self.pro_scale = float(ck.get("pro_scale", self.pro_scale))
         tk = ck.get("teacher") or {}

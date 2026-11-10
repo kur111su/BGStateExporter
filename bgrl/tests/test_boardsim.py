@@ -787,6 +787,21 @@ def check_comptest_seeded():
     return len(sd["seeded"])
 
 
+def check_league_prune():
+    """清理过 snapshots 目录：文件不在的快照从对手库里去掉，机器人和还在的留着。"""
+    import tempfile
+    from rl.league import League
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "it00050.pt"
+        p.write_bytes(b"x")
+        lg = League({"turns": {}})
+        lg.add("bot")
+        lg.add("it00050", str(p))
+        lg.add("it00100", str(Path(d) / "it00100.pt"))
+        assert lg.drop_missing() == 1 and [m.name for m in lg.members] == ["bot", "it00050"]
+        assert lg.drop_missing() == 0
+
+
 def check_rollback_rebase():
     """连着第二次因为“熵比最近中位数高”回退：熵基准从头记，不再一直退到训练停（第 18651 轮换名次奖励表后的情形）。"""
     from collections import deque
@@ -831,6 +846,7 @@ def main() -> int:
     check_grow()
     check_gifts()
     check_comptest_seeded()
+    check_league_prune()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"
           f"布莱恩 + 南海卖艺者 下回合 2 块，经济奖励 {ec[0]}；手牌存款（无 / 有布莱恩）鲜血宝石 {ec[1]}、强固 {ec[2]}、发现 {ec[3]}；{dr}；目标阵容奖励 {tg}")

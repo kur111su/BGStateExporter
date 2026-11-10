@@ -25,7 +25,7 @@
 
 ```
 bgrl/                       全部代码（Python）
-  *.bat                     双击入口（setup、train、board、teacher、goldflow、comptest、comptest_seeded、prodemos、tavernbench、arena×5）
+  *.bat                     双击入口（setup、train、board、teacher、goldflow、comptest、comptest_seeded、prodemos、tavernbench、cleanup、arena×5）
   bg.py                     统一命令入口（python bg.py <命令>）
   paths.py                  路径
   configs/v3.json           训练配方（train.bat 的全部设置）
