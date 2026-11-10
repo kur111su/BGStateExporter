@@ -1,6 +1,6 @@
 """bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：双击 panel.bat，按钮跑的就是这些命令）。
 
-  panel     程序看板（网页）：训练看板 + 所有操作的按钮（panel/app.py；panel.bat 就是它）
+  panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；panel.bat 就是它；--web = 网页版 panel/app.py，备用）
   train     训练（面板里的“训练” = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
@@ -95,7 +95,11 @@ def main() -> int:
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd in TOOLS:
         return _run_tool(cmd, args)
-    if cmd == "panel":
+    if cmd == "panel" and "--web" not in args:         # 桌面程序（默认）
+        from panel.gui import main as gui_main
+        return gui_main()
+    if cmd == "panel":                                 # 网页版（Streamlit，备用）：bg.py panel --web
+        args = [x for x in args if x != "--web"]
         import socket
         import subprocess
         import threading
