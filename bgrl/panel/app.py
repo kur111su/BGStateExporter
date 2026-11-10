@@ -153,17 +153,56 @@ def history() -> None:
 
 # ---------------- 看板 ----------------
 
-@st.cache_data(show_spinner="读训练日志……")
+@st.cache_resource(show_spinner="读训练日志……", max_entries=1)
 def load_log(path: str, mtime: float, size: int):
+    """日志解析一次，结果原样留着用（不用 cache_data：它每次取都要把几万行复制一遍）。只读，别改返回的东西。"""
     return B.load(Path(path))
 
 
+MAX_POINTS = 240                         # 每条线最多画这么多个点：浏览器里十几张图、每张几万个点会卡
+
+
+def thin(pts: list) -> list:
+    """等间隔抽点，留最后一个。"""
+    if len(pts) <= MAX_POINTS:
+        return pts
+    k = -(-len(pts) // MAX_POINTS)
+    out = pts[::k]
+    return out if out[-1] == pts[-1] else out + [pts[-1]]
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def chart_frames(path: str, mtime: float, size: int, window: int):
+    """[(标题, 说明, 是不是全程, 画图用的表)]：滑动平均以后抽点。日志没变、范围没变就不重算。"""
+    import pandas as pd
+    rows, _ = load_log(path, mtime, size)
+    if not rows:
+        return []
+    it1 = rows[-1]["iter"]
+    lo = max(rows[0]["iter"], it1 - window)
+    out = []
+    for _f, title, keys, note, _lower, full in B.PANELS:
+        x0 = rows[0]["iter"] if full else lo
+        data = {}
+        for k, name in keys:
+            raw = [p for p in B.series(rows, k) if p[0] >= x0]
+            if raw:
+                sparse = k.startswith("eval_") or k.startswith("guard")
+                data[name] = dict(thin(B.smooth(raw, 6 if sparse else 25)))
+        if data:
+            # 稀疏的线（考试每 50 轮一个点）和密的线画在一张图里：中间按轮数连起来，不然断成一个个点
+            df = pd.DataFrame(data).sort_index().interpolate(method="index", limit_area="inside")
+            out.append((title, note, full, df))
+    return out
+
+
 def _log():
+    """(每轮的记录, 事件, 日志的 (修改时间, 大小))。"""
     p = RUN / "log.jsonl"
     if not p.exists():
-        return [], []
+        return [], [], (0.0, 0)
     s = p.stat()
-    return load_log(str(RUN), s.st_mtime, s.st_size)
+    return (*load_log(str(RUN), s.st_mtime, s.st_size), (s.st_mtime, s.st_size))
 
 
 def md_sections() -> dict[str, str]:
@@ -184,15 +223,14 @@ def md_sections() -> dict[str, str]:
     return out
 
 
-@st.fragment(run_every=60)
+@st.fragment(run_every=120)
 def dashboard() -> None:
-    rows, events = _log()
+    rows, events, stamp = _log()
     if not rows:
         st.info("还没有训练日志（runs\\v3\\log.jsonl）。到“训练”那一页点开始。")
         return
-    import pandas as pd
     it1 = rows[-1]["iter"]
-    st.caption(f"第 {it1} 轮 · 最后一轮 {rows[-1].get('time', '')} · 每分钟自动刷新")
+    st.caption(f"第 {it1} 轮 · 最后一轮 {rows[-1].get('time', '')} · 每 2 分钟自动刷新")
     st.subheader("关键指标")
     st.caption("大数字是最近 50 轮的平均（考试指标是最近 3 次考试）；下面的小字是和 500 轮前比的变化，绿色 = 变好。")
     shown = []
@@ -208,23 +246,15 @@ def dashboard() -> None:
             col.metric(name, f"{a:.{d}f}", delta=delta,
                        delta_color="off" if lower is None or not delta else ("inverse" if lower else "normal"))
     st.subheader("曲线")
+    st.caption("画的是滑动平均，每条线最多 240 个点。")
     window = st.select_slider("看最近多少轮", options=[500, 1000, 3000, 10000, 100000], value=3000,
                               format_func=lambda v: "全部" if v >= 100000 else f"{v} 轮", key="win")
-    lo = max(rows[0]["iter"], it1 - window)
-    panels = [p for p in B.PANELS if any(B.series(rows, k) for k, _ in p[2])]
-    for i in range(0, len(panels), 2):
-        for col, (_f, title, keys, note, _lower, full) in zip(st.columns(2), panels[i:i + 2]):
-            x0 = rows[0]["iter"] if full else lo
-            data = {}
-            for k, name in keys:
-                raw = [p for p in B.series(rows, k) if p[0] >= x0]
-                if raw:
-                    sparse = k.startswith("eval_") or k.startswith("guard")
-                    data[name] = dict(B.smooth(raw, 6 if sparse else 25))
+    frames = chart_frames(str(RUN), stamp[0], stamp[1], int(window))
+    for i in range(0, len(frames), 2):
+        for col, (title, note, full, df) in zip(st.columns(2), frames[i:i + 2]):
             with col:
                 st.markdown(f"**{title}**" + ("（全程）" if full else ""))
-                if data:
-                    st.line_chart(pd.DataFrame(data).sort_index(), height=260)
+                st.line_chart(df, height=260)
                 if note:
                     st.caption(note)
     sec = md_sections()
