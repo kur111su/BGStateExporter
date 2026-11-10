@@ -27,7 +27,7 @@
 | 测试 | TavernBench 评测 | `bg.py tavernbench` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 |
 | 数据 | 高分样本 | `bg.py prodemos data/firestone` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） |
 | 数据 | 卡牌价值 / 阵容配套卡 | `bg.py cardvalue` / `bg.py playbook` | 高手怎么挑卡 → `rl/card_value.json`；目标阵容的配套卡 → `rl/target_comps.json` |
-| 竞技场 | 打包并检查 / 练习局 / 计分局 / 连续计分局 / 对局查看器 | `bg.py arena check / practice / match / loop [--update] / view` | 打包当前模型并核对竞技场契约；一局不计分练习；一局计分对局；一局接一局打计分对局（勾“自动换新模型”= 训练出的模型比打包的新 2 小时以上就重新打包）；查看器 http://127.0.0.1:8767/。计分的两个按钮要先勾确认。结果在 `arena\results\` |
+| 竞技场 | 打包并检查 / 练习局 / 计分局 / 连续计分局；下面直接嵌着对局查看器 | `bg.py arena check / practice / match / loop [--update]`（查看器单独开：`bg.py arena view`） | 打包当前模型并核对竞技场契约；一局不计分练习；一局计分对局；一局接一局打计分对局（勾“自动换新模型”= 训练出的模型比打包的新 2 小时以上就重新打包）。对局查看器（战绩、每局每一步）跟着面板自动启动，就显示在这一页下面。计分的两个按钮要先勾确认。结果在 `arena\results\` |
 | 维护 | 看看会删什么 / 清理旧文件 | `bg.py cleanup [--keep-from N] [--yes]` | 旧的训练目录、第 N 轮以前的快照（每 1000 轮留一个）、去掉的功能留下的文件（包括旧的 .bat）。先看再删，删之前要勾确认；训练在跑时排在训练后面 |
 | 维护 | 自检 / 环境信息 | `bg.py test` / `bg.py info` | 单元测试；Python、PyTorch、TavernGym 版本 |
 | 任务输出 | — | — | 选一个任务看它的实时输出；任务记录（什么时候跑的、结果） |

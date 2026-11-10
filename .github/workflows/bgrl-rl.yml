@@ -64,5 +64,5 @@ jobs:
           cd bgrl
           python -X utf8 -c "from streamlit.testing.v1 import AppTest; at = AppTest.from_file('panel/app.py', default_timeout=120).run(); assert not at.exception, at.exception; print('empty OK', len(at.metric))"
           mkdir -p runs/v3 && cp runs/_smoke/log.jsonl runs/_smoke/dashboard.md runs/v3/
-          python -X utf8 -c "from streamlit.testing.v1 import AppTest; at = AppTest.from_file('panel/app.py', default_timeout=120).run(); assert not at.exception, at.exception; assert len(at.metric) > 5, len(at.metric); print('with log OK', len(at.metric))"
+          python -X utf8 -c "from streamlit.testing.v1 import AppTest; at = AppTest.from_file('panel/app.py', default_timeout=120).run(); assert not at.exception, at.exception; assert len(at.metric) > 5, len(at.metric); print('with log OK', len(at.metric)); import urllib.request; assert b'<html' in urllib.request.urlopen('http://127.0.0.1:8767/', timeout=10).read().lower(); print('viewer OK')"
           python -X utf8 bg.py cleanup

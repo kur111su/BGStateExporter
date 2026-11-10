@@ -269,6 +269,47 @@ def dashboard() -> None:
                      hide_index=True)
 
 
+# ---------------- 竞技场对局查看器（嵌在竞技场那一页里） ----------------
+
+VIEWER_PORT = 8767
+
+
+@st.cache_resource(show_spinner=False)
+def viewer_server() -> str:
+    """在面板进程里起 arena/viewer.py 的本机服务（只起一次，跟着面板开关）。端口已经有人在用（比如另外开着的查看器）
+    就直接用那个。返回 "" = 好了，否则是出错的说明。"""
+    import importlib.util
+    import socket
+    import threading
+    from http.server import ThreadingHTTPServer
+    with socket.socket() as sk:
+        sk.settimeout(0.5)
+        if sk.connect_ex(("127.0.0.1", VIEWER_PORT)) == 0:
+            return ""
+    try:
+        spec = importlib.util.spec_from_file_location("arena_viewer", ROOT / "arena" / "viewer.py")
+        V = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(V)
+        srv = ThreadingHTTPServer(("127.0.0.1", VIEWER_PORT), V.H)
+    except Exception as ex:                                # noqa: BLE001 —— 查看器起不来不影响面板其它部分
+        return f"{type(ex).__name__}: {ex}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    threading.Thread(target=V.sync, daemon=True).start()   # 启动时同步一次公开战绩（只读公开接口，不用密钥）
+    return ""
+
+
+def arena_viewer() -> None:
+    st.subheader("对局查看器")
+    err = viewer_server()
+    if err:
+        st.warning(f"查看器没起来：{err}")
+        return
+    url = f"http://127.0.0.1:{VIEWER_PORT}/"
+    st.caption(f"战绩、名次分布、每一局每一步的选择；正在打的对局每几秒刷新。也可以单独打开：{url}")
+    import streamlit.components.v1 as components
+    components.iframe(url, height=900, scrolling=True)
+
+
 # ---------------- 页面 ----------------
 
 st.title("酒馆战旗 AI 面板")
@@ -287,9 +328,8 @@ with tabs[3]:
     cards(["prodemos", "cardvalue", "playbook"])
 with tabs[4]:
     st.caption("参赛密钥单独放在 bgrl\\arena\\key.txt，面板不显示也不记录它。模型只在竞技场的模拟对局里出动作。")
-    cards(["arena_check", "arena_practice", "arena_match", "arena_loop", "arena_view"])
-    if any(j["key"] == "arena_view" and j["state"] == "running" for j in J.active()):
-        st.link_button("打开对局查看器", "http://127.0.0.1:8767/")
+    cards(["arena_check", "arena_practice", "arena_match", "arena_loop"], per_row=4)
+    arena_viewer()
 with tabs[5]:
     cards(["cleanup_preview", "cleanup", "selftest", "info"], per_row=2)
 with tabs[6]:
