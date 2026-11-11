@@ -39,6 +39,8 @@ def check_specs():
     assert J.SPECS["comptest"]["build"](J.check_params("comptest", {"games": 256, "ckpt": "best"}))[0][4:] == \
         ["goldflow", "--boosted", "--games", "256", "--ckpt", "runs/v3/best.pt"]
     assert J.SPECS["arena_loop"]["build"]({"update": True})[0][4:] == ["arena", "loop", "--update"]
+    tr, rs = J.SPECS["train"]["build"]({"threads": 8})[0], J.SPECS["train_restore"]["build"]({"threads": 8})[0]
+    assert rs == tr + ["--restore", "runs/v3/best.pt"] and "--restore" not in tr and J.SPECS["train_restore"].get("confirm")
     assert J.SPECS["arena_match"].get("confirm") and J.SPECS["arena_loop"].get("confirm") and J.SPECS["cleanup"].get("confirm")
     for bad in ({"games": 5}, {"games": "64; rm -rf"}, {"games": True}, {"ckpt": "../x.pt"}, {"cmd": "x"}):
         try:

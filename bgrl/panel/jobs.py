@@ -50,6 +50,11 @@ _CKPT = ("choice", "latest", ("latest", "best"))
 SPECS: dict[str, dict] = {
     "train": dict(title="训练", group="train", stop="file", params={"threads": ("int", os.cpu_count() or 4, 1, 256)},
                   desc="接着 runs\\v3 练（configs\\v3.json）。停止 = 这一轮跑完、存好进度再退出。", build=_train),
+    "train_restore": dict(title="退回 best.pt 再练", group="train", stop="file",
+                          params={"threads": ("int", os.cpu_count() or 4, 1, 256)},
+                          confirm="模型退回考试成绩最好的那一版（runs\\v3\\best.pt），那之后练的丢掉（日志和快照还在）。",
+                          desc="接着 runs\\v3 的日志练，但模型换回 best.pt、优化器重新开始。停了以后再点普通的“训练”接着练，不用再点这个。",
+                          build=lambda p: [_train(p)[0] + ["--restore", "runs/v3/best.pt"]]),
     "teacher": dict(title="老师模型", group="train", params={},
                     desc="只模仿高分示范，挑留出局上最好的一版 → runs\\teacher.pt。约 15–25 分钟，和训练不能同时跑。",
                     build=lambda p: [_bg("teacher")]),

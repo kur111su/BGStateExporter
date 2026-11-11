@@ -69,6 +69,7 @@ def param_inputs(key: str) -> dict:
 # 卡片上的一句话说明（详细的在标题旁边的问号里）；每行 4 张卡片，同一行一样高
 SHORT = {
     "train": "接着 runs\\v3 练。停止 = 这一轮跑完存盘再退出。",
+    "train_restore": "模型退回考试最好的那一版，从那里接着练。",
     "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
     "board": "按最新日志重画 dashboard.md 和曲线图。",
     "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
@@ -386,7 +387,7 @@ tabs = st.tabs(["📈 看板", "🏋️ 训练", "🧪 测试", "📦 数据", "
 with tabs[0]:
     dashboard()
 with tabs[1]:
-    page(["train", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
+    page(["train", "train_restore", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
 with tabs[2]:
     page(["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。")
 with tabs[3]:
