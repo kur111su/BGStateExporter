@@ -993,7 +993,7 @@ class ArenaPage(QtWidgets.QWidget):
             items.append(("纯 AI Elo", f"{st['elo']:.1f}", f"{st['elo_n']} 局"))
         items.append(("当前模型", str(self.sum.get("model") or "-"), ""))
         for name, v, sub in items:
-            self.tiles.addWidget(Tile(name, v, sub))
+            self.tiles.addWidget(Tile(name, v, sub or "\u3000"))     # 这一排都留小字那一行，数字才对齐
         self.dist.clear()
         self.dist.addItem(pg.BarGraphItem(x=list(range(1, 9)), height=st["dist"], width=0.6, brush="#2f6fdf", pen=None))
         self.dist.getAxis("bottom").setTicks([[(p, f"#{p}") for p in range(1, 9)]])
