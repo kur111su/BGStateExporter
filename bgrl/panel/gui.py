@@ -103,8 +103,11 @@ def label(text="", name="", wrap=False) -> QtWidgets.QLabel:
 def clear_layout(lay) -> None:
     while lay.count():
         it = lay.takeAt(0)
-        if it.widget():
-            it.widget().deleteLater()
+        if it.widget():                                    # 马上摘下来藏起来（deleteLater 要等事件循环，旧的会叠在新的上面画）
+            w = it.widget()
+            w.hide()
+            w.setParent(None)
+            w.deleteLater()
         elif it.layout():
             clear_layout(it.layout())
 
@@ -594,8 +597,9 @@ class CardChip(QtWidgets.QFrame):
         w, h = (78, 50) if small else (104, 66)
         self.setFixedSize(w, h)
         gold = c.get("golden")
-        self.setStyleSheet(f"QFrame{{background:{'#fff7dc' if gold else '#ffffff'};border:{2 if gold else 1}px solid "
-                           f"{'#d4a017' if gold else '#d6d3cc'};border-radius:6px}} QLabel{{border:none;background:transparent}}")
+        self.setObjectName("chip")
+        self.setStyleSheet(f"#chip{{background:{'#fff7dc' if gold else '#ffffff'};border:{2 if gold else 1}px solid "
+                           f"{'#d4a017' if gold else '#d6d3cc'};border-radius:6px}}")
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(5, 3, 5, 3)
         lay.setSpacing(0)
@@ -675,7 +679,8 @@ class StandRow(QtWidgets.QFrame):
     def __init__(self, r: tuple, cards: list[dict]):
         super().__init__()
         place, who, hero, tier, _txt, mine = r
-        self.setStyleSheet("QFrame{background:%s;border-radius:6px} QLabel{background:transparent}" % ("#e2ebfb" if mine else "transparent"))
+        self.setObjectName("stand")
+        self.setStyleSheet("#stand{background:%s;border-radius:6px}" % ("#e2ebfb" if mine else "transparent"))
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(10)
