@@ -442,10 +442,11 @@ class Tile(QtWidgets.QFrame):
         lay.setSpacing(0)
         lay.addWidget(label(name, "mute"))
         lay.addWidget(label(value, "big"))
-        s = label(sub, "mute")
-        if color:
-            s.setStyleSheet(f"color: {color};")
-        lay.addWidget(s)
+        if sub:                                            # 没有小字就不留那一行
+            s = label(sub, "mute")
+            if color:
+                s.setStyleSheet(f"color: {color};")
+            lay.addWidget(s)
 
 
 class DashboardPage(QtWidgets.QScrollArea):
@@ -668,9 +669,9 @@ class MatchRow(QtWidgets.QWidget):
                 b = QtWidgets.QLabel(t)
                 b.setStyleSheet("color:#6b6b70;font-size:11px")
                 txt.addWidget(b)
-        if p["low"]:
-            c = QtWidgets.QLabel(p["low"])
-            c.setStyleSheet(f"color:{'#1f8a4c' if '+' in p['low'] else '#c23b5b' if 'Elo' in p['low'] else '#6b6b70'};font-size:11px")
+        for part in (p["low"].split(" · ") if p["low"] else []):   # Elo、预计名次、无逐步记录：各占一行，窄列里不被截断
+            c = QtWidgets.QLabel(part)
+            c.setStyleSheet(f"color:{'#1f8a4c' if 'Elo' in part and '+' in part else '#c23b5b' if 'Elo' in part else '#6b6b70'};font-size:11px")
             txt.addWidget(c)
         lay.addLayout(txt, 1)
 
@@ -812,6 +813,8 @@ class ArenaPage(QtWidgets.QWidget):
         self.steps_lbl = label("操作记录", "h2")
         sh.addWidget(self.steps_lbl, 1)
         self.turns = QtWidgets.QComboBox()                    # 看哪一回合
+        self.turns.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        self.turns.setMinimumContentsLength(6)
         self.turns.currentIndexChanged.connect(self.pick_turn)
         sh.addWidget(self.turns)
         sl.addLayout(sh)
