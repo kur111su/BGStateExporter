@@ -56,6 +56,7 @@ def run(jid: str, root: Path | None = None, poll: float = 1.0) -> int:
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     kw = {"creationflags": 0x00000200} if os.name == "nt" else {"start_new_session": True}
     rc, stopped, asked = 0, False, False
+    stop_file = Path(j["stop_file"]) if j.get("stop_file") else J.STOP_FILE
     with log.open("ab") as out:
         for step in j["steps"]:
             out.write((f"$ {' '.join(Path(step[0]).name if k == 0 else str(a) for k, a in enumerate(step))}\n").encode("utf-8"))
@@ -73,10 +74,10 @@ def run(jid: str, root: Path | None = None, poll: float = 1.0) -> int:
                 if how:
                     stopped = True
                     if j["stop"] == "file" and how != "hard":
-                        if not asked:                      # 训练：放一个 STOP 文件，它这一轮跑完存盘退出
-                            J.STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
-                            J.STOP_FILE.write_text("panel", encoding="utf-8")
-                            out.write("已请求停止：这一轮跑完、存好进度就退出……\n".encode("utf-8"))
+                        if not asked:                      # 放一个 STOP 文件：训练这一轮跑完存盘退出 / 连续计分局这一局打完就停
+                            stop_file.parent.mkdir(parents=True, exist_ok=True)
+                            stop_file.write_text("panel", encoding="utf-8")
+                            out.write("已请求停止：手上这一轮 / 这一局做完就退出……\n".encode("utf-8"))
                             out.flush()
                             asked = True
                     else:
@@ -90,7 +91,7 @@ def run(jid: str, root: Path | None = None, poll: float = 1.0) -> int:
             if rc != 0 or stopped:
                 break
     if asked:
-        J.STOP_FILE.unlink(missing_ok=True)
+        stop_file.unlink(missing_ok=True)
     save(status="stopped" if stopped else ("done" if rc == 0 else "failed"), rc=rc, ended=time.time())
     touch()
     return 0

@@ -170,6 +170,23 @@ def main() -> int:
         assert ar.view["note"] and not ar.curve.isVisible()
         ar.follow_btn.click()
         assert ar.follow and ar.sel == "live001"
+        out_view = win.pages[1].out                                           # 输出：只接新增的，选区和滚动位置不动
+        log = J._path(next(j["id"] for j in J.jobs(d / "jobs") if j["key"] == "train"), "log", d / "jobs")
+        win.nav.setCurrentRow(1)
+        win.tick()
+        n0 = out_view.document().blockCount()
+        cur = out_view.textCursor()
+        cur.setPosition(0)
+        cur.setPosition(30, G.QtGui.QTextCursor.KeepAnchor)
+        out_view.setTextCursor(cur)
+        picked = out_view.textCursor().selectedText()
+        out_view.verticalScrollBar().setValue(0)
+        with log.open("a", encoding="utf-8") as f:
+            f.write("新的一行：第 22041 轮\n")
+        win.tick()
+        assert out_view.document().blockCount() == n0 + 1 and "第 22041 轮" in out_view.toPlainText()
+        assert out_view.textCursor().selectedText() == picked and len(picked) == 30 and out_view.verticalScrollBar().value() == 0
+        win._quiet_close = True
         win.close()
     if errors:
         print("\n".join(errors))

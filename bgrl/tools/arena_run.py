@@ -165,8 +165,20 @@ def _newer_model() -> bool:
     return a.exists() and (not b.exists() or a.stat().st_mtime > b.stat().st_mtime + 7200)
 
 
+STOP = ARENA / "STOP"                    # 面板的“停止”：放这个文件，手上这一局打完就不打下一局了
+
+
+def _stop_asked() -> bool:
+    if STOP.exists():
+        STOP.unlink(missing_ok=True)
+        print("收到停止请求：这一局已经打完，不再打下一局。", flush=True)
+        return True
+    return False
+
+
 def loop(update: bool, max_games: int = 0, wait: float = 60.0) -> int:
     n, fails = 0, 0
+    STOP.unlink(missing_ok=True)                           # 上次留下的停止请求不算
     while not max_games or n < max_games:
         if update and _newer_model():
             print("训练出了更新的模型，重新打包 ……", flush=True)
@@ -174,6 +186,8 @@ def loop(update: bool, max_games: int = 0, wait: float = 60.0) -> int:
         n += 1
         print(f"\n===== 第 {n} 局计分对局（{time.strftime('%Y-%m-%d %H:%M:%S')}）=====", flush=True)
         rc = play(True)
+        if _stop_asked():
+            return 0
         if rc == 0:
             fails = 0
             continue
@@ -184,7 +198,10 @@ def loop(update: bool, max_games: int = 0, wait: float = 60.0) -> int:
             print("连续 3 次失败，停下。把这段输出发给我。")
             return 1
         print(f"连接器出错停了，{wait:.0f} 秒后再试 ……", flush=True)
-        time.sleep(wait)
+        for _ in range(int(wait)):                         # 等的时候也看停止请求
+            if _stop_asked():
+                return 0
+            time.sleep(1)
     return 0
 
 

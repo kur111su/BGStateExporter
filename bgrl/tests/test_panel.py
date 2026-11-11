@@ -102,6 +102,16 @@ def check_stop(root: Path):
         jj = J.load(j["id"], root)
         assert jj["status"] == "stopped" and jj["rc"] == 0 and "saved" in J.tail(j["id"], root=root), jj
         assert not J.STOP_FILE.exists()                                     # 用完收走，下次启动训练不会被它停掉
+        j = J.start("train", steps=[[PY, "-c", code, str(root / "arena" / "STOP")]], root=root, spawn=False)
+        j.update(stop="file", stop_file=str(root / "arena" / "STOP"))        # 连续计分局：自己的停止文件
+        J._write(J._path(j["id"], root=root), j)
+        th = threading.Thread(target=R.run, args=(j["id"], root, 0.1))
+        th.start()
+        _wait(root, j["id"], ("running",))
+        J.stop(j["id"], root=root)
+        th.join(30)
+        assert J.load(j["id"], root)["status"] == "stopped" and "saved" in J.tail(j["id"], root=root)
+        assert not (root / "arena" / "STOP").exists() and not J.STOP_FILE.exists()
     finally:
         J.STOP_FILE = old
 
@@ -163,6 +173,29 @@ def check_arena_key(tmp: Path):
         A.ARENA = old
         if old_env is not None:
             os.environ["ARENA_API_KEY"] = old_env
+
+
+def check_arena_loop_stop(tmp: Path):
+    """连续计分局：点停止 = 这一局打完就不打下一局（不中途退出对局）。"""
+    from tools import arena_run as A
+    old = (A.STOP, A.play)
+    A.STOP = tmp / "loop" / "STOP"
+    A.STOP.parent.mkdir()
+    played = []
+
+    def play(rated):
+        played.append(rated)
+        if len(played) == 2:
+            A.STOP.write_text("panel", encoding="utf-8")                    # 第 2 局打着的时候点了停止
+        return 0
+    A.play = play
+    try:
+        A.STOP.write_text("stale", encoding="utf-8")                        # 上次留下的不算
+        assert A.loop(False, max_games=5) == 0 and played == [True, True] and not A.STOP.exists()
+        assert J.SPECS["arena_loop"]["stop"] == "file" and J.SPECS["arena_loop"]["stop_file"].endswith("STOP")
+        assert J.SPECS["arena_match"].get("stop", "kill") == "kill"
+    finally:
+        A.STOP, A.play = old
 
 
 def check_arena_summary(tmp: Path):
@@ -250,6 +283,7 @@ def main() -> int:
         check_cleanup(d)
         check_arena_key(d)
         check_arena_summary(d)
+        check_arena_loop_stop(d)
         check_data(d)
     print("panel OK：任务排队 / 停止 / 中断、清理、竞技场密钥")
     return 0

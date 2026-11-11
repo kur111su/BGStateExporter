@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIR = ROOT / "reports" / "panel" / "jobs"
 RUN = ROOT / "runs" / "v3"
 STOP_FILE = RUN / "STOP"                 # 训练每轮结束看一眼：有这个文件就存盘退出（rl/ppo.Trainer.train）
+ARENA_STOP = ROOT / "arena" / "STOP"     # 连续计分局每局打完看一眼：有这个文件就不打下一局（tools/arena_run.loop）
 BEAT_DEAD = 30.0                         # 心跳超过这么多秒没更新：跑任务的进程已经不在了
 ACTIVE = ("queued", "running")
 STATUS_ZH = {"queued": "排队中", "running": "运行中", "done": "完成", "failed": "失败", "stopped": "已停止",
@@ -90,6 +91,7 @@ SPECS: dict[str, dict] = {
     "arena_match": dict(title="竞技场：计分局（1 局）", group="arena", params={}, confirm="这一局计入竞技场排名。",
                         desc="打一局计分对局，打完就停。", build=_arena("match")),
     "arena_loop": dict(title="竞技场：连续计分局", group="arena", params={"update": ("bool", False)},
+                       stop="file", stop_file=str(ARENA_STOP),
                        confirm="会一直打计分对局，直到你点停止或者连续失败 3 次；每一局都计入竞技场排名。",
                        desc="一局接一局打计分对局。勾上“自动换新模型”：训练出的模型比打包的新 2 小时以上就重新打包。",
                        build=_arena("loop")),
@@ -195,6 +197,7 @@ def start(key: str, params: dict | None = None, root: Path | None = None, steps:
     jid = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}-{key.replace(':', '_')}"
     j = {"id": jid, "key": key, "title": spec["title"], "group": spec["group"], "params": p,
          "steps": steps if steps is not None else spec["build"](p), "stop": spec.get("stop", "kill"),
+         "stop_file": spec.get("stop_file"),
          "status": "queued", "created": now, "started": None, "ended": None, "rc": None, "pid": None}
     _write(_path(jid, root=root), j)
     _path(jid, "beat", root).write_text("", encoding="utf-8")
@@ -206,7 +209,8 @@ def start(key: str, params: dict | None = None, root: Path | None = None, steps:
 
 
 def stop(jid: str, hard: bool = False, root: Path | None = None) -> None:
-    """请求停止。训练（stop = file）先让它自己存盘退出；hard = 直接结束进程。排队中的直接取消。"""
+    """请求停止。stop = file 的任务先让它自己收尾（训练这一轮跑完存盘、连续计分局这一局打完）；hard = 直接结束进程。
+    排队中的直接取消。"""
     _path(jid, "stop", root).write_text("hard" if hard else "soft", encoding="utf-8")
 
 

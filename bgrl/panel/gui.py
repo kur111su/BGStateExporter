@@ -109,15 +109,72 @@ def clear_layout(lay) -> None:
             clear_layout(it.layout())
 
 
-def set_log_text(edit: QtWidgets.QPlainTextEdit, text: str) -> None:
-    """换输出：内容没变不动；原来在最底下就跟着滚到底。"""
-    if edit.toPlainText() == text:
-        return
-    bar = edit.verticalScrollBar()
-    bottom = bar.value() >= bar.maximum() - 4
-    edit.setPlainText(text)
-    if bottom:
-        bar.setValue(bar.maximum())
+class LogView(QtWidgets.QPlainTextEdit):
+    """任务输出。只把新增的内容接在后面（不整段重写）：选中的文字、滚动位置都不动，能正常选中、Ctrl+C 复制；
+    本来停在最底下才跟着往下滚。右键菜单里有复制 / 全选。"""
+
+    def __init__(self, tail_bytes: int = 200_000):
+        super().__init__()
+        self.setReadOnly(True)
+        self.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.setMaximumBlockCount(20000)
+        self.tail_bytes = tail_bytes
+        self.path, self.pos, self.note = None, 0, None
+
+    def show_note(self, text: str) -> None:
+        """没有任务可看时显示一句说明。"""
+        if self.note != text:
+            self.path, self.pos, self.note = None, 0, text
+            self.setPlainText(text)
+
+    def follow(self, path) -> None:
+        """跟着这个输出文件：换了文件就从头（最后 tail_bytes）读，否则只读新增的部分。"""
+        path = Path(path)
+        if path != self.path:
+            self.path, self.pos, self.note = path, 0, None
+            self.clear()
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            self.pos = max(0, size - self.tail_bytes)
+            self._read(skip_partial=self.pos > 0, to_end=True)
+            return
+        self._read()
+
+    def _read(self, skip_partial: bool = False, to_end: bool = False) -> None:
+        try:
+            with self.path.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size < self.pos:                        # 文件变短了（重新开始写）：从头读
+                    self.pos = 0
+                    self.clear()
+                if size == self.pos:
+                    return
+                f.seek(self.pos)
+                data = f.read(size - self.pos)
+        except OSError:
+            return
+        cut = len(data)
+        while cut > 0 and cut > len(data) - 4 and (data[cut - 1] & 0xC0) == 0x80:      # 别把一个汉字从中间截开
+            cut -= 1
+        if 0 < cut <= len(data) and (data[cut - 1] & 0xC0) == 0xC0:
+            cut -= 1
+        data = data[:cut] if cut else data
+        self.pos += len(data)
+        text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        if skip_partial:
+            text = text.split("\n", 1)[-1]
+        if not text:
+            return
+        bar = self.verticalScrollBar()
+        at_bottom = to_end or bar.value() >= bar.maximum() - 4
+        keep = bar.value()
+        cur = QtGui.QTextCursor(self.document())           # 另开一个光标往末尾接：不动用户的选区
+        cur.movePosition(QtGui.QTextCursor.End)
+        cur.insertText(text)
+        bar.setValue(bar.maximum() if at_bottom else keep)
 
 
 def fill_table(tb: QtWidgets.QTableWidget, head: list[str], rows: list[list], bold_rows=()) -> None:
@@ -304,8 +361,7 @@ class JobsPage(QtWidgets.QWidget):
         lay.addLayout(row)
         self.head = label("", "h2")
         lay.addWidget(self.head)
-        self.out = QtWidgets.QPlainTextEdit()
-        self.out.setReadOnly(True)
+        self.out = LogView()
         lay.addWidget(self.out, 1)
 
     def refresh(self, jobs: list[dict]) -> None:
@@ -315,12 +371,12 @@ class JobsPage(QtWidgets.QWidget):
         mine = [j for j in jobs if j["key"] in self.keys]
         if not mine:
             self.head.setText("输出")
-            set_log_text(self.out, "这一页还没有跑过任务。点上面的“开始”，输出会显示在这里。")
+            self.out.show_note("这一页还没有跑过任务。点上面的“开始”，输出会显示在这里。")
             return
         j = next((x for x in mine if x["state"] == "running"), mine[0])
         dur = ((j["ended"] or time.time()) - j["started"]) if j["started"] else None
         self.head.setText(f"输出：{j['title']}　{ICON[j['state']]} {J.STATUS_ZH[j['state']]} · 开始 {fmt_time(j['started'])} · 用时 {fmt_dur(dur)}")
-        set_log_text(self.out, J.tail(j["id"], 60000, self.win.jobs_root) or "（还没有输出）")
+        self.out.follow(J._path(j["id"], "log", self.win.jobs_root))
 
 
 class OutputPage(QtWidgets.QWidget):
@@ -337,8 +393,7 @@ class OutputPage(QtWidgets.QWidget):
         lay.addWidget(self.pick)
         self.info = label("", "mute")
         lay.addWidget(self.info)
-        self.out = QtWidgets.QPlainTextEdit()
-        self.out.setReadOnly(True)
+        self.out = LogView(2_000_000)
         lay.addWidget(self.out, 2)
         lay.addWidget(label("任务记录", "h2"))
         self.table = make_table(8)
@@ -359,12 +414,12 @@ class OutputPage(QtWidgets.QWidget):
         j = next((x for x in jobs if x["id"] == want), None)
         if j is None:
             self.info.setText("还没有跑过任务。")
-            set_log_text(self.out, "")
+            self.out.show_note("")
         else:
             dur = ((j["ended"] or time.time()) - j["started"]) if j["started"] else None
             self.info.setText(f"状态：{J.STATUS_ZH[j['state']]} · 开始 {fmt_time(j['started'])} · 用时 {fmt_dur(dur)}"
                               + (f" · 退出码 {j['rc']}" if j["rc"] not in (None, 0) else ""))
-            set_log_text(self.out, J.tail(j["id"], 200000, self.win.jobs_root) or "（还没有输出）")
+            self.out.follow(J._path(j["id"], "log", self.win.jobs_root))
         fill_table(self.table, ["任务", "状态", "排队", "开始", "结束", "用时", "参数"],
                    [[j["title"], f"{ICON[j['state']]} {J.STATUS_ZH[j['state']]}", fmt_time(j["created"]), fmt_time(j["started"]),
                      fmt_time(j["ended"]), fmt_dur((j["ended"] - j["started"]) if j["ended"] and j["started"] else None),
@@ -657,14 +712,22 @@ class ArenaPage(QtWidgets.QWidget):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([330, 1000])
-        lay.addWidget(split, 1)
-
+        bottom = QtWidgets.QWidget()                       # 对局区和输出区之间可以上下拖动分隔条
+        bl2 = QtWidgets.QVBoxLayout(bottom)
+        bl2.setContentsMargins(0, 0, 0, 0)
+        bl2.setSpacing(4)
         self.out_head = label("竞技场任务的输出", "mute")
-        lay.addWidget(self.out_head)
-        self.out = QtWidgets.QPlainTextEdit()
-        self.out.setReadOnly(True)
-        self.out.setFixedHeight(110)
-        lay.addWidget(self.out)
+        bl2.addWidget(self.out_head)
+        self.out = LogView()
+        bl2.addWidget(self.out, 1)
+        vsplit = QtWidgets.QSplitter(Qt.Vertical)
+        vsplit.addWidget(split)
+        vsplit.addWidget(bottom)
+        vsplit.setStretchFactor(0, 1)
+        vsplit.setStretchFactor(1, 0)
+        vsplit.setSizes([640, 150])
+        vsplit.setChildrenCollapsible(False)
+        lay.addWidget(vsplit, 1)
         self.syncer = Async(self)
         self.syncer.done.connect(self.synced)
 
@@ -688,8 +751,10 @@ class ArenaPage(QtWidgets.QWidget):
         self.win.start_job(key, {"update": self.update_box.isChecked()} if key == "arena_loop" else {})
 
     def stop(self) -> None:
+        """第一次点：连续计分局这一局打完就停（别的竞技场任务直接结束）；已经请求过再点：直接结束。"""
         for j in J.active(self.win.jobs_root, "arena"):
-            J.stop(j["id"], hard=True, root=self.win.jobs_root)
+            asked = J.stop_requested(j["id"], self.win.jobs_root)
+            J.stop(j["id"], hard=bool(asked) or j["stop"] != "file", root=self.win.jobs_root)
         self.win.tick()
 
     def do_sync(self) -> None:
@@ -722,12 +787,15 @@ class ArenaPage(QtWidgets.QWidget):
             b.setEnabled(not act)
         self.update_box.setEnabled(not act)
         self.stop_btn.setEnabled(bool(act))
-        self.job_state.setText("　".join(f"{ICON[j['state']]} {j['title']}：{J.STATUS_ZH[j['state']]}（{fmt_time(j['started'] or j['created'])} 起）"
-                                        for j in act))
+        waiting = [j for j in act if j["stop"] == "file" and J.stop_requested(j["id"], self.win.jobs_root) == "soft"]
+        self.stop_btn.setText("不等了，直接结束" if waiting else "停止")
+        self.stop_btn.setToolTip("连续计分局：这一局打完就停，不会中途退出对局。再点一次才是直接结束（这一局算退赛）。")
+        self.job_state.setText("　".join(f"{ICON[j['state']]} {j['title']}：" + ("这一局打完就停" if j in waiting else J.STATUS_ZH[j["state"]])
+                                        + f"（{fmt_time(j['started'] or j['created'])} 起）" for j in act))
         if mine:
             j = act[0] if act else mine[0]
             self.out_head.setText(f"输出：{j['title']}　{ICON[j['state']]} {J.STATUS_ZH[j['state']]}")
-            set_log_text(self.out, J.tail(j["id"], 20000, self.win.jobs_root) or "（还没有输出）")
+            self.out.follow(J._path(j["id"], "log", self.win.jobs_root))
         try:
             self.sum = self.V.summary()
         except Exception as ex:                            # noqa: BLE001 —— 结果文件读不了不影响别的
@@ -954,6 +1022,29 @@ class MainWindow(QtWidgets.QMainWindow):
             self.timer.start(2500)
         self.tick()
 
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        """关窗口：还有任务在跑就问一下——让它们接着跑，还是都停掉再退出。"""
+        act = J.active(self.jobs_root)
+        if act and not getattr(self, "_quiet_close", False):
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("退出面板")
+            box.setIcon(QtWidgets.QMessageBox.Question)
+            box.setText(f"还有 {len(act)} 个任务在跑：" + "、".join(j["title"] for j in act))
+            box.setInformativeText("让它们继续：面板关掉，任务在后台接着跑，下次打开面板能接着看。\n"
+                                   "全部停止：训练这一轮跑完存盘后退出，连续计分局这一局打完后退出，别的任务直接结束。")
+            keep = box.addButton("让它们继续，只关面板", QtWidgets.QMessageBox.AcceptRole)
+            stop = box.addButton("全部停止并退出", QtWidgets.QMessageBox.DestructiveRole)
+            box.addButton("取消", QtWidgets.QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is stop:
+                for j in act:
+                    J.stop(j["id"], root=self.jobs_root)
+            elif box.clickedButton() is not keep:
+                ev.ignore()
+                return
+        self.timer.stop()
+        ev.accept()
+
     def show_page(self, i: int) -> None:
         self.stack.setCurrentIndex(i)
         self.tick()
@@ -1021,7 +1112,9 @@ def main() -> int:
     app = make_app()
     win = MainWindow()
     win.show()
-    return app.exec()
+    code = app.exec()
+    import os
+    os._exit(int(code))                                    # 窗口关了就让面板进程干净地退掉（不等后台线程、不跑清理钩子）；任务是别的进程，不受影响
 
 
 if __name__ == "__main__":
