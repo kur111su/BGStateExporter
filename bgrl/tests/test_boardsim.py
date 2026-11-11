@@ -787,6 +787,58 @@ def check_comptest_seeded():
     return len(sd["seeded"])
 
 
+def check_lookahead():
+    """推演出学习目标（rl/lookahead.py）：候选里挑回合结束场面最强的；只在比模型首选强 margin 以上时才换；
+    不改原来的对局；推演里看不到真实的下一个酒馆（随机数换过）。答案池满了覆盖最早的。"""
+    import json as _json
+    from taverngym import BatchEnv
+    from rl.boardsim import BoardJudge
+    from rl.lookahead import LookBuffer, search
+    lib = {t: [{"tier": 3, "board": [["BG26_135", t, t]] * 3}] for t in range(2, 16)}
+    judge = BoardJudge(lib, k=2, n=2, seed=1)
+    W = np.random.default_rng(5).normal(size=245)
+
+    def lg_fn(f, c, m):
+        return np.where(np.asarray(m, dtype=bool), W[None, :], -np.inf)
+    env = BatchEnv(4, seed=3, controlled=range(8), threads=1)
+    rng = np.random.default_rng(2)
+    n = changed = 0
+    for _ in range(400):
+        o = env.observe()
+        ready = np.flatnonzero(o["ready"])
+        t = np.rint(o["features"][:, 0] * 20).astype(int)
+        for i in ready[:2]:
+            if t[i] < 4 or o["action_mask"][i].sum() < 2:
+                continue
+            g, seat = env.slot(int(i))
+            before = env.game(int(g)).state_json()
+            best, a0, v0, vb = search(env.game(int(g)), seat, int(t[i]), o["action_mask"][i], lg_fn(None, None, o["action_mask"][i:i + 1])[0],
+                                      judge, lg_fn, k=3, depth=3, margin=0.02, rng_seed=7)
+            assert env.game(int(g)).state_json() == before                      # 原来的对局没动
+            assert a0 == int(np.argmax(np.where(o["action_mask"][i], W, -np.inf))) and o["action_mask"][i][best]
+            if v0 is not None:
+                n += 1
+                if best != a0:
+                    changed += 1
+                    assert vb >= v0 + 0.02 - 1e-9, (vb, v0)
+            if n >= 6:
+                break
+        if n >= 6:
+            break
+        acts = np.zeros(len(o["ready"]), dtype=np.int64)
+        for i in ready:
+            acts[i] = rng.choice(np.flatnonzero(o["action_mask"][i]))
+        env.step(acts)
+    assert n >= 3, n
+    buf = LookBuffer(3)
+    for k in range(5):
+        buf.add(np.full(4, k), np.full(2, k), np.ones(6, bool), k)
+    f, c, m, a = buf.sample(10)
+    assert len(buf) == 3 and set(a.tolist()) <= {2, 3, 4} and (f[:, 0].astype(int) == a).all()
+    _ = _json
+    return n, changed
+
+
 def check_comp_gifts():
     """送整套阵容（CompGifts）：开局定一套本局凑得成的阵容，给的回合往手里放一张这套还没有的核心卡（先送等级低的、
     酒馆等级 + 2 以内），场面不动；finish 返回这套的名字；skip 里的对局不送；送牌课程跳过这些局。"""
@@ -889,6 +941,7 @@ def main() -> int:
     check_grow()
     check_gifts()
     check_comptest_seeded()
+    check_lookahead()
     check_comp_gifts()
     check_league_prune()
     check_rollback_rebase()

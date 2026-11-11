@@ -285,6 +285,22 @@ class Config:
     cgift_frac: float = 0.0
     cgift_turns: str = "5,6,7,8,9,10,11"
     cgift_p: float = 0.7
+    # 推演出学习目标（rl/lookahead.py，第 24150 轮起）：机器人局里第 look_from 回合起，每轮抽 look_per_iter 个学习者的决策，
+    # 在副本上试模型最想走的 look_k 步 + 结束回合，各自让模型打完这回合（最多 look_depth 步），回合结束的场面打 look_boards
+    # 个同期高分阵容 × look_fights 场；比模型首选强 look_margin 以上就换成那一步。答案存进最近 look_buffer 条的池子，
+    # 每个小批另外抽 look_batch 条学交叉熵 look_coef × -log π(答案)（池子里有 look_min 条以后）。0 = 不用。
+    # 推演只在训练里用，竞技场里的模型不需要模拟器。池子不存盘：重启后从头攒。
+    look_coef: float = 0.0
+    look_from: int = 9
+    look_per_iter: int = 48
+    look_k: int = 5
+    look_depth: int = 6
+    look_margin: float = 0.02
+    look_boards: int = 8
+    look_fights: int = 3
+    look_buffer: int = 20000
+    look_batch: int = 256
+    look_min: int = 512
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
@@ -301,7 +317,7 @@ class Config:
     guard_patience: int = 3
     guard_decay: float = 0.7
     guard_max: int = 6
-    guard_keys: str = "teacher_coef,pro_coef"
+    guard_keys: str = "teacher_coef,pro_coef,look_coef"
 
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
@@ -567,6 +583,23 @@ class Trainer(ShapingMixin, ImitationMixin):
                   f"第 {cfg.cgift_turns} 回合每回合 {cfg.cgift_p:.0%} 的机会送一张这套还没有的核心卡", flush=True)
         self.cgift_by: dict[str, list] = {}            # 送整套阵容：阵容 → [(名次, 最后做成这套没有)]（上次考试以来）
         self.cgift_iter: list = []                     # 同上，这一轮的
+        self.look_judge = None                         # 推演出学习目标（look_coef）：考官、答案池、抽样概率
+        self.look_left, self.look_seen, self.look_p = 0, 0, 0.01
+        self.look_rng = np.random.default_rng(cfg.seed + 977)
+        if cfg.look_coef > 0 and cfg.games_bot:
+            from .boardsim import BoardJudge
+            from .lookahead import LookBuffer
+            from paths import RUNS
+            paths = [Path(p) for p in str(cfg.pro_boards).split(";") if p.strip()] or [RUNS / "pro_boards.json"]
+            lib = merge_pro_boards(p for p in paths if p.exists())
+            if lib:
+                self.look_judge = BoardJudge(lib, k=cfg.look_boards, n=cfg.look_fights, seed=cfg.seed + 31)
+                self.look_buf = LookBuffer(cfg.look_buffer, seed=cfg.seed)
+                print(f"推演出学习目标：机器人局第 {cfg.look_from} 回合起每轮推演 {cfg.look_per_iter} 个决策（模型最想走的 "
+                      f"{cfg.look_k} 步 + 结束回合，各打完这回合，场面打 {cfg.look_boards} 个同期高分阵容 × {cfg.look_fights} 场），"
+                      f"答案池 {cfg.look_buffer} 条，系数 {cfg.look_coef}", flush=True)
+            else:
+                print("没有高分阵容库：推演出学习目标这次不用", flush=True)
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
         self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
@@ -688,6 +721,10 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.ref_idx[:] = -1                           # 上一轮的步编号在这一轮无效
         t0 = time.time()
         t_env = t_net = 0.0
+        if self.look_judge is not None:               # 推演：按上一轮有多少个够格的决策定抽样概率，凑够 look_per_iter 个
+            if self.look_seen:
+                self.look_p = float(np.clip(1.3 * cfg.look_per_iter / self.look_seen, 1e-4, 1.0))
+            self.look_left, self.look_seen = int(cfg.look_per_iter), 0
         for _ in range(cfg.steps_per_iter):
             # 先把所有环境里同一个模型要算的局面合在一起，一次前向（比每个环境各算一次快）
             ta = time.time()
@@ -718,6 +755,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
+                        if name == "bot" and self.look_judge is not None and self.look_left > 0:
+                            self._look(env, idx, f[o:o + k], c[o:o + k], m[o:o + k], res[3][o:o + k])
                         n_dec += k
                         self.n_noop += int(noop.sum())
                         self.mix["noop_move"] += int((ak >= 196).sum())        # 无效操作分开记：调站位 / 冻结 / 取消
@@ -959,6 +998,15 @@ class Trainer(ShapingMixin, ImitationMixin):
                     pb = self.bc_loss(self.pro, self.pro_w, cfg.pro_batch)
                     self.scaler.scale(cfg.pro_coef * self.pro_scale * pb).backward()
                     stats["pro_bc"].append(pb.item())
+                if self.look_judge is not None and cfg.look_coef > 0 and len(self.look_buf) >= cfg.look_min:
+                    lf, lc, lm, la = self.look_buf.sample(cfg.look_batch)     # 推演答案的交叉熵（按条平均）
+                    tt = lambda x, dt: torch.as_tensor(x, dtype=dt).to(self.dev, non_blocking=True)  # noqa: E731
+                    la_t = tt(la, torch.long)
+                    lp = self._demo_logp(tt(lf, torch.float32), tt(lc, torch.long), tt(lm, torch.bool), True)
+                    lce = -lp.gather(1, la_t.unsqueeze(1)).squeeze(1).mean()
+                    self.scaler.scale(cfg.look_coef * lce).backward()
+                    stats["look_ce"].append(lce.item())
+                    stats["look_agree"].append(float((lp.argmax(-1) == la_t).float().mean()))
                 gn = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if not torch.isfinite(gn):                # 梯度坏了：这一步不更新，记下来
                     stats["skipped"].append(1.0)
@@ -1419,6 +1467,51 @@ class Trainer(ShapingMixin, ImitationMixin):
               f"KL 系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上", flush=True)
         return t.eval()
 
+    @torch.inference_mode()
+    def _logits_np(self, f, c, m) -> np.ndarray:
+        """原始观察 → 当前模型的动作分数（推演里让模型自己打完这回合用）。"""
+        f = soft_log(torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.dev))
+        c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.dev)
+        m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.dev)
+        with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+            lg = self.model(f, c, m, compressed=True)[0]
+        return lg.float().cpu().numpy()
+
+    def _look(self, env, idx, f, c, m, fz) -> None:
+        """机器人局这一步里抽几个后期决策推演（见 Config.look_coef），答案存进池子。"""
+        from tg.actions import action_family
+        from .lookahead import search
+        cfg = self.cfg
+        t = np.rint(f[:, 0] * 20).astype(int)
+        elig = np.flatnonzero((t >= cfg.look_from) & (np.asarray(m).sum(1) > 1))
+        self.look_seen += len(elig)
+        pick = elig[self.look_rng.random(len(elig)) < self.look_p][:self.look_left]
+        if not len(pick):
+            return
+        t0 = time.time()
+        L = self._logits_np(f[pick], c[pick], m[pick])
+        for r, row in enumerate(pick):
+            self.look_left -= 1
+            g, seat = env.slot(int(idx[row]))
+            try:
+                best, a0, v0, vb = search(env.game(int(g)), int(seat), int(t[row]), m[row], L[r], self.look_judge,
+                                          self._logits_np, cfg.look_k, cfg.look_depth, cfg.look_margin,
+                                          rng_seed=int(self.look_rng.integers(1, 2 ** 31)))
+            except BaseException as ex:                # noqa: BLE001 —— 引擎内部出错：这一个不算
+                if not is_panic(ex) and not isinstance(ex, ValueError):
+                    raise
+                v0 = None
+            if v0 is None:
+                self.mix["look_fail"] += 1
+                continue
+            self.look_buf.add(fz[row], c[row], m[row], best)
+            self.mix["look_n"] += 1
+            if best != a0:
+                self.mix["look_changed"] += 1
+                self.mix["look_gain"] += float(vb - v0)
+                self.mix["look_to_" + action_family(best)] += 1
+        self.mix["t_look"] += time.time() - t0
+
     def _comp_name(self, k) -> str:
         """_final_comp 的序号 → 阵容名字（没成 → 空字符串）。"""
         if getattr(self, "_comp_names", None) is None:
@@ -1532,6 +1625,16 @@ class Trainer(ShapingMixin, ImitationMixin):
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
                        unspent=round(mx["unspent"] / ends, 3),
                        comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
+            if mx.get("look_n") or mx.get("look_fail"):      # 推演出学习目标：推了几个、换了几个、换了以后场面强多少
+                n = int(mx.get("look_n", 0))
+                rec["look_n"] = n
+                rec["look_fail"] = int(mx.get("look_fail", 0))
+                rec["look_changed"] = round(mx.get("look_changed", 0) / max(1, n), 3)
+                if mx.get("look_changed"):
+                    rec["look_gain"] = round(mx["look_gain"] / mx["look_changed"], 4)
+                    rec["look_to"] = {k[8:]: int(v) for k, v in mx.items() if k.startswith("look_to_")}
+                rec["look_buf"] = len(self.look_buf)
+                rec["t_look"] = round(mx.get("t_look", 0.0), 2)
             if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
                 rec["grow"] = round(mx["grow_sum"] / mx["grow_n"], 4)
                 rec["grow_n"] = int(mx["grow_n"])
