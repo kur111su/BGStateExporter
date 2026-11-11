@@ -780,7 +780,7 @@ class ArenaPage(QtWidgets.QWidget):
         ll.addWidget(self.list)
         split.addWidget(left)
 
-        scroll = QtWidgets.QScrollArea()
+        scroll = self.detail_scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         det = QtWidgets.QFrame()

@@ -167,6 +167,8 @@ def main() -> int:
         ar.steps.setCurrentRow(1)
         assert ar.view["turn"] == 2 and ar.view["n"] == ar.view["steps"][1][0]
         shot("4b_竞技场_看一局")
+        ar.detail_scroll.verticalScrollBar().setValue(ar.detail_scroll.verticalScrollBar().maximum())
+        shot("4d_竞技场_最终名次")
         ar.list.setCurrentRow(5)                                             # 没有逐步记录的一局
         assert ar.view["note"] and not ar.curve.isVisible()
         ar.list.setCurrentRow(0)
