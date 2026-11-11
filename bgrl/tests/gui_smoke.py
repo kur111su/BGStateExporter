@@ -173,7 +173,7 @@ def main() -> int:
         assert ar.view["note"] and not ar.curve.isVisible()
         ar.list.setCurrentRow(0)
         assert dict(ar.view["stats"]) == {"酒馆": "3 本", "血量": "31", "金币": "6", "剩余人数": "5 人"}, ar.view["stats"]
-        assert ar.zones.count() == 3 and ar.stat_box.count() == 4 and ar.final.count() == 0
+        assert "场面" in ar.zones.text() and "酒馆" in ar.zones.text() and ar.stat_box.count() == 4 and not ar.final_box.isVisibleTo(ar)
         shot("4c_竞技场_进行中")
         ar.follow_btn.click()
         assert ar.follow and ar.sel == "live001"

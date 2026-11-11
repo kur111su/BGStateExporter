@@ -153,13 +153,12 @@ def match_line(m: dict) -> tuple[str, str]:
 
 
 def match_parts(m: dict) -> dict:
-    """对局列表一行分三段：名次圆点、第一行（赛道 · 英雄 本数）、第二行（时间 · 回合 · 模型）、第三行（Elo / 预计名次 / 无逐步记录）。"""
+    """对局列表一行：名次圆点；赛道 · 英雄 本数 / 时间 · 回合 / 模型 / Elo、预计名次、无逐步记录（各占一行）。"""
     badge = str(m["placement"]) if m.get("placement") else ("●" if m.get("live") else "?")
     top = "进行中" if m.get("live") else CAT.get(m.get("category"), str(m.get("category") or ""))
     if m.get("hero"):
         top += f" · {m['hero']}" + (f" {m['tier']} 本" if m.get("tier") else "")
-    mid = " · ".join(x for x in (fmt_time(m.get("created")),
-                                 f"{m['turns']} 回合" if m.get("turns") is not None else "", m.get("model") or "") if x)
+    mid = " · ".join(x for x in (fmt_time(m.get("created")), f"{m['turns']} 回合" if m.get("turns") is not None else "") if x)
     low = []
     if m.get("score_after") is not None and m.get("score_before") is not None:
         low.append(f"Elo {m['score_before']:.0f} → {m['score_after']:.0f}（{m['score_after'] - m['score_before']:+.1f}）")
@@ -167,7 +166,8 @@ def match_parts(m: dict) -> dict:
         low.append(f"预计 {m['place_est']} 名")
     if not m.get("records"):
         low.append("无逐步记录")
-    return {"badge": badge, "place": m.get("placement"), "live": bool(m.get("live")), "top": top, "mid": mid, "low": " · ".join(low)}
+    return {"badge": badge, "place": m.get("placement"), "live": bool(m.get("live")), "top": top, "mid": mid,
+            "model": m.get("model") or "", "low": " · ".join(low)}
 
 
 def card_info(c: dict) -> dict:
