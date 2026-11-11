@@ -86,7 +86,7 @@ def fake_arena(d: Path) -> None:
                                             "board": [{"name_zh": x, "attack": 5, "health": 6} for x in NAMES[:5]],
                                             "hand": [{"name_zh": NAMES[5], "attack": 2, "health": 3, "golden": True}],
                                             "shop": [{"name_zh": x, "attack": 3, "health": 3, "tier": 3, "cost": 3} for x in NAMES[2:6]]},
-                                     "opponents": []}})
+                                     "opponents": [{"alive": k < 4} for k in range(7)]}})
         return "\n".join(json.dumps(r, ensure_ascii=False) for r in out) + "\n"
     (d / "records" / "live001.jsonl").write_text(recs(), encoding="utf-8")      # 正在打的
     (d / "records" / "m0175.jsonl").write_text(recs(), encoding="utf-8")        # 最近打完的一局有逐步记录
@@ -162,12 +162,17 @@ def main() -> int:
         assert started[-1] == ("arena_match", {}), started
         ar.list.setCurrentRow(1)                                             # 点一局打完的（有逐步记录）：停止跟随
         assert not ar.follow and ar.sel == "m0175" and ar.view["final"] and ar.view["turns"], ar.sel
+        assert ar.final.count() == 2 and len(ar.view["final_cards"][0]) == 7
         ar.turns.setCurrentIndex(2)
         ar.steps.setCurrentRow(1)
         assert ar.view["turn"] == 2 and ar.view["n"] == ar.view["steps"][1][0]
         shot("4b_竞技场_看一局")
         ar.list.setCurrentRow(5)                                             # 没有逐步记录的一局
         assert ar.view["note"] and not ar.curve.isVisible()
+        ar.list.setCurrentRow(0)
+        assert dict(ar.view["stats"]) == {"酒馆": "3 本", "血量": "31", "金币": "6", "剩余人数": "5 人"}, ar.view["stats"]
+        assert ar.zones.count() == 3 and ar.stat_box.count() == 4 and ar.final.count() == 0
+        shot("4c_竞技场_进行中")
         ar.follow_btn.click()
         assert ar.follow and ar.sel == "live001"
         out_view = win.pages[1].out                                           # 输出：只接新增的，选区和滚动位置不动

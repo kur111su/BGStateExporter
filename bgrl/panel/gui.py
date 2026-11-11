@@ -583,6 +583,125 @@ class DashboardPage(QtWidgets.QScrollArea):
 
 # ---------------- 竞技场 ----------------
 
+PLACE_COLOR = {1: "#c99a12", 2: "#7d8ea8", 3: "#a86b3c", 4: "#2f6fdb"}
+
+
+class CardChip(QtWidgets.QFrame):
+    """一张随从卡片：名字、右上角等级 / 价格、底下攻 / 血；金色的描金边。small = 最终阵容里用的小号。"""
+
+    def __init__(self, c: dict, small: bool = False):
+        super().__init__()
+        w, h = (78, 50) if small else (104, 66)
+        self.setFixedSize(w, h)
+        gold = c.get("golden")
+        self.setStyleSheet(f"QFrame{{background:{'#fff7dc' if gold else '#ffffff'};border:{2 if gold else 1}px solid "
+                           f"{'#d4a017' if gold else '#d6d3cc'};border-radius:6px}} QLabel{{border:none;background:transparent}}")
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(5, 3, 5, 3)
+        lay.setSpacing(0)
+        top = QtWidgets.QHBoxLayout()
+        top.setSpacing(2)
+        nm = QtWidgets.QLabel(("★" if gold else "") + c["name"])
+        nm.setWordWrap(True)
+        nm.setStyleSheet(f"font-size:{10 if small else 11}px;color:#1d1d1f")
+        nm.setToolTip(("金色 " if gold else "") + c["name"])
+        top.addWidget(nm, 1, Qt.AlignTop)
+        tag = " ".join(x for x in (f"{c['tier']}本" if c.get("tier") else "", f"{c['cost']}金" if c.get("cost") is not None else "") if x)
+        if tag and not small:
+            t = QtWidgets.QLabel(tag)
+            t.setStyleSheet("font-size:10px;color:#8a8a8a")
+            top.addWidget(t, 0, Qt.AlignTop)
+        lay.addLayout(top, 1)
+        if c.get("atk") is not None:
+            st = QtWidgets.QLabel(f"<span style='color:#c26a00'>{c['atk']}</span> / <span style='color:#c23b5b'>{c['hp']}</span>")
+            st.setStyleSheet(f"font-size:{11 if small else 13}px;font-weight:600")
+            lay.addWidget(st, 0, Qt.AlignRight)
+
+
+class CardRow(QtWidgets.QWidget):
+    """一个区（场面 / 手牌 / 酒馆 / 待选）：左边区名，右边一排卡片（多了自动换行）。"""
+
+    def __init__(self, name: str, cards: list[dict], per_row: int = 8):
+        super().__init__()
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lab = label(name, "mute")
+        lab.setFixedWidth(40)
+        lay.addWidget(lab, 0, Qt.AlignTop)
+        g = QtWidgets.QGridLayout()
+        g.setHorizontalSpacing(6)
+        g.setVerticalSpacing(6)
+        if not cards:
+            g.addWidget(label("（空）", "mute"), 0, 0)
+        for i, c in enumerate(cards):
+            g.addWidget(CardChip(c), i // per_row, i % per_row)
+        lay.addLayout(g)
+        lay.addStretch(1)
+
+
+class MatchRow(QtWidgets.QWidget):
+    """对局列表一行：左边名次圆点，右边三行字（赛道 · 英雄 / 时间 · 回合 · 模型 / Elo 或说明）。"""
+
+    def __init__(self, p: dict):
+        super().__init__()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(8)
+        col = "#1f8a4c" if p["live"] else PLACE_COLOR.get(p["place"], "#8a8a8a")
+        dot = QtWidgets.QLabel(p["badge"])
+        dot.setFixedSize(24, 24)
+        dot.setAlignment(Qt.AlignCenter)
+        dot.setStyleSheet(f"background:{col};color:#ffffff;border-radius:12px;font-weight:600;font-size:12px")
+        lay.addWidget(dot, 0, Qt.AlignTop)
+        txt = QtWidgets.QVBoxLayout()
+        txt.setSpacing(0)
+        a = QtWidgets.QLabel(p["top"])
+        a.setStyleSheet("font-weight:600;font-size:12px")
+        txt.addWidget(a)
+        b = QtWidgets.QLabel(p["mid"])
+        b.setStyleSheet("color:#6b6b70;font-size:11px")
+        txt.addWidget(b)
+        if p["low"]:
+            c = QtWidgets.QLabel(p["low"])
+            c.setStyleSheet(f"color:{'#1f8a4c' if '+' in p['low'] else '#c23b5b' if 'Elo' in p['low'] else '#6b6b70'};font-size:11px")
+            txt.addWidget(c)
+        lay.addLayout(txt, 1)
+
+
+class StandRow(QtWidgets.QFrame):
+    """对局结束：一席——名次、选手、英雄 · 等级、最后阵容（小卡片）。自己那一席底色不一样。"""
+
+    def __init__(self, r: tuple, cards: list[dict]):
+        super().__init__()
+        place, who, hero, tier, _txt, mine = r
+        self.setStyleSheet("QFrame{background:%s;border-radius:6px} QLabel{background:transparent}" % ("#e2ebfb" if mine else "transparent"))
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(10)
+        try:
+            pn = int(str(place).split("（")[0])
+        except ValueError:
+            pn = None
+        dot = QtWidgets.QLabel(str(place))
+        dot.setFixedSize(26, 26)
+        dot.setAlignment(Qt.AlignCenter)
+        dot.setStyleSheet(f"background:{PLACE_COLOR.get(pn, '#8a8a8a')};color:#fff;border-radius:13px;font-weight:600")
+        lay.addWidget(dot, 0, Qt.AlignVCenter)
+        info = QtWidgets.QVBoxLayout()
+        info.setSpacing(0)
+        a = QtWidgets.QLabel(who or "-")
+        a.setStyleSheet("font-weight:600" if mine else "")
+        info.addWidget(a)
+        info.addWidget(label(" · ".join(x for x in (hero, f"{tier} 本" if tier else "") if x), "mute"))
+        w = QtWidgets.QWidget()
+        w.setFixedWidth(150)
+        w.setLayout(info)
+        lay.addWidget(w)
+        for c in cards:
+            lay.addWidget(CardChip(c, small=True))
+        lay.addStretch(1)
+
 class ArenaPage(QtWidgets.QWidget):
     """竞技场：上面一排操作和战绩，左边对局列表，右边单局（默认跟着正在打的那一局）。"""
 
@@ -649,9 +768,9 @@ class ArenaPage(QtWidgets.QWidget):
         ll.addLayout(lh)
         self.list = QtWidgets.QListWidget()
         self.list.setObjectName("matches")
+        self.list.setMinimumWidth(300)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.list.setWordWrap(True)
-        self.list.setTextElideMode(Qt.ElideRight)
+        self.list.setSpacing(0)
         self.list.currentRowChanged.connect(self.pick)
         ll.addWidget(self.list)
         split.addWidget(left)
@@ -683,28 +802,31 @@ class ArenaPage(QtWidgets.QWidget):
         self.turns.setDrawBase(False)
         self.turns.currentChanged.connect(self.pick_turn)
         dl.addWidget(self.turns)
-        two = QtWidgets.QHBoxLayout()
+        mid = QtWidgets.QHBoxLayout()
+        mid.setSpacing(12)
         c1 = QtWidgets.QVBoxLayout()
-        c1.addWidget(label("这一回合的操作", "mute"))
+        self.steps_lbl = label("这一回合的操作", "mute")
+        c1.addWidget(self.steps_lbl)
         self.steps = QtWidgets.QListWidget()
-        self.steps.setFixedHeight(170)
+        self.steps.setFixedHeight(150)
+        self.steps.setMinimumWidth(260)
         self.steps.currentRowChanged.connect(self.pick_step)
         c1.addWidget(self.steps)
-        two.addLayout(c1, 1)
-        c2 = QtWidgets.QVBoxLayout()
-        c2.addWidget(label("这一步的候选（模型概率，▶ = 选的）", "mute"))
-        self.cands = make_table(5)
-        self.cands.setFixedHeight(170)
-        c2.addWidget(self.cands)
-        two.addLayout(c2, 1)
-        dl.addLayout(two)
-        self.d_view = label("", wrap=True)
-        self.d_view.setTextFormat(Qt.RichText)
-        dl.addWidget(self.d_view)
-        self.final_lbl = label("最终 8 席", "mute")
+        mid.addLayout(c1, 2)
+        self.stat_box = QtWidgets.QGridLayout()                # 本数 / 血量 / 金币 / 剩余人数
+        self.stat_box.setSpacing(6)
+        sw = QtWidgets.QWidget()
+        sw.setLayout(self.stat_box)
+        mid.addWidget(sw, 1, Qt.AlignTop)
+        dl.addLayout(mid)
+        self.zones = QtWidgets.QVBoxLayout()                   # 场面 / 手牌 / 酒馆 / 待选：一排排小卡片
+        self.zones.setSpacing(2)
+        dl.addLayout(self.zones)
+        self.final_lbl = label("最终名次", "h2")
         dl.addWidget(self.final_lbl)
-        self.final = make_table(8)
-        dl.addWidget(self.final)
+        self.final = QtWidgets.QVBoxLayout()
+        self.final.setSpacing(2)
+        dl.addLayout(self.final)
         self.d_note = label("", "mute", wrap=True)
         dl.addWidget(self.d_note)
         dl.addStretch(1)
@@ -868,14 +990,14 @@ class ArenaPage(QtWidgets.QWidget):
         self.sig_list = sig
         self.list.blockSignals(True)
         self.list.clear()
-        colors = {1: "#c99a12", 2: "#7d8ea8", 3: "#a86b3c", 4: "#2f6fdb"}
         row = -1
         for i, m in enumerate(self.matches):
-            badge, text = D.match_line(m)
-            it = QtWidgets.QListWidgetItem(f"[{badge}]  {text}")
+            it = QtWidgets.QListWidgetItem()
             it.setData(Qt.UserRole, m["id"])
-            it.setForeground(QtGui.QColor(colors.get(m.get("placement"), "#1f8a4c" if m.get("live") else "#3f3f46")))
+            w = MatchRow(D.match_parts(m))
+            it.setSizeHint(QtCore.QSize(10, w.sizeHint().height() + 2))
             self.list.addItem(it)
+            self.list.setItemWidget(it, w)
             if m["id"] == self.sel:
                 row = i
         if row >= 0:
@@ -923,7 +1045,7 @@ class ArenaPage(QtWidgets.QWidget):
         self.d_elo.setText(v["elo"])
         self.d_elo.setVisible(bool(v["elo"]))
         has = bool(v["turns"])
-        for w in (self.curve_lbl, self.curve, self.turns, self.steps, self.cands):
+        for w in (self.curve_lbl, self.curve, self.turns, self.steps, self.steps_lbl):
             w.setVisible(has)
         self.curve.clear()
         if len(v["curve"]) >= 2:
@@ -946,23 +1068,16 @@ class ArenaPage(QtWidgets.QWidget):
             if n == v["n"]:
                 self.steps.setCurrentRow(k)
         self.steps.blockSignals(False)
-        fill_table(self.cands, ["候选", "概率", ""], [[("▶ " if hit else "") + t, f"{p:.1%}", "█" * max(1, round(p * 30))] for t, p, hit in v["cands"]],
-                   bold_rows=[i for i, c in enumerate(v["cands"]) if c[2]])
-        for i in range(self.cands.rowCount()):
-            self.cands.item(i, 2).setForeground(QtGui.QColor("#2f6fdf"))
-        html = ""
-        if v["scalars"]:
-            html += "　".join(f"<span style='color:#6b6b70'>{k}</span> <b>{val}</b>" for k, val in v["scalars"]) + "<br>"
-        for name, cards in v["zones"]:
-            html += f"<br><span style='color:#6b6b70'>{name}</span>　" + ("　·　".join(cards) if cards else "（空）")
-        self.d_view.setText(html)
-        self.d_view.setVisible(bool(html))
+        clear_layout(self.stat_box)
+        for k, (name, val) in enumerate(v["stats"]):
+            self.stat_box.addWidget(Tile(name, val, width=110), k // 2, k % 2)
+        clear_layout(self.zones)
+        for name, cards in v["cards"]:
+            self.zones.addWidget(CardRow(name, cards))
+        clear_layout(self.final)
         self.final_lbl.setVisible(bool(v["final"]))
-        self.final.setVisible(bool(v["final"]))
-        if v["final"]:
-            fill_table(self.final, ["名次", "选手", "英雄", "等级", "最后阵容"], [list(r[:5]) for r in v["final"]],
-                       bold_rows=[i for i, r in enumerate(v["final"]) if r[5]])
-            fit_table(self.final)
+        for r, cards in zip(v["final"], v["final_cards"]):
+            self.final.addWidget(StandRow(r, cards))
         self.d_note.setText(v["note"])
 
 

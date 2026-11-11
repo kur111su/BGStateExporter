@@ -152,6 +152,36 @@ def match_line(m: dict) -> tuple[str, str]:
     return badge, f"{top}\n{sub}"
 
 
+def match_parts(m: dict) -> dict:
+    """对局列表一行分三段：名次圆点、第一行（赛道 · 英雄 本数）、第二行（时间 · 回合 · 模型）、第三行（Elo / 预计名次 / 无逐步记录）。"""
+    badge = str(m["placement"]) if m.get("placement") else ("●" if m.get("live") else "?")
+    top = "进行中" if m.get("live") else CAT.get(m.get("category"), str(m.get("category") or ""))
+    if m.get("hero"):
+        top += f" · {m['hero']}" + (f" {m['tier']} 本" if m.get("tier") else "")
+    mid = " · ".join(x for x in (fmt_time(m.get("created")),
+                                 f"{m['turns']} 回合" if m.get("turns") is not None else "", m.get("model") or "") if x)
+    low = []
+    if m.get("score_after") is not None and m.get("score_before") is not None:
+        low.append(f"Elo {m['score_before']:.0f} → {m['score_after']:.0f}（{m['score_after'] - m['score_before']:+.1f}）")
+    if m.get("live") and m.get("place_est"):
+        low.append(f"预计 {m['place_est']} 名")
+    if not m.get("records"):
+        low.append("无逐步记录")
+    return {"badge": badge, "place": m.get("placement"), "live": bool(m.get("live")), "top": top, "mid": mid, "low": " · ".join(low)}
+
+
+def card_info(c: dict) -> dict:
+    """一张随从 / 法术卡片要显示的：名字、攻 / 血、金色、等级、价格。"""
+    a, h = c.get("attack", c.get("atk")), c.get("health", c.get("hp"))
+    return {"name": str(c.get("name_zh") or c.get("name") or c.get("id") or "?"),
+            "atk": a, "hp": h, "golden": bool(c.get("golden") or str(c.get("id") or "").endswith("_G")),
+            "tier": c.get("tier"), "cost": c.get("cost")}
+
+
+def _num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
 def _zone(me: dict, keys) -> list | None:
     for k in keys:
         v = me.get(k)
@@ -186,7 +216,8 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
     跟随正在打的对局时取最后一步，否则这一回合的第一步）。"""
     res, recs, me_name = d.get("result"), d.get("records") or [], d.get("me")
     out = {"live": res is None, "title": "进行中", "sub": "", "elo": "", "curve": [], "turns": [], "turn": None, "n": None,
-           "steps": [], "cands": [], "scalars": [], "zones": [], "final": [], "note": ""}
+           "steps": [], "cands": [], "scalars": [], "zones": [], "cards": [], "stats": [], "final": [], "final_cards": [],
+           "note": ""}
     if res:
         me = next((p for p in res.get("participants") or [] if p.get("username") == me_name), {})
         out["title"] = f"第 {me.get('placement', '?')} 名"
@@ -199,6 +230,7 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
                                  f"{lu.get('agent') or lu.get('kind') or ''} {lu.get('username') or ''}".strip(),
                                  (lu.get("hero") or {}).get("name_zh") or "", str(lu.get("tavern_tier") or ""),
                                  "，".join(card_text(c) for c in lu.get("board") or []), lu.get("username") == me_name))
+            out["final_cards"].append([card_info(c) for c in lu.get("board") or [] if isinstance(c, dict)])
     else:
         out["sub"] = "每 3 秒刷新" + (" · 跟着最新一步" if follow else "")
     out["curve"] = [(r["n"], r["place"], r.get("turn")) for r in recs if r.get("place") is not None]
@@ -226,8 +258,19 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
             view = dict(view or {}, **r["view"])
     me = (view or {}).get("me") or {}
     out["scalars"] = [(k, v) for k, v in me.items() if v is not None and not isinstance(v, (dict, list))][:24]
+    if _num(me.get("tier")):                               # 小卡片：本数、血量（+护甲）、金币、剩余人数
+        out["stats"].append(("酒馆", f"{int(me['tier'])} 本"))
+    if _num(me.get("health")):
+        arm = me.get("armor") if _num(me.get("armor")) else 0
+        out["stats"].append(("血量", f"{int(me['health'])}" + (f" +{int(arm)}" if arm else "")))
+    if _num(me.get("gold")):
+        out["stats"].append(("金币", f"{int(me['gold'])}" + (f" / {int(me['max_gold'])}" if _num(me.get("max_gold")) else "")))
+    opp = (view or {}).get("opponents")
+    if isinstance(opp, list) and opp and all(isinstance(o, dict) and "alive" in o for o in opp):
+        out["stats"].append(("剩余人数", f"{1 + sum(bool(o['alive']) for o in opp)} 人"))
     for label, keys in ZONES:
         z = _zone(me, keys)
         if z is not None:
             out["zones"].append((label, [card_text(c) for c in z if isinstance(c, dict)]))
+            out["cards"].append((label, [card_info(c) for c in z if isinstance(c, dict)]))
     return out
