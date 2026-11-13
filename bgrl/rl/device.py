@@ -73,8 +73,9 @@ def perf_cores() -> int:
 
 
 def default_threads() -> int:
-    """模拟器的线程数默认值：性能核数（至少 2）。"""
-    return max(2, perf_cores())
+    """模拟器的线程数默认值：bench-device 实测最快的；没测过 = 性能核数（至少 2）。"""
+    t = ((bench_choice() or {}).get("best") or {}).get("threads")
+    return int(t) if isinstance(t, int) and t > 0 else max(2, perf_cores())
 
 
 def describe() -> str:
@@ -87,5 +88,6 @@ def describe() -> str:
         parts.append(f"{platform.machine()} macOS {platform.mac_ver()[0]}，性能核 {perf_cores()}")
     b = bench_choice()
     if b:
-        parts.append(f"实测最快：更新 {b['best']['device']} + 采样 {b['best']['rollout']}（{b['best'].get('dps', 0):.0f} 决策/秒）")
+        parts.append(f"实测最快：更新 {b['best']['device']} + 采样 {b['best']['rollout']}、线程 {b['best'].get('threads', '?')}"
+                     f"（{b['best'].get('dps', 0):.0f} 决策/秒，{b.get('time', '')}）")
     return "，".join(parts)

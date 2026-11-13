@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -15,7 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 
-from rl.device import BENCH, available, default_threads  # noqa: E402
+from rl.device import BENCH, available, perf_cores  # noqa: E402
 
 
 def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: str) -> dict:
@@ -60,7 +61,7 @@ def main(argv=None) -> int:
         combos = [("mps", "cpu"), ("mps", "mps")] + combos
     if "cuda" in av:
         combos = [("cuda", "cuda"), ("cuda", "cpu")] + combos
-    threads = a.threads or default_threads()
+    threads = a.threads or max(2, perf_cores())
     recipe = a.recipe if (HERE / a.recipe).exists() else ""
     print(f"可用设备 {'/'.join(av)}；模拟器线程 {threads}；每种组合 {a.iters} 轮（第一轮预热不算）", flush=True)
     res = []
@@ -78,11 +79,23 @@ def main(argv=None) -> int:
         print("所有组合都失败了，训练会用默认设备", flush=True)
         return 1
     best = max(ok, key=lambda r: r.get("dps", 0))
+    best["threads"] = threads
+    allc = os.cpu_count() or threads
+    if not a.threads and allc > threads:                # 再试一下把效率核也用上
+        print(f"  测 更新 {best['device']} + 采样 {best['rollout']}，模拟器线程 {allc}（含效率核）…", flush=True)
+        r = run_one(best["device"], best["rollout"], a.iters, allc, a.size, recipe)
+        r["threads"] = allc
+        res.append(r)
+        if r["ok"]:
+            print(f"    {r.get('dps', 0):.0f} 决策/秒", flush=True)
+            if r.get("dps", 0) > best.get("dps", 0) * 1.03:
+                best = r
     BENCH.parent.mkdir(parents=True, exist_ok=True)
-    BENCH.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "threads": threads, "results": res,
-                                 "best": {"device": best["device"], "rollout": best["rollout"], "dps": best.get("dps", 0)}},
+    BENCH.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "threads": best["threads"], "results": res,
+                                 "best": {"device": best["device"], "rollout": best["rollout"], "dps": best.get("dps", 0),
+                                          "threads": best["threads"]}},
                                 ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"最快：更新 {best['device']} + 采样 {best['rollout']}，{best.get('dps', 0):.0f} 决策/秒 → {BENCH}"
+    print(f"最快：更新 {best['device']} + 采样 {best['rollout']}、线程 {best['threads']}，{best.get('dps', 0):.0f} 决策/秒 → {BENCH}"
           "（训练设备选 auto 时照这个）", flush=True)
     return 0
 
