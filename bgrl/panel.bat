@@ -4,7 +4,6 @@ cd /d "%~dp0"
 rem The panel: a desktop program with the training dashboard, a button for every task
 rem (training, comp tests, data, cleanup) and the arena games. No browser, no web page.
 rem Closing the window does not stop training or other running tasks; open it again to see them.
-rem (The old web version is still there: .venv\Scripts\python bg.py panel --web)
 if not exist .venv\Scripts\python.exe (
   echo Run setup.bat first.
   pause

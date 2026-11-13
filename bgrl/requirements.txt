@@ -1,5 +1,4 @@
 numpy>=1.26
 orjson>=3.9  # 可选：第二阶段训练的机器人加强存档读档快 5 倍
-PySide6>=6.6     # 面板（panel.bat，桌面程序）
+PySide6>=6.6     # 面板（桌面程序：panel.bat / panel.command）
 pyqtgraph>=0.13  # 面板的曲线
-streamlit>=1.37  # 网页版面板（bg.py panel --web，备用）

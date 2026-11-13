@@ -1,6 +1,6 @@
 """bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：Windows 双击 panel.bat，Mac 双击 panel.command；按钮跑的就是这些命令）。
 
-  panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；panel.bat 就是它；--web = 网页版 panel/app.py，备用）
+  panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；Windows 的 panel.bat、Mac 的 panel.command 就是它）
   train     训练（面板里的“训练” = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json
@@ -96,42 +96,9 @@ def main() -> int:
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd in TOOLS:
         return _run_tool(cmd, args)
-    if cmd == "panel" and "--web" not in args:         # 桌面程序（默认）
+    if cmd == "panel":                                 # 桌面程序（panel/gui.py）
         from panel.gui import main as gui_main
         return gui_main()
-    if cmd == "panel":                                 # 网页版（Streamlit，备用）：bg.py panel --web
-        args = [x for x in args if x != "--web"]
-        import socket
-        import subprocess
-        import threading
-        import time
-        import webbrowser
-        url = "http://127.0.0.1:8770"
-
-        def up() -> bool:
-            with socket.socket() as sk:
-                sk.settimeout(0.5)
-                return sk.connect_ex(("127.0.0.1", 8770)) == 0
-
-        if up():                                   # 面板已经开着：直接打开页面
-            print("面板已经在运行：", url)
-            webbrowser.open(url)
-            return 0
-
-        def opener():                              # 等服务起来再开浏览器
-            for _ in range(120):
-                if up():
-                    webbrowser.open(url)
-                    return
-                time.sleep(0.5)
-        if "--no-browser" in args:
-            args = [x for x in args if x != "--no-browser"]
-        else:
-            threading.Thread(target=opener, daemon=True).start()
-        print("面板：", url, "（只在本机能打开；关掉这个窗口面板就关了，正在跑的训练和任务不受影响）", flush=True)
-        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(ROOT / "panel" / "app.py"),
-                                "--server.address", "127.0.0.1", "--server.port", "8770", "--server.headless", "true",
-                                "--browser.gatherUsageStats", "false", *args], cwd=str(ROOT))
     if cmd == "test":
         return _test()
     if cmd == "info":

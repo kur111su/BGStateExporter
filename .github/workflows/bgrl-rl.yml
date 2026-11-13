@@ -72,11 +72,7 @@ jobs:
           assert any(r.get("look_ce") is not None for r in rows), "推演答案的交叉熵没算"
           print("lookahead OK", max(r.get("look_buf", 0) for r in rows))
           PY
-      - name: Panel (Streamlit page opens with and without a training log; task layer is in the unit tests)
+      - name: Cleanup preview
         run: |
-          python -m pip install -q "streamlit>=1.37"
           cd bgrl
-          python -X utf8 -c "from streamlit.testing.v1 import AppTest; at = AppTest.from_file('panel/app.py', default_timeout=120).run(); assert not at.exception, at.exception; print('empty OK', len(at.metric))"
-          mkdir -p runs/v3 && cp runs/_smoke/log.jsonl runs/_smoke/dashboard.md runs/v3/
-          python -X utf8 -c "from streamlit.testing.v1 import AppTest; at = AppTest.from_file('panel/app.py', default_timeout=120).run(); assert not at.exception, at.exception; assert len(at.metric) > 5, len(at.metric); print('with log OK', len(at.metric)); import urllib.request; assert b'<html' in urllib.request.urlopen('http://127.0.0.1:8767/', timeout=10).read().lower(); print('viewer OK')"
           python -X utf8 bg.py cleanup

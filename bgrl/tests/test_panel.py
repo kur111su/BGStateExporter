@@ -1,5 +1,5 @@
 """面板的任务层（panel/jobs.py、panel/runner.py）和它跑的两个新命令（tools/cleanup.py、tools/arena_run.py）。
-不需要 Streamlit、torch、TavernGym；界面（panel/app.py）在 CI 里另外用 Streamlit 的 AppTest 打开一遍。"""
+不需要 torch、TavernGym；界面（panel/gui.py）在 CI 里另外用 tests/gui_smoke.py 打开一遍。"""
 from __future__ import annotations
 
 import os
