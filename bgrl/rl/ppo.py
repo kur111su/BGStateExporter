@@ -1460,6 +1460,11 @@ class Trainer(ShapingMixin, ImitationMixin):
             return None
         for q in t.parameters():
             q.requires_grad_(False)
+        if info.get("external"):                       # 外部模型（rl/extnet.py）：不 torch.load 它
+            self.teacher_id = f"external:{p.name}:{int(info['mtime'])}"
+            print(f"老师模型：外部模型 {p}（{info.get('license')}；只在本机用，不进 Git、不打包进竞技场）；"
+                  f"系数 {cfg.teacher_coef}，前 {cfg.teacher_ramp} 轮慢慢加上，teacher_mode {cfg.teacher_mode}", flush=True)
+            return t.eval()
         meta = torch.load(p, map_location="cpu", weights_only=False).get("teacher") or {}
         self.teacher_id = meta.get("created")
         val = meta.get("val") or {}

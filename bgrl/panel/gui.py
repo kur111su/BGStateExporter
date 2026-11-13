@@ -25,7 +25,7 @@ from panel import jobs as J  # noqa: E402
 PALETTE = ["#2f6fdf", "#e0702a", "#2e9e5b", "#c23b5b", "#7a5bd6", "#8a8a8a"]
 ICON = {"queued": "🕒", "running": "▶", "done": "✔", "failed": "✘", "stopped": "■", "lost": "⚠"}
 PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "update": "自动换新模型", "keep_from": "快照留到第几轮"}
-CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）"}
+CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data\\external\\model.pt）"}
 SHORT = {
     "train": "接着 runs\\v3 练。停止 = 这一轮跑完存盘再退出。",
     "train_restore": "模型退回考试最好的那一版，从那里接着练。",

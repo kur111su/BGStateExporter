@@ -49,6 +49,10 @@ def main() -> int:
     ap.add_argument("--out", default=str(HERE / "model_bundle"))
     ap.add_argument("--name", default=NAME, help="竞技场上显示的模型名（后面自动加 -it训练轮数）")
     a = ap.parse_args()
+    from rl.extnet import is_external
+    if is_external(a.ckpt):
+        print("这是外部模型（别人的，CC BY-NC 4.0）：不打包进竞技场，只在本机训练 / 测试里用。", flush=True)
+        return 2
     model, info = load_model(a.ckpt, "cpu")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

@@ -37,8 +37,12 @@ def _train(p):
     return [_bg("train", "--recipe", "configs/v3.json", "--resume", *init, "--threads", p["threads"])]
 
 
+EXTERNAL = "data/external/model.pt"      # 外部模型（rl/extnet.py；别人的权重，只在本机）
+
+
 def _ckpt(p) -> list[str]:
-    return [] if p.get("ckpt", "latest") == "latest" else ["--ckpt", "runs/v3/best.pt"]
+    k = p.get("ckpt", "latest")
+    return [] if k == "latest" else ["--ckpt", EXTERNAL if k == "external" else "runs/v3/best.pt"]
 
 
 def _arena(mode):
@@ -46,7 +50,7 @@ def _arena(mode):
 
 
 _GAMES = ("int", 64, 16, 1024)
-_CKPT = ("choice", "latest", ("latest", "best"))
+_CKPT = ("choice", "latest", ("latest", "best", "external"))
 # 任务 → 标题、分组、说明、参数 {名字: (类型, 默认, …)}、怎么拼命令、怎么停（file = 让训练自己存盘退出）、要不要二次确认
 SPECS: dict[str, dict] = {
     "train": dict(title="训练", group="train", stop="file", params={"threads": ("int", os.cpu_count() or 4, 1, 256)},

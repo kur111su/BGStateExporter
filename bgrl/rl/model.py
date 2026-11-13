@@ -487,8 +487,12 @@ def n_params(m: nn.Module) -> int:
 
 
 def load_model(path: str | Path, device: str = "cpu"):
-    """读 latest.pt（含模型大小）或对手库快照（只有参数，大小从同一训练目录的 config.json 读）。"""
+    """读 latest.pt（含模型大小）或对手库快照（只有参数，大小从同一训练目录的 config.json 读）。
+    外部模型（rl/extnet.py，data\\external\\model.pt）也能读：不用 torch.load，返回接口一样的模型。"""
     path = Path(path)
+    from .extnet import is_external, load_external
+    if is_external(path):
+        return load_external(path, device)
     ck = torch.load(path, map_location=device, weights_only=False)
     info = {"path": str(path), "mtime": path.stat().st_mtime}
     if isinstance(ck, dict) and "model" in ck:

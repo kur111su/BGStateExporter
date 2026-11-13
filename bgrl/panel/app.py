@@ -22,7 +22,7 @@ from rl import board as B  # noqa: E402
 RUN = J.RUN
 ICON = {"queued": "🕒", "running": "▶️", "done": "✅", "failed": "❌", "stopped": "⏹️", "lost": "⚠️"}
 PARAM_ZH = {"games": "局数", "ckpt": "用哪个模型", "threads": "线程数", "update": "自动换新模型", "keep_from": "快照留到第几轮为止"}
-CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）"}
+CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data\\external\\model.pt）"}
 
 st.set_page_config(page_title="酒馆战旗 AI 面板", page_icon="🍺", layout="wide")
 

@@ -42,6 +42,13 @@ jobs:
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --cgift-frac 0.4 --cgift-turns 2,3,4 --cgift-p 1.0 --look-coef 0.1 --look-from 3 --look-per-iter 8 --look-min 4 --look-batch 8 --look-k 3 --look-depth 3 --target-bonus 0.5
+      - name: External model loader (random weights in the same file format) + tiny PPO run with it as teacher + goldflow with it
+        run: |
+          python -X utf8 bgrl/tests/test_extnet.py
+          python -X utf8 -c "import sys; sys.path.insert(0, 'bgrl'); sys.path.insert(0, 'bgrl/tests'); from pathlib import Path; from test_extnet import fake_ckpt; fake_ckpt(Path('bgrl/runs/_ext_ci.pt'))"
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2
+          python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt
+          python -X utf8 bgrl/arena/export.py --ckpt bgrl/runs/_ext_ci.pt --out bgrl/runs/_ext_bundle_ci && exit 1 || test ! -e bgrl/runs/_ext_bundle_ci/model.pt
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
         run: |
           python -X utf8 bgrl/tests/test_hsreplay.py --write-sample bgrl/runs/_replays
