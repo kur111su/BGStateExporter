@@ -216,7 +216,7 @@ class EntityTransformer(nn.Module):
     N_TYPES = 12
 
     def __init__(self, layout: Layout, static: np.ndarray, d: int = 192, layers: int = 4, heads: int = 4,
-                 dc: int = 64, comp_tables: dict | None = None):
+                 dc: int = 64, comp_tables: dict | None = None, card_attr: np.ndarray | None = None):
         super().__init__()
         self.L = layout
         self.fs = layout.fslices()
@@ -262,6 +262,11 @@ class EntityTransformer(nn.Module):
         self.syn_proj = nn.Linear(SYN_F, d)
         nn.init.zeros_(self.syn_proj.weight)
         nn.init.zeros_(self.syn_proj.bias)
+        # 卡牌属性表（第 25090 轮后）：外部模型的 311 维属性（rl/extnet.py，data\\external\\model.pt 里的 attr；行 = 卡牌编号，对齐的）。
+        # 表不是参数、不进检查点（训练时从那个文件读，竞技场打包成 attr.npy）；投影是 0 起步，加上那一刻模型行为不变。
+        # 没有表时是 0 列，什么都不加。参数排在最后（旧检查点的优化器状态能接上，grow_opt_state）。
+        self.dc = dc
+        self.set_card_attr(card_attr)
         self.last_comp_logits = None
         self._register_load_state_dict_pre_hook(self._fill_new_keys, with_module=False)
         # 每个词的类型和槽位序号（不是参数，不进检查点）
@@ -271,7 +276,36 @@ class EntityTransformer(nn.Module):
         self.register_buffer("slot_ids", torch.tensor([i for t, n in groups for i in range(n)]), persistent=False)
         self.pack = True          # 只把有内容的词送进 Transformer（结果不变，省约一半计算）
 
+    def set_card_attr(self, table: np.ndarray | None, k: int | None = None) -> None:
+        """换卡牌属性表；投影重新建（0 起步）。table=None：k 列全 0 的表（检查点里有投影、但没有表文件时）。"""
+        n = self.card.static.shape[0] - 1
+        if table is None:
+            table = np.zeros((n, int(k or 0)), dtype=np.float32)
+        table = np.asarray(table, dtype=np.float32)
+        if table.shape[0] != n:
+            raise ValueError(f"卡牌属性表有 {table.shape[0]} 行，现在的卡牌有 {n} 张（TavernGym 换过版本？）")
+        dev = self.card.static.device
+        self.register_buffer("card_attr", torch.from_numpy(np.ascontiguousarray(table)).to(dev), persistent=False)
+        self.attr_proj = nn.Linear(table.shape[1], self.dc, bias=False).to(dev)
+        nn.init.zeros_(self.attr_proj.weight)
+
+    def embed_card(self, idx: torch.Tensor) -> torch.Tensor:
+        """卡牌编号 → dc 维：编号嵌入 + 原来的静态特征 + 属性表（有的话）。"""
+        e = self.card(idx)
+        if self.card_attr.shape[1] == 0:
+            return e
+        a = self.card_attr[idx.clamp(min=0, max=self.card_attr.shape[0] - 1)]
+        return e + self.attr_proj(a.to(e.dtype))
+
     def _fill_new_keys(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        w = state_dict.get(prefix + "attr_proj.weight")
+        if w is None:                                   # 旧检查点没有属性投影：用现在的（0）
+            state_dict[prefix + "attr_proj.weight"] = self.attr_proj.weight.detach().clone()
+        elif tuple(w.shape) != tuple(self.attr_proj.weight.shape):
+            # 检查点练过属性投影、这里却没有那张表（或列数不同）：投影照检查点的大小建，表是全 0（等于没用上，行为会和训练时不一样）
+            print(f"注意：检查点用了 {w.shape[1]} 维卡牌属性，这里没有对应的属性表（data\\external\\model.pt / attr.npy），"
+                  "这部分输入按 0 算。", flush=True)
+            self.set_card_attr(None, k=int(w.shape[1]))
         """旧检查点（第 15300 轮以前没有体系感知、第 15313 轮以前没有联动感知）：用现在的初始值补上（输入层是 0，行为和原来一样）。"""
         for name in ("comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias", "syn_proj.weight",
                      "syn_proj.bias"):
@@ -294,7 +328,7 @@ class EntityTransformer(nn.Module):
         合并成几次大的，显卡上快很多。"""
         B = f.shape[0]
         L, fs, cs, d = self.L, self.fs, self.cs, self.d
-        E = self.card(c)                                       # [B,124,dc] 所有卡一次算
+        E = self.embed_card(c)                                       # [B,124,dc] 所有卡一次算
         D = self.card_to_d(E)                                  # [B,124,d]
         bias = self.card_to_d.bias
         sl = lambda T, a, b=None: T[:, cs[a][0]:cs[b or a][1]]   # noqa: E731
@@ -334,7 +368,7 @@ class EntityTransformer(nn.Module):
         B = f.shape[0]
         L, fs, cs, d = self.L, self.fs, self.cs, self.d
         dev = f.device
-        cardv = lambda name: self.card(c[:, cs[name][0]:cs[name][1]])           # noqa: E731
+        cardv = lambda name: self.embed_card(c[:, cs[name][0]:cs[name][1]])           # noqa: E731
         toks, pres, types = [], [], []
 
         def add(x, p, t):
@@ -368,7 +402,7 @@ class EntityTransformer(nn.Module):
             o += n
         of = f[:, fs["opp"][0]:fs["opp"][1]].view(B, L.NOPP, L.OPPF)
         obf = f[:, fs["oppboard"][0]:fs["oppboard"][1]].view(B, L.NOPP, L.NB, L.MF)
-        obc = self.card(c[:, cs["oppboard"][0]:cs["oppboard"][1]]).view(B, L.NOPP, L.NB, -1)
+        obc = self.embed_card(c[:, cs["oppboard"][0]:cs["oppboard"][1]]).view(B, L.NOPP, L.NB, -1)
         om = self.opp_minion(torch.cat([obf, obc], -1))
         opres = (obf[..., 0] > 0).float().unsqueeze(-1)
         pooled = (om * opres).sum(2) / opres.sum(2).clamp(min=1.0)
@@ -474,12 +508,36 @@ def comp_tables():
         return None
 
 
-def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64, tables="auto") -> EntityTransformer:
+EXT_MODEL = Path(__file__).resolve().parents[1] / "data" / "external" / "model.pt"
+
+
+def external_card_attr(path: Path | None = None, rows: int | None = None):
+    """外部模型文件里的卡牌属性表（[卡牌数, 311]，行 = 卡牌编号）。没有文件、读不了、行数对不上 → None。"""
+    path = Path(path or EXT_MODEL)
+    if not path.exists():
+        return None
+    try:
+        from .extnet import load_checkpoint
+        a = np.asarray(load_checkpoint(path)["state_dict"]["attr"], dtype=np.float32)
+    except Exception as ex:                             # noqa: BLE001
+        print(f"卡牌属性表读不了（{path}：{type(ex).__name__}: {ex}），这次不用", flush=True)
+        return None
+    if rows is not None and a.shape[0] != rows:
+        print(f"卡牌属性表有 {a.shape[0]} 行，现在的卡牌有 {rows} 张，对不上，这次不用", flush=True)
+        return None
+    return a
+
+
+def build_model(d: int = 192, layers: int = 4, heads: int = 4, dc: int = 64, tables="auto",
+                card_attr="auto") -> EntityTransformer:
     import taverngym._core as c
     n, raw = c.card_static()
     static = np.frombuffer(raw, dtype="<f4").reshape(-1, n).copy()
     tables = comp_tables() if isinstance(tables, str) else tables
-    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads, dc=dc, comp_tables=tables)
+    if isinstance(card_attr, str):
+        card_attr = external_card_attr(rows=static.shape[0])
+    return EntityTransformer(Layout.from_taverngym(), static, d=d, layers=layers, heads=heads, dc=dc, comp_tables=tables,
+                             card_attr=card_attr)
 
 
 def n_params(m: nn.Module) -> int:

@@ -60,7 +60,7 @@ configs\v3.json ──▶ train（TavernGym 里 PPO 训练）──▶ runs\v3\l
 | --- | --- |
 | 训练进度、模型、对手库快照 | `bgrl\runs\v3\`（`log.jsonl`、`latest.pt`、`best.pt`、`snapshots\`） |
 | 高分对局原始数据（不进 Git） | `bgrl\data\` |
-| 外部模型（别人的权重，CC BY-NC 4.0，训练时当老师；不进 Git、不打包进竞技场） | `bgrl\data\external\model.pt` |
+| 外部模型（jimmypretend/hearthstone-bg-ppo，CC BY-NC 4.0；模型用它里面的 311 维卡牌属性表，也能在“测试”里当对照；不进 Git） | `bgrl\data\external\model.pt` |
 | 竞技场打包的模型、密钥、对局结果（不进 Git） | `bgrl\arena\model_bundle\`、`bgrl\arena\key.txt`、`bgrl\arena\results\` |
 | 评测报告、安装日志、面板的任务记录和输出 | `bgrl\reports\`（`reports\panel\jobs\`） |
 

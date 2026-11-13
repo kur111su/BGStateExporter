@@ -533,6 +533,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         (self.run / "snapshots").mkdir(parents=True, exist_ok=True)
         self.mkw = cfg.model_kwargs()
         self.model = build_model(**self.mkw).to(self.dev)
+        ka = int(self.model.card_attr.shape[1])
+        print(f"卡牌属性表：{ka} 维（data\\external\\model.pt）" if ka else
+              "卡牌属性表：没有（data\\external\\model.pt 不在），只用原来的卡牌特征", flush=True)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=cfg.lr, eps=1e-5)
         self.amp = cfg.amp and self.dev.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=False)      # bfloat16 不需要缩放

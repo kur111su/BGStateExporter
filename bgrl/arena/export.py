@@ -78,6 +78,11 @@ def main() -> int:
             "vocab": [[x["index"], x["id"]] for x in cat["cards"]]}
     torch.save({"model": model.state_dict(), "model_kwargs": info["size"]}, out / "model.pt")
     np.save(out / "static.npy", static)
+    attr = model.card_attr.cpu().numpy()               # 卡牌属性表（模型用了才打包；竞技场那边读不到 data\\external）
+    if attr.shape[1] and float(model.attr_proj.weight.abs().max()) > 0:
+        np.save(out / "attr.npy", attr)
+    elif (out / "attr.npy").exists():
+        (out / "attr.npy").unlink()
     from rl.model import comp_tables
     tab = comp_tables()                                # 体系感知的阵容查表（竞技场那边没有 TavernGym，算不了）
     if tab is not None:

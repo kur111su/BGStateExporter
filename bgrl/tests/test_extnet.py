@@ -117,7 +117,59 @@ def main():
     own = tmp / "own.pt"
     torch.save({"model": {"w": torch.zeros(2)}}, own)
     assert not X.is_external(own)
+    card_attr_checks()
     print("extnet ok")
+
+
+def card_attr_checks():
+    """我们的模型加 311 维卡牌属性：加上那一刻输出不变；旧检查点能读；梯度能到属性投影；没有表时照检查点的大小建。"""
+    import taverngym._core as c
+    from rl.model import build_model
+    f, cc, m = sample_obs(8)
+    ft, ct, mt = torch.from_numpy(f), torch.from_numpy(cc), torch.from_numpy(m)
+    torch.manual_seed(0)
+    base = build_model(64, 2, 2, 32, card_attr=None).eval()
+    assert base.card_attr.shape[1] == 0 and base.attr_proj.weight.numel() == 0
+    table = np.random.default_rng(0).random((c.N_CARDS, 311), dtype=np.float32)
+    new = build_model(64, 2, 2, 32, card_attr=table).eval()
+    assert list(new.state_dict())[-1] == "attr_proj.weight" and "card_attr" not in new.state_dict()
+    assert [n for n, _ in new.named_parameters()][-1] == "attr_proj.weight"
+    old_sd = {k: v for k, v in base.state_dict().items() if k != "attr_proj.weight"}      # 旧检查点：没有这个键
+    new.load_state_dict(old_sd)
+    with torch.no_grad():
+        a, b = base(ft, ct, mt), new(ft, ct, mt)
+        s1, s2 = base(ft, ct, mt, slow=True), new(ft, ct, mt, slow=True)
+    assert float((a[0] - b[0]).abs().max()) == 0 and float((a[1] - b[1]).abs().max()) == 0, "加属性表那一刻输出变了"
+    assert float((s1[0] - s2[0]).abs().max()) == 0
+    new.train()
+    lg = new(ft, ct, mt)[0]
+    lg.masked_fill(~mt, 0).pow(2).mean().backward()
+    g = new.attr_proj.weight.grad
+    assert g is not None and float(g.abs().sum()) > 0, "梯度没到属性投影"
+    with torch.no_grad():
+        new.attr_proj.weight.add_(0.05 * torch.randn_like(new.attr_proj.weight))
+    new.eval()
+    with torch.no_grad():
+        want = new(ft, ct, mt)[0]
+    assert float((want - a[0]).abs().max()) > 0
+    # 练过属性投影的检查点 → 有表的模型：输出一样；快慢两条路一样
+    again = build_model(64, 2, 2, 32, card_attr=table).eval()
+    again.load_state_dict(new.state_dict())
+    with torch.no_grad():
+        assert float((again(ft, ct, mt)[0] - want).abs().max()) < 1e-5
+        assert float((again(ft, ct, mt, slow=True)[0] - want).abs().max()) < 1e-3
+    # 没有表的模型读它：投影照检查点建、表全 0，不报错
+    bare = build_model(64, 2, 2, 32, card_attr=None).eval()
+    bare.load_state_dict(new.state_dict())
+    assert tuple(bare.attr_proj.weight.shape) == (32, 311) and float(bare.card_attr.abs().sum()) == 0
+    with torch.no_grad():
+        assert float((bare(ft, ct, mt)[0] - a[0]).abs().max()) < 1e-5
+    # 优化器状态：旧的少一个参数，能接上
+    from rl.ppo import grow_opt_state
+    o_old = torch.optim.Adam(base.parameters(), lr=1e-3)
+    o_new = torch.optim.Adam(again.parameters(), lr=1e-3)
+    o_new.load_state_dict(grow_opt_state(o_new, o_old.state_dict()))
+    print("card attr ok")
 
 
 if __name__ == "__main__":

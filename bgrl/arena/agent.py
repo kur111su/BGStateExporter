@@ -67,7 +67,9 @@ def _load():
     ck = torch.load(bundle / "model.pt", map_location="cpu", weights_only=True)
     comp = bundle / "comp.npz"                     # 体系感知的阵容查表（arena/export.py 打包；旧的打包没有 → 输入全是 0）
     tables = dict(np.load(comp)) if comp.exists() else None
-    model = EntityTransformer(L, np.load(bundle / "static.npy"), **ck["model_kwargs"], comp_tables=tables).eval()
+    attr = bundle / "attr.npy"                     # 卡牌属性表（模型用了才有）
+    model = EntityTransformer(L, np.load(bundle / "static.npy"), **ck["model_kwargs"], comp_tables=tables,
+                              card_attr=np.load(attr) if attr.exists() else None).eval()
     model.load_state_dict(ck["model"])
     torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
     remap = np.load(HERE / "remap.npy")
