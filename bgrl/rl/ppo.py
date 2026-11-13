@@ -221,6 +221,10 @@ class Config:
     seed_comp_turns: str = "8,9"
     seed_comp_formed_from: int = 8     # 早于这一回合换的是“做到一半”的场面（核心卡过半、场上 2 个本族随从），学怎么做完
     teacher_conf: float = 0.5
+    # 只学老师的某几类动作（hard 模式）：例如 "sell" = 只在老师有把握、而且它最想做的是“卖随从”的局面上学；可选
+    # end / refresh / freeze / upgrade / buy / sell / play，逗号分开。空 = 全学。teacher_from_turn：早于这一回合的局面不学
+    teacher_actions: str = ""
+    teacher_from_turn: int = 0
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
     target_weights: str = ""
     # 阵容成型奖励 q 里三项的权重：主种族纯度、万三常见搭配、关键卡（加起来是 1 就是满分 1）。
@@ -398,6 +402,24 @@ def place_score_equiv(places, tab) -> float:
     if tab is None:
         return float(np.mean(places))
     return float(4.5 - 3.5 * np.mean([tab[int(p)] for p in places]))
+
+
+TEACHER_FAMILIES = {"end": (0, 1), "refresh": (1, 2), "freeze": (2, 3), "upgrade": (3, 4), "buy": (8, 16), "sell": (16, 23),
+                    "play": (46, 126)}
+
+
+def teacher_action_mask(spec: str, n_actions: int):
+    """"sell,buy" → [动作数] 的 0/1（这几类动作是 1）。空 → None（全学）。不认识的名字报错。"""
+    names = [x.strip() for x in str(spec or "").split(",") if x.strip()]
+    if not names:
+        return None
+    out = np.zeros(int(n_actions), dtype=np.float32)
+    for nm in names:
+        if nm not in TEACHER_FAMILIES:
+            raise ValueError(f"teacher_actions 里不认识 {nm!r}，可选 {sorted(TEACHER_FAMILIES)}")
+        a, b = TEACHER_FAMILIES[nm]
+        out[a:b] = 1.0
+    return out
 
 
 def grow_opt_state(opt, od: dict) -> dict:
@@ -982,6 +1004,11 @@ class Trainer(ShapingMixin, ImitationMixin):
                         else:                                            # 只在老师有把握的局面，学老师最想做的那个动作
                             tp, ta = tl.max(-1)
                             sure = (tp.exp() >= cfg.teacher_conf).float()
+                            want = teacher_action_mask(getattr(cfg, "teacher_actions", ""), logp_all.shape[1])
+                            if want is not None:
+                                sure = sure * t(want, torch.float32)[ta]
+                            if getattr(cfg, "teacher_from_turn", 0) > 0:
+                                sure = sure * (torch.round(f[:, 0].float() * 20) >= cfg.teacher_from_turn).float()
                             nll_t = -logp_all.gather(1, ta.unsqueeze(1)).squeeze(1).clamp(max=20)
                             loss = loss + tcoef * (nll_t * sure * tw_t).mean()
                             stats["teacher_sure"].append(float(sure.mean()))

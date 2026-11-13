@@ -169,6 +169,15 @@ def card_attr_checks():
     o_old = torch.optim.Adam(base.parameters(), lr=1e-3)
     o_new = torch.optim.Adam(again.parameters(), lr=1e-3)
     o_new.load_state_dict(grow_opt_state(o_new, o_old.state_dict()))
+    from rl.ppo import teacher_action_mask
+    assert teacher_action_mask("", 245) is None
+    w = teacher_action_mask("sell, refresh", 245)
+    assert w.sum() == 8 and w[16:23].all() and w[1] == 1 and w[0] == 0 and w[8] == 0
+    try:
+        teacher_action_mask("selll", 245)
+        raise AssertionError("不认识的动作类别没报错")
+    except ValueError:
+        pass
     print("card attr ok")
 
 

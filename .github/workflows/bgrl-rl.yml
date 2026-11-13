@@ -46,7 +46,7 @@ jobs:
         run: |
           python -X utf8 bgrl/tests/test_extnet.py
           python -X utf8 -c "import sys; sys.path.insert(0, 'bgrl'); sys.path.insert(0, 'bgrl/tests'); from pathlib import Path; from test_extnet import fake_ckpt; fake_ckpt(Path('bgrl/runs/_ext_ci.pt'))"
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-actions sell,buy --teacher-from-turn 1 --teacher-conf 0.05
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/arena/export.py --ckpt bgrl/runs/_ext_ci.pt --out bgrl/runs/_ext_bundle_ci && exit 1 || test ! -e bgrl/runs/_ext_bundle_ci/model.pt
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
