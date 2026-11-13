@@ -19,9 +19,9 @@ sys.path.insert(0, str(HERE))
 from rl.device import BENCH, available, perf_cores  # noqa: E402
 
 
-def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: str) -> dict:
+def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: str, steps: int = 32) -> dict:
     cmd = [sys.executable, "-X", "utf8", str(HERE / "tools" / "train.py"), "--bench", "--iters", str(iters), "--device", dev,
-           "--rollout-device", rdev, "--threads", str(threads), "--verbose"]
+           "--rollout-device", rdev, "--threads", str(threads), "--verbose", "--steps-per-iter", str(steps)]
     if recipe:
         cmd += ["--recipe", recipe]
     if size:
@@ -53,6 +53,7 @@ def main(argv=None) -> int:
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--size", default="")
+    ap.add_argument("--steps", type=int, default=32, help="每轮每局走几步（训练是 128；短一点测得快，每秒决策数差不多）")
     ap.add_argument("--recipe", default="configs/v3.json")
     a = ap.parse_args(argv)
     av = available()
@@ -67,7 +68,7 @@ def main(argv=None) -> int:
     res = []
     for dev, rdev in combos:
         print(f"  测 更新 {dev} + 采样 {rdev} …", flush=True)
-        r = run_one(dev, rdev, a.iters, threads, a.size, recipe)
+        r = run_one(dev, rdev, a.iters, threads, a.size, recipe, a.steps)
         res.append(r)
         if r["ok"]:
             print(f"    {r.get('dps', 0):.0f} 决策/秒（采样 {r.get('t_collect', 0):.1f}s，其中模拟器 {r.get('t_env', 0):.1f}s、"
@@ -83,7 +84,7 @@ def main(argv=None) -> int:
     allc = os.cpu_count() or threads
     if not a.threads and allc > threads:                # 再试一下把效率核也用上
         print(f"  测 更新 {best['device']} + 采样 {best['rollout']}，模拟器线程 {allc}（含效率核）…", flush=True)
-        r = run_one(best["device"], best["rollout"], a.iters, allc, a.size, recipe)
+        r = run_one(best["device"], best["rollout"], a.iters, allc, a.size, recipe, a.steps)
         r["threads"] = allc
         res.append(r)
         if r["ok"]:
