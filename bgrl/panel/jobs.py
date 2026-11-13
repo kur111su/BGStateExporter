@@ -34,7 +34,13 @@ def _bg(*args) -> list[str]:
 def _train(p):
     init = [] if (RUN / "latest.pt").exists() or not (ROOT / "runs" / "v2" / "latest.pt").exists() \
         else ["--init", "runs/v2/latest.pt"]
-    return [_bg("train", "--recipe", "configs/v3.json", "--resume", *init, "--threads", p["threads"])]
+    dev = ["--device", p["device"]] if p.get("device", "auto") != "auto" else []
+    return [_bg("train", "--recipe", "configs/v3.json", "--resume", *init, "--threads", p["threads"], *dev)]
+
+
+def _threads_default() -> int:
+    from rl.device import default_threads             # 不 import torch
+    return default_threads()
 
 
 EXTERNAL = "data/external/model.pt"      # 外部模型（rl/extnet.py；别人的权重，只在本机）
@@ -50,18 +56,19 @@ def _arena(mode):
 
 
 _GAMES = ("int", 64, 16, 1024)
+_TRAIN = {"threads": ("int", _threads_default(), 1, 256), "device": ("choice", "auto", ("auto", "mps", "cuda", "cpu"))}
 _CKPT = ("choice", "latest", ("latest", "best", "external"))
 # 任务 → 标题、分组、说明、参数 {名字: (类型, 默认, …)}、怎么拼命令、怎么停（file = 让训练自己存盘退出）、要不要二次确认
 SPECS: dict[str, dict] = {
-    "train": dict(title="训练", group="train", stop="file", params={"threads": ("int", os.cpu_count() or 4, 1, 256)},
-                  desc="接着 runs\\v3 练（configs\\v3.json）。停止 = 这一轮跑完、存好进度再退出。", build=_train),
+    "train": dict(title="训练", group="train", stop="file", params=dict(_TRAIN),
+                  desc="接着 runs/v3 练（configs/v3.json）。停止 = 这一轮跑完、存好进度再退出。", build=_train),
     "train_restore": dict(title="退回 best.pt 再练", group="train", stop="file",
-                          params={"threads": ("int", os.cpu_count() or 4, 1, 256)},
-                          confirm="模型退回考试成绩最好的那一版（runs\\v3\\best.pt），那之后练的丢掉（日志和快照还在）。",
-                          desc="接着 runs\\v3 的日志练，但模型换回 best.pt、优化器重新开始。停了以后再点普通的“训练”接着练，不用再点这个。",
+                          params=dict(_TRAIN),
+                          confirm="模型退回考试成绩最好的那一版（runs/v3/best.pt），那之后练的丢掉（日志和快照还在）。",
+                          desc="接着 runs/v3 的日志练，但模型换回 best.pt、优化器重新开始。停了以后再点普通的“训练”接着练，不用再点这个。",
                           build=lambda p: [_train(p)[0] + ["--restore", "runs/v3/best.pt"]]),
     "teacher": dict(title="老师模型", group="train", params={},
-                    desc="只模仿高分示范，挑留出局上最好的一版 → runs\\teacher.pt。约 15–25 分钟，和训练不能同时跑。",
+                    desc="只模仿高分示范，挑留出局上最好的一版 → runs/teacher.pt。约 15–25 分钟，和训练不能同时跑。",
                     build=lambda p: [_bg("teacher")]),
     "comptest": dict(title="阵容测试", group="test", params={"games": _GAMES, "ckpt": _CKPT},
                      desc="模型打换成高分阵容的对手：金币流向、最终阵容、成型比例，和高手并排比。64 局约 2 分钟。",
@@ -76,20 +83,23 @@ SPECS: dict[str, dict] = {
     "tavernbench": dict(title="TavernBench 评测", group="test", params={},
                         desc="论文的 368 题评测集。只用 CPU，训练时也能跑。", build=lambda p: [_bg("tavernbench")]),
     "selftest": dict(title="自检", group="test", params={}, desc="跑一遍单元测试（几分钟）。", build=lambda p: [_bg("test")]),
-    "info": dict(title="环境信息", group="misc", params={}, desc="Python、PyTorch / 显卡、TavernGym 版本、训练进度。",
+    "bench_device": dict(title="测设备速度", group="train", params={},
+                         desc="几种设备组合（Mac：MPS / CPU）各跑几轮训练比速度，最快的记下来，训练设备选“自动”时用它。约 5–15 分钟，和训练不能同时跑。",
+                         build=lambda p: [_bg("bench-device")]),
+    "info": dict(title="环境信息", group="misc", params={}, desc="Python、PyTorch、可用设备（CUDA / MPS）、TavernGym 版本、训练进度。",
                  build=lambda p: [_bg("info")]),
-    "board": dict(title="重画看板", group="misc", params={}, desc="按最新日志重画 runs\\v3\\dashboard.md 和曲线图。",
+    "board": dict(title="重画看板", group="misc", params={}, desc="按最新日志重画 runs/v3/dashboard.md 和曲线图。",
                   build=lambda p: [_bg("board")]),
     "prodemos": dict(title="高分样本", group="data", params={},
-                     desc="bgrl\\data\\firestone 里的 6500+ 分享包 → 决策样本 runs\\pro_demos。约 10–20 分钟。",
+                     desc="bgrl/data/firestone 里的 6500+ 分享包 → 决策样本 runs/pro_demos。约 10–20 分钟。",
                      build=lambda p: [_bg("prodemos", "data/firestone")]),
-    "cardvalue": dict(title="卡牌价值", group="data", params={}, desc="高手怎么挑卡：挑中倍率、关键卡、经济卡 → rl\\card_value.json。",
+    "cardvalue": dict(title="卡牌价值", group="data", params={}, desc="高手怎么挑卡：挑中倍率、关键卡、经济卡 → rl/card_value.json。",
                       build=lambda p: [_bg("cardvalue")]),
     "playbook": dict(title="阵容配套卡", group="data", params={},
-                     desc="高手做某一套阵容时比平时多买的卡 → rl\\target_comps.json 的配套卡。改过目标阵容以后跑一次。",
+                     desc="高手做某一套阵容时比平时多买的卡 → rl/target_comps.json 的配套卡。改过目标阵容以后跑一次。",
                      build=lambda p: [_bg("playbook")]),
     "arena_check": dict(title="竞技场：打包并检查", group="arena", params={},
-                        desc="把 runs\\v3\\latest.pt 打包成竞技场用的模型，核对契约和卡牌表（不排队、不计分）。",
+                        desc="把 runs/v3/latest.pt 打包成竞技场用的模型，核对契约和卡牌表（不排队、不计分）。",
                         build=_arena("check")),
     "arena_practice": dict(title="竞技场：练习局", group="arena", params={}, desc="打一局练习（不计分）。", build=_arena("practice")),
     "arena_match": dict(title="竞技场：计分局（1 局）", group="arena", params={}, confirm="这一局计入竞技场排名。",

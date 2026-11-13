@@ -62,17 +62,18 @@ def ensure_venv() -> bool:
         if base is None:
             print("竞技场连接器要 Python 3.12 以上，这台电脑上没找到。")
             return False
-        print("建 arena\\.venv ……", flush=True)
+        print("建 arena/.venv ……", flush=True)
         if _run(base + ["-m", "venv", VENV]):
             return False
     if _run([APY, "-c", "import numpy, torch"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
-        print("往 arena\\.venv 里装 numpy 和 PyTorch CPU 版（约 200 MB）……", flush=True)
+        print("往 arena/.venv 里装 numpy 和 PyTorch CPU 版（约 200 MB）……", flush=True)
         _run([APY, "-m", "pip", "install", "-q", "numpy"])
-        if _run([APY, "-m", "pip", "install", "-q", "torch", "--index-url", "https://download.pytorch.org/whl/cpu"]):
+        idx = [] if sys.platform == "darwin" else ["--index-url", "https://download.pytorch.org/whl/cpu"]   # Mac：PyPI 的就是 CPU / MPS 版
+        if _run([APY, "-m", "pip", "install", "-q", "torch", *idx]):
             print("装不上 PyTorch。")
             return False
     if _run([APY, "-I", "-c", "import importlib.util,sys; sys.exit(1 if importlib.util.find_spec('taverngym') else 0)"]):
-        print("arena\\.venv 里不能有 TavernGym。删掉 arena\\.venv 再来一次。")
+        print("arena/.venv 里不能有 TavernGym。删掉 arena/.venv 再来一次。")
         return False
     return True
 
@@ -111,7 +112,7 @@ def key_env() -> dict | None:
     if not k and p.exists():
         k = (p.read_text(encoding="utf-8").strip().splitlines() or [""])[0].strip()
     if not k:
-        print("没有参赛密钥。把它单独放进 bgrl\\arena\\key.txt（只放密钥这一行）。")
+        print("没有参赛密钥。把它单独放进 bgrl/arena/key.txt（只放密钥这一行）。")
         return None
     return dict(os.environ, ARENA_API_KEY=k)
 

@@ -1,4 +1,4 @@
-"""程序看板（桌面程序，PySide6 + pyqtgraph）：训练看板、所有操作、竞技场对局，都在一个窗口里。双击 panel.bat。
+"""程序看板（桌面程序，PySide6 + pyqtgraph）：训练看板、所有操作、竞技场对局，都在一个窗口里。Windows 双击 panel.bat，Mac 双击 panel.command。
 
 只是界面：任务的启动 / 排队 / 停止在 panel/jobs.py（独立进程跑，关掉这个窗口不影响训练，再打开能接着看）；
 要显示的数据在 panel/data.py 算。不开网页、不监听端口。
@@ -24,18 +24,20 @@ from panel import jobs as J  # noqa: E402
 
 PALETTE = ["#2f6fdf", "#e0702a", "#2e9e5b", "#c23b5b", "#7a5bd6", "#8a8a8a"]
 ICON = {"queued": "🕒", "running": "▶", "done": "✔", "failed": "✘", "stopped": "■", "lost": "⚠"}
-PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "update": "自动换新模型", "keep_from": "快照留到第几轮"}
-CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data\\external\\model.pt）"}
+PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型", "keep_from": "快照留到第几轮"}
+CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data/external/model.pt）",
+           "auto": "自动（实测最快的）", "mps": "MPS（Apple 芯片 GPU）", "cuda": "CUDA（NVIDIA 显卡）", "cpu": "CPU"}
 SHORT = {
-    "train": "接着 runs\\v3 练。停止 = 这一轮跑完存盘再退出。",
+    "train": "接着 runs/v3 练。停止 = 这一轮跑完存盘再退出。",
     "train_restore": "模型退回考试最好的那一版，从那里接着练。",
     "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
+    "bench_device": "比几种设备组合的训练速度，记下最快的（约 5–15 分钟）。",
     "board": "按最新日志重画 dashboard.md 和曲线图。",
     "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
     "comptest_seeded": "第 8–10 回合换成高手的成型场面，再自己打。",
     "goldflow": "前几回合的钱花在哪，和 6500+ 高手比。",
     "tavernbench": "论文的 368 题评测集，只用 CPU。",
-    "prodemos": "data\\firestone 的高分对局 → 决策样本。",
+    "prodemos": "data/firestone 的高分对局 → 决策样本。",
     "cardvalue": "高手怎么挑卡：挑中倍率、关键卡、经济卡。",
     "playbook": "各套目标阵容的配套卡。改过阵容表后跑一次。",
     "cleanup_preview": "只列出会删什么、各有多大，不删。",
@@ -44,7 +46,7 @@ SHORT = {
     "info": "Python、PyTorch / 显卡、TavernGym 版本。",
 }
 PAGES = [("看板", None, ""),
-         ("训练", ["train", "train_restore", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。"),
+         ("训练", ["train", "train_restore", "bench_device", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。"),
          ("测试", ["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。"),
          ("数据", ["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。"),
          ("竞技场", None, ""),
@@ -71,7 +73,7 @@ QPushButton#primary { background: #2f6fdf; color: #ffffff; border-color: #2f6fdf
 QPushButton#primary:disabled { background: #a9c1ee; border-color: #a9c1ee; color: #ffffff; }
 QPushButton#danger { color: #c23b5b; }
 QPushButton:checked { background: #2f6fdf; color: #ffffff; border-color: #2f6fdf; }
-QPlainTextEdit { background: #1e1e22; color: #e6e6ea; border-radius: 6px; font-family: Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", monospace; font-size: 12px; }
+QPlainTextEdit { background: #1e1e22; color: #e6e6ea; border-radius: 6px; font-family: Menlo, "SF Mono", Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", monospace; font-size: 12px; }
 QTableWidget { background: #ffffff; border: 1px solid #e3e1dc; gridline-color: #ecebe7; }
 QHeaderView::section { background: #f0efec; border: none; border-bottom: 1px solid #e3e1dc; padding: 4px 6px; font-weight: 600; }
 QListWidget#matches { background: #ffffff; border: 1px solid #e3e1dc; border-radius: 8px; }
@@ -503,7 +505,7 @@ class DashboardPage(QtWidgets.QScrollArea):
         """日志变了（而且离上次读过了 30 秒）就重读。"""
         st = self._stamp()
         if st is None:
-            self.head.setText("还没有训练日志（runs\\v3\\log.jsonl）。到“训练”页点开始。")
+            self.head.setText("还没有训练日志（runs/v3/log.jsonl）。到“训练”页点开始。")
             return
         if st == self.stamp or (not sync and time.time() - self.last_load < 30 and self.stamp is not None):
             return
@@ -527,13 +529,20 @@ class DashboardPage(QtWidgets.QScrollArea):
         rows = self.rows
         self.head.setText(D.header(rows))
         clear_layout(self.kpi)
-        for i, (name, a, b, lower, d) in enumerate(D.kpis(rows)):
-            sub, color = "", ""
-            if b is not None and abs(a - b) > 1e-9:
-                sub = f"{a - b:+.{d}f}"
-                if lower is not None:
-                    color = "#1f8a4c" if (a < b) == bool(lower) else "#c23b5b"
-            self.kpi.addWidget(Tile(name, f"{a:.{d}f}", sub or "—", color), i // 6, i % 6)
+        row = 0
+        for title, items in D.kpi_groups(rows):            # 每组一行标题 + 最多 6 个数字
+            self.kpi.addWidget(label(title, "h2"), row, 0, 1, 6)
+            row += 1
+            for i, (name, a, b, lower, d) in enumerate(items):
+                sub, color = "", ""
+                if b is not None and abs(a - b) > 10 ** -(d + 1):
+                    sub = f"{a - b:+.{d}f}"
+                    if lower is not None:
+                        color = "#1f8a4c" if (a < b) == bool(lower) else "#c23b5b"
+                self.kpi.addWidget(Tile(name, f"{a:.{d}f}", sub or "—", color), row + i // 6, i % 6)
+            row += (len(items) + 5) // 6
+        for col in range(6):
+            self.kpi.setColumnStretch(col, 1)
         for i, (title, note, full, lines) in enumerate(D.charts(rows, int(self.win_pick.currentData()))):
             if title not in self.plots:
                 box = QtWidgets.QFrame()
@@ -1224,7 +1233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stat["age"].setText(fmt_dur(ts["age"]) + "前" if ts["age"] is not None else "-")
         self.stat["eval"].setText(f"{ts['eval']:.2f}" if isinstance(ts["eval"], (int, float)) else "-")
         self.stat["jobs"].setText(f"{sum(j['state'] == 'running' for j in act)} / {sum(j['state'] == 'queued' for j in act)}")
-        self.hint.setText("训练是在面板外启动的（比如旧的 train.bat 窗口）：面板停不了它，要停请关那个窗口。" if outside else "")
+        self.hint.setText("训练是在面板外启动的（比如命令行窗口）：面板停不了它，要停请关那个窗口。" if outside else "")
         page = self.stack.currentWidget()
         if isinstance(page, DashboardPage):
             page.refresh(jobs, sync=sync)
@@ -1235,9 +1244,10 @@ class MainWindow(QtWidgets.QMainWindow):
 def make_app() -> QtWidgets.QApplication:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
     pg.setConfigOptions(antialias=True, foreground="#3f3f46")
-    for fam in ("Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC"):
+    mac = sys.platform == "darwin"
+    for fam in ("PingFang SC", "Hiragino Sans GB") if mac else ("Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC"):
         if fam in QtGui.QFontDatabase.families():
-            app.setFont(QtGui.QFont(fam, 10))
+            app.setFont(QtGui.QFont(fam, 13 if mac else 10))     # Mac 的点数比 Windows 小一号
             break
     app.setStyleSheet(STYLE)
     return app

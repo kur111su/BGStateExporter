@@ -30,6 +30,44 @@ def kpis(rows: list[dict]) -> list[tuple]:
     return out
 
 
+# 看板的关键指标分组（名字、越小越好? None = 不分好坏、小数位）。第一组是现在的目标：吃鸡
+KPI_GROUPS = [
+    ("考试：全强度高分阵容", [("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_score", "等效名次（按奖励表）", True, 3),
+                       ("eval_boost_place", "平均名次", True, 3), ("eval_boost_top4", "前四率", False, 3)]),
+    ("训练对局", [("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
+              ("place_bot", "机器人局名次", True, 3), ("place_gift", "送牌局名次", True, 3),
+              ("place_cgift", "送整套阵容局名次", True, 3), ("cgift_formed", "送整套：最后做成", False, 3)]),
+    ("场面与阵容", [("cs_late", "第 10 回合后场面", False, 3), ("grow", "后期每回合养场面", False, 3),
+               ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3),
+               ("sell_turn", "每回合卖牌", None, 2), ("unspent", "每回合剩钱", True, 3)]),
+    ("学习状态", [("ent", "熵", None, 3), ("pro_top1", "和高手同一动作", False, 3), ("teacher_agree", "和老师一致", False, 3),
+              ("teacher_sure", "老师教的局面", None, 3), ("dps", "速度（决策/秒）", False, 0), ("t_iter", "每轮秒数", True, 1)]),
+]
+
+
+def kpi_groups(rows: list[dict]) -> list[tuple[str, list[tuple]]]:
+    """[(组名, [(名字, 最近的值, 500 轮前的值或 None, 越小越好?, 小数位)])]。考试指标取最近 3 次，其余最近 50 轮；没有数据的不列。"""
+    from rl import board as B
+    if not rows:
+        return []
+    for r in rows[-800:]:
+        if "t_iter" not in r and isinstance(r.get("t_collect"), (int, float)):
+            r["t_iter"] = r["t_collect"] + (r.get("t_update") or 0)
+    it1 = rows[-1]["iter"]
+    out = []
+    for title, items in KPI_GROUPS:
+        g = []
+        for k, name, lower, d in items:
+            ev = k.startswith("eval")
+            a = B._avg(rows, k, it1 - (150 if ev else 50), it1 + 1)
+            b = B._avg(rows, k, it1 - (650 if ev else 550), it1 - 500 + 1)
+            if a is not None:
+                g.append((name, a, b, lower, d))
+        if g:
+            out.append((title, g))
+    return out
+
+
 def charts(rows: list[dict], window: int) -> list[tuple]:
     """[(标题, 说明, 是不是全程, [(图例, [轮], [原始值], [滑动平均])])]。稀疏的线（考试）原始值就是点。"""
     from rl import board as B
@@ -61,7 +99,8 @@ def header(rows: list[dict]) -> str:
     def f(k, d=3):
         v = r.get(k)
         return f"{v:.{d}f}" if isinstance(v, (int, float)) else "-"
-    return f"第 {r['iter']} 轮 · {r.get('time', '')} · 学习率 {f('lr', 6)} · 熵 {f('ent')} · 熵系数 {f('ent_coef', 4)}"
+    dev = f" · 设备 {r['device']}（线程 {r.get('threads', '-')}）" if r.get("device") else ""
+    return f"第 {r['iter']} 轮 · {r.get('time', '')} · 学习率 {f('lr', 6)} · 熵系数 {f('ent_coef', 4)}{dev}"
 
 
 def md_tables(run: Path) -> list[dict]:

@@ -1,0 +1,41 @@
+# Mac (Apple silicon): the whole bgrl/setup.sh flow (Python venv, TavernGym wheel from the release, PyTorch, tests,
+# tiny training run), the device benchmark, and the desktop panel's smoke test.
+name: bgrl Mac checks
+
+on:
+  push:
+    branches: [dev]
+    paths: ["bgrl/**", ".github/workflows/bgrl-mac.yml"]
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Wait for the macOS TavernGym wheel (built by the TavernGym wheels workflow)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="taverngym-$(grep '^commit=' bgrl/taverngym/PIN.txt | cut -d= -f2 | cut -c1-7)"
+          for i in $(seq 1 80); do
+            if gh release view "$tag" --repo "${{ github.repository }}" --json assets -q '.assets[].name' 2>/dev/null | grep -q 'macosx.*arm64'; then echo "found"; exit 0; fi
+            sleep 30
+          done
+          echo "no macOS wheel in $tag"; exit 1
+      - name: setup.sh (venv, TavernGym, PyTorch, tests, tiny training run)
+        run: bash bgrl/setup.sh quick || { cat bgrl/reports/setup.txt | tail -80; exit 1; }
+      - name: Device info + device benchmark (2 iterations per combination)
+        working-directory: bgrl
+        run: |
+          .venv/bin/python -X utf8 bg.py info
+          .venv/bin/python -X utf8 -c "import torch; print('mps', torch.backends.mps.is_available())"
+          .venv/bin/python -X utf8 bg.py bench-device --iters 2
+          cat reports/device.json
+      - name: Desktop panel smoke test
+        working-directory: bgrl
+        run: QT_QPA_PLATFORM=offscreen .venv/bin/python -X utf8 tests/gui_smoke.py ../shots

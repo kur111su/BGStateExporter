@@ -37,9 +37,12 @@ from .shaping import ShapingMixin
 @dataclass
 class Config:
     run_dir: str = "runs/default"
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    # auto = 有 NVIDIA 显卡用 cuda，Apple 芯片用 mps，否则 cpu；跑过 bg.py bench-device 的按实测最快的选（rl/device.py）
+    device: str = "auto"
+    # 采样（模型出动作）用的设备：auto = 实测最快的 / 和 device 一样；也可以 cpu、mps、cuda。和 device 不同时采样用一份副本，每次更新后同步
+    rollout_device: str = "auto"
     seed: int = 0
-    threads: int = 8
+    threads: int = 0               # 模拟器线程数；0 = 自动（性能核数）
     games_bot: int = 192           # 和机器人打的并行对局数
     games_league: int = 48         # 8 座位都由我们控制的并行对局数（共 384 个座位）
     steps_per_iter: int = 128      # 每轮每个环境走多少步
@@ -336,16 +339,34 @@ class Config:
 
 
 class Policy:
-    """一个可以出动作的策略：学习者或对手库里的快照。"""
+    """一个可以出动作的策略：学习者或对手库里的快照。
+    device 和模型所在的设备不同时（采样用 CPU、更新用 MPS / CUDA），在 device 上放一份副本，
+    模型的版本号（_ver，训练器每次改参数时加 1）变了就同步一次。"""
 
-    def __init__(self, model, device, amp=False):
-        self.model, self.device = model, device
+    def __init__(self, model, device, amp=False, copy=False):
+        self.src, self.device = model, device
         self.amp = amp and device.type == "cuda"
         self.bad_rows = 0                      # 输出出现 NaN 的局面数（应该一直是 0）
+        if next(model.parameters()).device.type == device.type and not copy:
+            self.model, self.ver = model, None
+        else:
+            import copy
+            self.model = copy.deepcopy(model).to(device).eval()
+            for q in self.model.parameters():
+                q.requires_grad_(False)
+            self.ver = getattr(model, "_ver", 0)
+
+    def sync(self) -> None:
+        if self.ver is not None and self.ver != getattr(self.src, "_ver", 0):
+            with torch.no_grad():
+                for a, b in zip(self.model.state_dict().values(), self.src.state_dict().values()):
+                    a.copy_(b.detach().to(a.device))
+            self.ver = getattr(self.src, "_ver", 0)
 
     @torch.inference_mode()
     def __call__(self, f, c, m, greedy=False, want_obs=False):
         """want_obs=True 时另外返回压缩后的观察（float16，存训练数据用：压缩后最大十几，不会溢出）。"""
+        self.sync()
         f = torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.device, non_blocking=True)
         c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.device, non_blocking=True)
         m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.device, non_blocking=True)
@@ -547,7 +568,14 @@ class Trainer(ShapingMixin, ImitationMixin):
         import taverngym
         from taverngym import BatchEnv
         self.cfg = cfg
-        self.dev = torch.device(cfg.device)
+        from .device import default_threads, resolve
+        dname, rname = resolve(cfg.device, getattr(cfg, "rollout_device", "auto"))
+        cfg.device, cfg.rollout_device = dname, rname
+        if not cfg.threads:
+            cfg.threads = default_threads()
+        self.dev = torch.device(dname)
+        self.rdev = torch.device(rname)
+        print(f"设备：更新 {dname}，采样 {rname}，模拟器线程 {cfg.threads}", flush=True)
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
         self.rng = random.Random(cfg.seed)
@@ -564,7 +592,8 @@ class Trainer(ShapingMixin, ImitationMixin):
         self.rollbacks = 0
         self.since_rollback = 0
         self.good = None                       # 最近一次健康时的模型和优化器（出问题时回退到这里）
-        self.learner = Policy(self.model, self.dev, self.amp)
+        self.model._ver = 0
+        self.learner = Policy(self.model, self.rdev, self.amp)
         self.envs = []                                 # (名字, 环境, 槽位起点)
         off = 0
         if cfg.games_bot:
@@ -725,10 +754,10 @@ class Trainer(ShapingMixin, ImitationMixin):
         name = self.role_names[rid]
         if name not in self.snap_cache:
             m = next(x for x in self.league.members if x.name == name)
-            model = build_model(**self.mkw).to(self.dev)
-            model.load_state_dict(torch.load(m.path, map_location=self.dev))
+            model = build_model(**self.mkw).to(self.rdev)
+            model.load_state_dict(torch.load(m.path, map_location=self.rdev))
             model.eval()
-            self.snap_cache[name] = Policy(model, self.dev, self.amp)
+            self.snap_cache[name] = Policy(model, self.rdev, self.amp)
             if len(self.snap_cache) > 12:
                 self.snap_cache.pop(next(iter(self.snap_cache)))
         return self.snap_cache[name]
@@ -931,6 +960,10 @@ class Trainer(ShapingMixin, ImitationMixin):
 
     # ---------------- 更新 ----------------
 
+    def _bump(self) -> None:
+        """模型参数变了：采样用的副本下次出动作前同步（Policy.sync）。"""
+        self.model._ver = getattr(self.model, "_ver", 0) + 1
+
     def update(self, b):
         cfg = self.cfg
         self.model.train()
@@ -1045,6 +1078,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                 stats["skipped"].append(0.0)
                 stats["grad_norm"].append(float(gn))
                 self.opt.step()
+                self._bump()
                 if sum(kls) > cfg.target_kl:
                     stop = True
                     break
@@ -1289,6 +1323,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             return "没有 best.pt，只记不改"
         sd = torch.load(p, map_location=self.dev, weights_only=False)["model"]
         self.model.load_state_dict(sd)
+        self._bump()
         lr = self.opt.param_groups[0]["lr"]
         self.opt = torch.optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
         self.snap_cache.clear()
@@ -1369,6 +1404,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             raise RuntimeError(f"连续回退 {self.rollbacks} 次仍然出问题（{problem}），训练停止。把 log.jsonl 发给 Claude。")
         sd, od, it = self.good
         self.model.load_state_dict(sd)
+        self._bump()
         self.opt.load_state_dict(od)
         for g in self.opt.param_groups:
             g["lr"] *= 0.5
@@ -1388,6 +1424,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if any(not torch.isfinite(v).all() for v in sd.values() if torch.is_tensor(v) and v.is_floating_point()):
             raise ValueError(f"{path} 里的参数有 NaN / inf，不能用")
         self.model.load_state_dict(sd)
+        self._bump()
         print(f"从 {path} 的参数开始", flush=True)
 
     def save(self):
@@ -1404,9 +1441,11 @@ class Trainer(ShapingMixin, ImitationMixin):
         if ck.get("model_kwargs") and ck["model_kwargs"] != self.mkw:
             raise ValueError(f"检查点的模型大小 {ck['model_kwargs']} 和这次的 {self.mkw} 不一样")
         self.model.load_state_dict(ck["model"])
+        self._bump()
         self.opt.load_state_dict(grow_opt_state(self.opt, ck["opt"]))
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
+        self.league.relocate(self.run / "snapshots")
         gone = self.league.drop_missing()
         if gone:
             print(f"对手库：{gone} 个快照的文件已经不在（清理过 snapshots），从对手库里去掉，还剩 "
@@ -1647,7 +1686,8 @@ class Trainer(ShapingMixin, ImitationMixin):
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
-                   "t_update": round(t_upd, 1), "lr": self.opt.param_groups[0]["lr"], "ent_coef": round(cfg.ent_coef, 5),
+                   "t_update": round(t_upd, 1), "device": f"{self.dev.type}+{self.rdev.type}", "threads": cfg.threads,
+                   "lr": self.opt.param_groups[0]["lr"], "ent_coef": round(cfg.ent_coef, 5),
                    "noop_frac": round(self.n_noop / max(1, n_dec), 3),
                    **{k: round(self.mix.get(k, 0) / max(1, n_dec), 3) for k in ("noop_move", "noop_freeze", "noop_cancel")}, **upd}
             mx, ends = self.mix, max(1, self.mix.get("end", 0))           # 每回合平均（学习者）

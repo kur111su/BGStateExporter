@@ -22,7 +22,7 @@ from rl import board as B  # noqa: E402
 RUN = J.RUN
 ICON = {"queued": "🕒", "running": "▶️", "done": "✅", "failed": "❌", "stopped": "⏹️", "lost": "⚠️"}
 PARAM_ZH = {"games": "局数", "ckpt": "用哪个模型", "threads": "线程数", "update": "自动换新模型", "keep_from": "快照留到第几轮为止"}
-CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data\\external\\model.pt）"}
+CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data/external/model.pt）"}
 
 st.set_page_config(page_title="酒馆战旗 AI 面板", page_icon="🍺", layout="wide")
 
@@ -68,15 +68,16 @@ def param_inputs(key: str) -> dict:
 
 # 卡片上的一句话说明（详细的在标题旁边的问号里）；每行 4 张卡片，同一行一样高
 SHORT = {
-    "train": "接着 runs\\v3 练。停止 = 这一轮跑完存盘再退出。",
+    "train": "接着 runs/v3 练。停止 = 这一轮跑完存盘再退出。",
     "train_restore": "模型退回考试最好的那一版，从那里接着练。",
     "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
+    "bench_device": "比几种设备组合的训练速度，记下最快的（约 5–15 分钟）。",
     "board": "按最新日志重画 dashboard.md 和曲线图。",
     "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
     "comptest_seeded": "第 8–10 回合换成高手的成型场面，再自己打。",
     "goldflow": "前几回合的钱花在哪，和 6500+ 高手比。",
     "tavernbench": "论文的 368 题评测集，只用 CPU。",
-    "prodemos": "data\\firestone 的高分对局 → 决策样本。",
+    "prodemos": "data/firestone 的高分对局 → 决策样本。",
     "cardvalue": "高手怎么挑卡：挑中倍率、关键卡、经济卡。",
     "playbook": "各套目标阵容的配套卡。改过阵容表后跑一次。",
     "arena_check": "打包 latest.pt，核对竞技场契约（不计分）。",
@@ -296,7 +297,7 @@ def md_sections() -> dict[str, str]:
 def dashboard() -> None:
     rows, events, stamp = _log()
     if not rows:
-        st.info("还没有训练日志（runs\\v3\\log.jsonl）。到“训练”那一页点开始。")
+        st.info("还没有训练日志（runs/v3/log.jsonl）。到“训练”那一页点开始。")
         return
     it1 = rows[-1]["iter"]
     st.caption(f"第 {it1} 轮 · 最后一轮 {rows[-1].get('time', '')} · 每 2 分钟自动刷新")
@@ -387,13 +388,13 @@ tabs = st.tabs(["📈 看板", "🏋️ 训练", "🧪 测试", "📦 数据", "
 with tabs[0]:
     dashboard()
 with tabs[1]:
-    page(["train", "train_restore", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
+    page(["train", "train_restore", "bench_device", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。")
 with tabs[2]:
     page(["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。")
 with tabs[3]:
     page(["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。")
 with tabs[4]:
-    st.caption("参赛密钥单独放在 bgrl\\arena\\key.txt，面板不显示也不记录它。模型只在竞技场的模拟对局里出动作。")
+    st.caption("参赛密钥单独放在 bgrl/arena/key.txt，面板不显示也不记录它。模型只在竞技场的模拟对局里出动作。")
     cards(["arena_check", "arena_practice", "arena_match", "arena_loop"])
     arena_viewer()
     with st.expander("竞技场任务的输出"):

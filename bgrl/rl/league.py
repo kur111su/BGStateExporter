@@ -183,6 +183,18 @@ class League:
     def exam_members(self) -> list[Member]:
         return [m for m in self.members if m.exam] or [m for m in self.members if m.name == "bot"]
 
+    def relocate(self, snap_dir: Path) -> int:
+        """快照路径在别的电脑上存的（Windows 的 runs\\v3\\snapshots\\it123.pt 拿到 Mac 上）：文件名一样、在这台电脑的
+        snapshots 目录里就改指过去。返回改了几个。"""
+        n = 0
+        for m in self.members:
+            if not m.path or Path(m.path).exists():
+                continue
+            q = Path(snap_dir) / m.path.replace("\\", "/").rsplit("/", 1)[-1]
+            if q.exists():
+                m.path, n = str(q), n + 1
+        return n
+
     def drop_missing(self) -> int:
         """去掉快照文件已经不在的成员（手动清理过 snapshots 目录以后），返回去掉了几个。"""
         keep = [m for m in self.members if not m.path or Path(m.path).exists()]

@@ -37,6 +37,8 @@ def load_recipe(path: str) -> dict:
         if k not in fields or k == "run_dir":
             raise SystemExit(f"配方 {p}：不认识的参数 {k}")
         d = fields[k].default
+        if isinstance(v, str) and "\\" in v:            # Windows 写法的路径（runs\\x）在 Mac / Linux 上也能用
+            v = v.replace("\\", "/")
         out[k] = v if isinstance(d, bool) or d is None else type(d)(v)
     r["config"] = out
     return r

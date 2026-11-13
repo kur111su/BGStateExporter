@@ -1,4 +1,4 @@
-"""bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：双击 panel.bat，按钮跑的就是这些命令）。
+"""bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：Windows 双击 panel.bat，Mac 双击 panel.command；按钮跑的就是这些命令）。
 
   panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；panel.bat 就是它；--web = 网页版 panel/app.py，备用）
   train     训练（面板里的“训练” = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
@@ -17,8 +17,9 @@
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
+  bench-device  测哪种设备组合训练最快（Mac：MPS / CPU），写进 reports/device.json，训练 device = auto 时照它选
   test      跑单元测试（tests/ 里的 test_*.py）
-  info      看环境：Python、torch / CUDA、TavernGym 版本、训练进度
+  info      看环境：Python、torch、可用设备（CUDA / MPS）、TavernGym 版本、训练进度
 
 每个命令后面加 --help 看它自己的参数。
 """
@@ -37,7 +38,7 @@ sys.path.insert(0, str(ROOT))
 TOOLS = {"train": "train",
          "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
-         "profile": "opp_profile", "bench": "tg_bench", "arena": "arena_run", "cleanup": "cleanup"}
+         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "arena": "arena_run", "cleanup": "cleanup"}
 
 
 def _run_tool(name: str, args: list[str]) -> int:
@@ -67,15 +68,15 @@ def _info() -> int:
     print("Python", sys.version.split()[0])
     try:
         import torch
-        print("torch", torch.__version__, "CUDA", torch.cuda.is_available(),
-              torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
+        from rl.device import describe
+        print(describe())
     except ImportError:
-        print("torch 没装（运行 setup.bat）")
+        print("torch 没装（运行 setup）")
     try:
         import taverngym
         print("TavernGym", taverngym.version())
     except ImportError:
-        print("TavernGym 没装（运行 setup.bat）")
+        print("TavernGym 没装（运行 setup）")
     log = DEFAULT_RUN / "log.jsonl"
     if log.exists():
         rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]

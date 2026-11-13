@@ -178,7 +178,37 @@ def card_attr_checks():
         raise AssertionError("不认识的动作类别没报错")
     except ValueError:
         pass
+    policy_copy_checks()
     print("card attr ok")
+
+
+def policy_copy_checks():
+    """采样用副本（Mac：更新 MPS、采样 CPU）：参数变了（_ver 加 1）副本才同步；输出和原模型一样。在 CPU 上模拟。"""
+    from rl.model import build_model
+    from rl.ppo import Policy
+    from rl.device import resolve, available
+    f, cc, m = sample_obs(6)
+    torch.manual_seed(1)
+    src = build_model(64, 2, 2, 32, card_attr=None).eval()
+    src._ver = 0
+    pol = Policy(src, torch.device("cpu"), copy=True)
+    assert pol.model is not src
+    with torch.no_grad():
+        for q in src.parameters():
+            q.add_(0.01)
+    lg_src = src(torch.from_numpy(f), torch.from_numpy(cc), torch.from_numpy(m))[0]
+    pol(f, cc, m)
+    assert float((pol.model(torch.from_numpy(f), torch.from_numpy(cc), torch.from_numpy(m))[0] - lg_src).abs().max()) > 0, \
+        "版本号没变也同步了"
+    src._ver += 1
+    pol(f, cc, m)
+    with torch.no_grad():
+        d = float((pol.model(torch.from_numpy(f), torch.from_numpy(cc), torch.from_numpy(m))[0] - lg_src).abs().max())
+    assert d < 1e-5, d
+    dev, rdev = resolve("auto", "auto")
+    assert dev in available() and rdev in available()
+    assert resolve("cpu", "same") == ("cpu", "cpu")
+    print("policy copy ok", dev, rdev)
 
 
 if __name__ == "__main__":
