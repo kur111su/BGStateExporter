@@ -960,10 +960,6 @@ class Trainer(ShapingMixin, ImitationMixin):
 
     # ---------------- 更新 ----------------
 
-    def _bump(self) -> None:
-        """模型参数变了：采样用的副本下次出动作前同步（Policy.sync）。"""
-        self.model._ver = getattr(self.model, "_ver", 0) + 1
-
     def update(self, b):
         cfg = self.cfg
         self.model.train()
@@ -1078,7 +1074,7 @@ class Trainer(ShapingMixin, ImitationMixin):
                 stats["skipped"].append(0.0)
                 stats["grad_norm"].append(float(gn))
                 self.opt.step()
-                self._bump()
+                self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
                 if sum(kls) > cfg.target_kl:
                     stop = True
                     break
@@ -1323,7 +1319,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             return "没有 best.pt，只记不改"
         sd = torch.load(p, map_location=self.dev, weights_only=False)["model"]
         self.model.load_state_dict(sd)
-        self._bump()
+        self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
         lr = self.opt.param_groups[0]["lr"]
         self.opt = torch.optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
         self.snap_cache.clear()
@@ -1404,7 +1400,7 @@ class Trainer(ShapingMixin, ImitationMixin):
             raise RuntimeError(f"连续回退 {self.rollbacks} 次仍然出问题（{problem}），训练停止。把 log.jsonl 发给 Claude。")
         sd, od, it = self.good
         self.model.load_state_dict(sd)
-        self._bump()
+        self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
         self.opt.load_state_dict(od)
         for g in self.opt.param_groups:
             g["lr"] *= 0.5
@@ -1424,7 +1420,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if any(not torch.isfinite(v).all() for v in sd.values() if torch.is_tensor(v) and v.is_floating_point()):
             raise ValueError(f"{path} 里的参数有 NaN / inf，不能用")
         self.model.load_state_dict(sd)
-        self._bump()
+        self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
         print(f"从 {path} 的参数开始", flush=True)
 
     def save(self):
@@ -1441,7 +1437,7 @@ class Trainer(ShapingMixin, ImitationMixin):
         if ck.get("model_kwargs") and ck["model_kwargs"] != self.mkw:
             raise ValueError(f"检查点的模型大小 {ck['model_kwargs']} 和这次的 {self.mkw} 不一样")
         self.model.load_state_dict(ck["model"])
-        self._bump()
+        self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
         self.opt.load_state_dict(grow_opt_state(self.opt, ck["opt"]))
         self.iter = ck["iter"]
         self.league = League.from_json(ck["league"], load_real_profile())
