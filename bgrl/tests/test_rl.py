@@ -110,9 +110,10 @@ def main() -> int:
     from rl.ppo import grow_opt_state
     opt_new = torch.optim.Adam(m2.parameters(), lr=1e-4)
     names = [k for k, _ in m2.named_parameters()]
-    assert names[-6:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias",
-                          "syn_proj.weight", "syn_proj.bias"], names[-6:]
-    opt_old = torch.optim.Adam([p_ for k, p_ in m2.named_parameters() if not k.startswith(("comp_", "syn_"))], lr=1e-4)
+    assert names[-7:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias",
+                          "syn_proj.weight", "syn_proj.bias", "attr_proj.weight"], names[-7:]
+    opt_old = torch.optim.Adam([p_ for k, p_ in m2.named_parameters() if not k.startswith(("comp_", "syn_", "attr_"))],
+                               lr=1e-4)
     m2.zero_grad()
     m2(f, c, mk)[1].sum().backward()
     opt_old.step()
