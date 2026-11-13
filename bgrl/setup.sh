@@ -40,7 +40,7 @@ $VPY -m pip install -q -r requirements.txt >> "${LOG}" 2>&1 || {
 
 # --- 2. TavernGym（我们的 GitHub Actions 从 MCG-NJU/AutoTavern 编译，MIT；版本锁在 taverngym/PIN.txt）---
 COMMIT=$(grep '^commit=' taverngym/PIN.txt | cut -d= -f2)
-TAG="taverngym-${COMMIT}:0:7}"
+TAG="taverngym-${COMMIT:0:7}"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PAT="macosx.*arm64" ;;
   Darwin-x86_64) PAT="macosx.*x86_64" ;;
