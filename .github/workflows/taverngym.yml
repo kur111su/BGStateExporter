@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14, ubuntu-24.04]
+        os: [windows-latest, macos-latest, ubuntu-24.04]
         python: ["3.12"]   # the wheel is abi3 (cp310-abi3): one build serves Python 3.10+
     steps:
       - uses: actions/checkout@v4
