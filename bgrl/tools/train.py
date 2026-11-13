@@ -95,6 +95,12 @@ def main() -> int:
     tr = Trainer(cfg)
     latest = Path(cfg.run_dir) / "latest.pt"
     if a.resume and latest.exists():
+        if a.restore and Path(a.restore).exists() and Path(a.restore).name == "best.pt":
+            # 换了名次奖励表时，读进度那一步会把 best.pt 改名（守护从头记）：先留一份，退回用它
+            import shutil
+            keep = Path(a.restore).with_name("restore_src.pt")
+            shutil.copyfile(a.restore, keep)
+            a.restore = str(keep)
         tr.load(latest)
         print(f"从 {latest} 继续（第 {tr.iter} 轮）")
         if a.restore:
