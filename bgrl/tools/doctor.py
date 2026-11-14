@@ -227,8 +227,11 @@ def check_data(R: Report) -> None:
         else:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
-                n = len(d.get("boards", d)) if isinstance(d, dict) else len(d)
-                R.ok(f"{name}：{n} 条")
+                if isinstance(d, dict) and isinstance(d.get("turns"), dict):     # {turns: {回合: [整板, …]}, games: 局数}
+                    n = sum(len(v) for v in d["turns"].values() if isinstance(v, list))
+                    R.ok(f"{name}：{d.get('games', '?')} 局、{n} 个整板（{len(d['turns'])} 个回合）")
+                else:
+                    R.ok(f"{name}：{len(d)} 条")
             except ValueError as ex:
                 R.no(f"{name} 读不了：{ex}")
     ext = ROOT / "data" / "external" / "model.pt"
