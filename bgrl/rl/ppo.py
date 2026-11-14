@@ -354,6 +354,11 @@ class Policy:
     def __call__(self, f, c, m, greedy=False, want_obs=False):
         """want_obs=True 时另外返回压缩后的观察（float16，存训练数据用：压缩后最大十几，不会溢出）。"""
         self.sync()
+        n = len(f)
+        if self.device.type == "mps" and n % 64:        # MPS：局面数凑成 64 的倍数（重复最后一行，算完丢掉），原因同上
+            pad = 64 - n % 64
+            rep = lambda x: np.concatenate([x, np.repeat(np.asarray(x)[-1:], pad, 0)])   # noqa: E731
+            f, c, m = rep(f), rep(c), rep(m)
         f = torch.as_tensor(np.ascontiguousarray(f), dtype=torch.float32).to(self.device, non_blocking=True)
         c = torch.as_tensor(np.ascontiguousarray(c), dtype=torch.long).to(self.device, non_blocking=True)
         m = torch.as_tensor(np.ascontiguousarray(m), dtype=torch.bool).to(self.device, non_blocking=True)
@@ -366,9 +371,9 @@ class Policy:
             a = torch.distributions.Categorical(logits=logits).sample()
         logp = torch.log_softmax(logits, -1).gather(1, a.unsqueeze(1)).squeeze(1)
         self.bad_rows += int(getattr(self.model, "last_bad", 0))
-        out = (a.cpu().numpy(), logp.float().cpu().numpy(), v.float().cpu().numpy())
+        out = (a.cpu().numpy()[:n], logp.float().cpu().numpy()[:n], v.float().cpu().numpy()[:n])
         if want_obs:
-            out = out + (fz.half().cpu().numpy(),)
+            out = out + (fz.half().cpu().numpy()[:n],)
         return out
 
 
@@ -1576,6 +1581,12 @@ class Trainer(ShapingMixin, ImitationMixin):
         while self.iter < end:
             self.learner.bad_rows = 0
             batch, n_dec, t_col, t_env, t_net = self.collect()
+            if self.dev.type == "mps" or self.rdev.type == "mps":      # Mac：每一段完了报一下 GPU 占的内存（卡在哪一段看得出来）
+                self._mps_n = getattr(self, "_mps_n", 0) + 1
+                if self._mps_n <= 3:
+                    print(f"  采样完（{t_col:.0f}s，{n_dec} 个决策），GPU 占用内存 {torch.mps.driver_allocated_memory() / 2**30:.1f} GB；开始更新……",
+                          flush=True)
+                torch.mps.empty_cache()
             self._apply_warmup()
             t1 = time.time()
             upd = self.update(batch) if batch is not None else {}

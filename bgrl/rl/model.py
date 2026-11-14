@@ -423,6 +423,8 @@ class EntityTransformer(nn.Module):
         B, T, d = x.shape
         order = torch.argsort((~present).to(torch.int32), dim=1, stable=True)   # 有内容的在前
         tm = int(present.sum(1).max())
+        if x.device.type == "mps":                      # MPS 给每种张量形状各留一份编译结果和缓存：词数凑成 8 的倍数，
+            tm = min(T, -(-tm // 8) * 8)                # 形状种类少一个数量级（多出来的是被屏蔽的空词，结果不变）
         idx = order[:, :tm]
         xp = torch.gather(x, 1, idx.unsqueeze(-1).expand(-1, -1, d))
         pp = torch.gather(present, 1, idx)
