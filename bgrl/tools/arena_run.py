@@ -218,6 +218,10 @@ def main() -> int:
     ap.add_argument("--update", action="store_true", help="loop：训练出的模型比打包的新 2 小时以上就重新打包")
     ap.add_argument("--ckpt", default="", help="check：打包这个检查点（默认 runs/v3/latest.pt）")
     a = ap.parse_args()
+    if a.mode != "view" and not (ARENA / "arena_client.py").exists():
+        print("缺少官方连接器 arena/arena_client.py（它不在 Git 里，是从竞技场网站下载、保存在本机的）。\n"
+              "从旧电脑拷 bgrl/arena/arena_client.py 过来，或者从竞技场网站重新下载，放到 bgrl/arena/ 下。", flush=True)
+        return 1
     if a.mode == "check":
         return check(["--ckpt", a.ckpt] if a.ckpt else [])
     if a.mode == "view":

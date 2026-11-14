@@ -85,7 +85,7 @@ configs\v3.json ──▶ train（TavernGym 里 PPO 训练）──▶ runs\v3\l
 | 老师模型 | `runs/teacher.pt` | 配方里没用它就不影响 |
 | 外部模型 | `data/external/model.pt` | 311 维卡牌属性和“学卖牌”的老师都没有了 |
 | 原始高分对局 | `data/`（Firestone 分享包等） | 只有重新生成示范 / 阵容库时才要 |
-| 竞技场 | `arena/key.txt`、`arena/results/`、`arena/records/` | 没有密钥不能打计分局；没有结果对局查看器是空的 |
+| 竞技场 | `arena/arena_client.py`（官方连接器，不在 Git 里）、`arena/key.txt`、`arena/results/`、`arena/records/`（改过服务器地址的还有 `arena/url.txt`） | 没有连接器竞技场的检查、练习局、计分局都跑不了；没有密钥不能打计分局；没有结果对局查看器是空的 |
 
 快照路径是在 Windows 上记的（`runs\\v3\\snapshots\\…`），新电脑上会按文件名自动找回，不用改。
 

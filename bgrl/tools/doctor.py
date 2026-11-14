@@ -252,6 +252,9 @@ def check_arena(R: Report) -> None:
     key = a / "key.txt"
     (R.ok if key.exists() and key.read_text(encoding="utf-8").strip() else R.maybe)(
         "参赛密钥 arena/key.txt" + ("（有）" if key.exists() else "不在"), "没有密钥只能打练习局")
+    cl = a / "arena_client.py"
+    (R.ok if cl.exists() else R.no)("官方连接器 arena/arena_client.py" + ("" if cl.exists() else " 不在"),
+                                    "它不在 Git 里：从旧电脑拷 bgrl/arena/arena_client.py，或从竞技场网站重新下载；没有它竞技场的检查、练习局、计分局都跑不了")
     res = list((a / "results").glob("*.json")) if (a / "results").exists() else []
     R.ok(f"对局结果 {len(res)} 局") if res else R.maybe("arena/results 里没有对局（对局查看器是空的）")
 
