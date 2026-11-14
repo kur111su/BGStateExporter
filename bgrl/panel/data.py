@@ -41,7 +41,8 @@ KPI_GROUPS = [
                ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3),
                ("sell_turn", "每回合卖牌", None, 2), ("unspent", "每回合剩钱", True, 3)]),
     ("学习状态", [("ent", "熵", None, 3), ("pro_top1", "和高手同一动作", False, 3), ("teacher_agree", "和老师一致", False, 3),
-              ("teacher_sure", "老师教的局面", None, 3), ("dps", "速度（决策/秒）", False, 0), ("t_iter", "每轮秒数", True, 1)]),
+              ("teacher_sure", "老师教的局面", None, 3), ("dps", "速度（决策/秒）", False, 0), ("t_iter", "每轮秒数", True, 1),
+              ("gpu_mem_gb", "GPU 占用内存（GB）", True, 1)]),
 ]
 
 

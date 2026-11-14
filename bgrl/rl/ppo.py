@@ -228,6 +228,7 @@ class Config:
     teacher_conf: float = 0.5
     # 只学老师的某几类动作（hard 模式）：例如 "sell" = 只在老师有把握、而且它最想做的是“卖随从”的局面上学；可选
     # end / refresh / freeze / upgrade / buy / sell / play，逗号分开。空 = 全学。teacher_from_turn：早于这一回合的局面不学
+    teacher_chunk: int = 512       # 老师一次算多少个局面（小 = 省内存；结果一样）
     teacher_actions: str = ""
     teacher_from_turn: int = 0
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
@@ -987,7 +988,11 @@ class Trainer(ShapingMixin, ImitationMixin):
                         stats["kl_anchor"].append(kl_anchor.item())
                     if tcoef > 0:
                         with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
-                            tl = F.log_softmax(self.teacher(f, c, m, compressed=True)[0].float(), -1)
+                            # 老师分块算：外部模型 125 个词不屏蔽，一次算 4096 个局面在 Mac（MPS，float32）上要十几 GB 内存
+                            ch = int(getattr(cfg, "teacher_chunk", 512)) or f.shape[0]
+                            tl = torch.cat([F.log_softmax(self.teacher(f[q:q + ch], c[q:q + ch], m[q:q + ch],
+                                                                       compressed=True)[0].float(), -1)
+                                            for q in range(0, f.shape[0], ch)])
                         kl_rows = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1)
                         kl_t = kl_rows.mean()
                         tw = self._teacher_rows(b["f"][j], b["c"][j])
@@ -1043,6 +1048,9 @@ class Trainer(ShapingMixin, ImitationMixin):
         out["early_stop"] = stop
         if self.dev.type == "cuda":
             out["gpu_mem_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+        elif self.dev.type == "mps":                   # MPS 会把用过的显存一直留着（和系统内存是同一块）：每轮还回去
+            out["gpu_mem_gb"] = round(torch.mps.driver_allocated_memory() / 2**30, 2)
+            torch.mps.empty_cache()
         return out
 
     # ---------------- 对手库快照、评估 ----------------
