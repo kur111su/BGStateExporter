@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import os
 # Mac（MPS）：显存和系统内存是同一块。默认允许占到推荐上限的 1.7 倍，超了就拼命换页、整机卡死；
-# 改成到上限就报错退出（要在 import torch 之前设）
-os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "1.0")
-os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.8")
+# 改成到上限的 0.8 倍就报错退出（16 GB 的机器约 8 GB）（要在 import torch 之前设）
+os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
+os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.6")
 
 import importlib
 import json

@@ -567,7 +567,11 @@ class Trainer(ShapingMixin, ImitationMixin):
             cfg.threads = default_threads()
         self.dev = torch.device(dname)
         self.rdev = torch.device(rname)
-        print(f"设备：更新 {dname}，采样 {rname}，模拟器线程 {cfg.threads}", flush=True)
+        if dname == "mps":                              # Mac：显存就是系统内存，而且不做半精度（占用约是 3070 上的两倍）：一份放小一半
+            cfg.micro_batch = min(cfg.micro_batch, int(os.environ.get("BGRL_MPS_MICRO", "256")))
+            cfg.teacher_chunk = min(cfg.teacher_chunk, cfg.micro_batch)
+        print(f"设备：更新 {dname}，采样 {rname}，模拟器线程 {cfg.threads}" +
+              (f"，每份 {cfg.micro_batch} 个样本" if dname == "mps" else ""), flush=True)
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
         self.rng = random.Random(cfg.seed)
