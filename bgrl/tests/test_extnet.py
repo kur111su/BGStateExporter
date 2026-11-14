@@ -88,7 +88,7 @@ def main():
     from rl.model import soft_log
     with torch.no_grad():
         lg2 = model(soft_log(torch.from_numpy(f)), torch.from_numpy(c), mm, compressed=True)[0]
-    assert float((lg2 - lg).abs().max()) < 1e-4
+    assert float((lg2 - lg).abs().max()) < 2e-3
     # 默认不让移动（还有别的动作时）；非法动作 -1e9
     model.allow_moves = False
     mt = torch.from_numpy(m)

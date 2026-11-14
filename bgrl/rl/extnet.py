@@ -1,21 +1,20 @@
 """外部模型：jimmypretend/hearthstone-bg-ppo（作者 PrentendYan，CC BY-NC 4.0，只能非商业使用、要署名）。
 
-权重不在仓库里：自己下载 model.pt 放到 bgrl\\data\\external\\（data\\ 不进 Git），这里只有读它、跑它的代码。
-作者没有公开网络代码；下面的结构是从权重的形状和数值反推出来的，并在 TavernGym 里实测验证过
-（0 号座位用它、其余 7 个是内置机器人，32 局平均第 1.6，机器人自己是 4.5）：
+权重不在仓库里：自己下载 model.pt 放到 bgrl/data/external/（data/ 不进 Git），这里只有读它、跑它的代码。
+网络结构照作者 2026-11-13 公开的代码（github.com/PrentendYan/hearthstone-bg-ppo，hsbg_net/net_cz46.py）：
 
-  词（125 个）：全局 1 | 场面 7 | 手牌 10 | 酒馆 8 | 待选 16 | 对手 7 | 对手场面 49 | 英雄、技能、神祇、来源、任务、奥秘、饰品 27
-  卡 = card[编号] + attr_proj(attr[编号])（attr 是作者的 311 维卡牌属性表）；有浮点特征的词再加 f_board / f_item / f_opp / f_oppb；
-  全局词 = f_global(全局特征) + z_global[:, none]；每个词加位置嵌入 pos
-  输入先做 soft_log（和我们一样）；4 层先归一化的 Transformer（GELU），注意力不屏蔽空词；最后 LayerNorm
-  头：h_global([全局, 有内容的词的平均]) → 动作 0..7；买 / 卖 / 激活 / 选 / 打出 / 磁力（q_mag(手牌)·场面 / √d）/ 移动
-  价值：value.2(relu(value.0([全局, 平均])))，作者的效用尺度（第 1 名 1.0，第 2 名 0.2，第 7、8 名 -0.1、-0.2）
+  词（125 个）：全局 1 | 场面 7 | 手牌 10 | 酒馆 8 | 待选 16 | 对手 7 | 对手场面 49 | 英雄、技能、神祇、来源、任务、奥秘 19 | 饰品 8
+  卡 = card[编号] + attr_proj(attr[编号]) + z_tok(zcard[z, 编号])；有浮点特征的词再加 f_board / f_item / f_opp / f_oppb；
+  全局词 = f_global(全局特征) + z_global[:, z]；每个词加位置嵌入 pos。z 默认 45 = none（zcard 那一行全 0）
+  输入是引擎的原始特征（不压缩）；4 层先归一化的 Transformer（前馈层 ReLU），注意力不屏蔽空词；最后 LayerNorm
+  头：h_global([全局, 125 个词的平均]) → 动作 0..7；买 / 卖 / 激活 / 选 / 打出 / 磁力（q_mag(手牌)·场面，不缩放）/ 移动
+  价值：value.2(gelu(value.0([全局, 平均])))
 
-和作者说法不一样的地方（实测）：
-  * “移动”要限制：不限的话它会一直挪随从直到这回合的动作次数用完（75% 的动作是移动，平均第 3.75）。这里默认不让它移动
-    （allow_moves=False）——估计作者那边有我们不知道的移动限制。
-  * README 说的 keep_start_board（回合开始时在场上的随从不能卖）按我们的理解加上以后反而变差（第 3.72），所以不用。
+（作者公开代码之前，这里是从权重反推的结构，有四处不对：输入多做了一次压缩、前馈层用了 GELU、平均只算有内容的词、
+磁力多除了 √d。2026-11-14 改成和作者的一样。）
 
+我们的训练数据存的是压缩过的特征（soft_log，float16）：compressed=True 时先还原再喂给它。
+allow_moves=False（默认）：还有别的动作可选时不让它挪随从。
 读文件不用 torch.load：只认 OrderedDict、_rebuild_tensor_v2、FloatStorage 三个对象，张量直接从 zip 里的原始字节读。
 """
 from __future__ import annotations
@@ -135,6 +134,12 @@ def soft_log(x):
 
 
 # ---------------------------------------------------------------- numpy 参考实现（没有 torch 也能跑；测试拿来对 torch 版）
+def soft_exp(y):
+    """soft_log 的逆：|y| ≤ 1 不变，否则 sign × exp(|y| − 1)。"""
+    a = np.abs(y)
+    return np.where(a <= 1, y, np.sign(y) * np.exp(np.minimum(a, 40.0) - 1.0)).astype(np.float32)
+
+
 def _erf(x):
     s, a = np.sign(x), np.abs(x)
     t = 1.0 / (1.0 + 0.3275911 * a)
@@ -157,7 +162,7 @@ def forward_np(ck: dict, f, c, compressed: bool = False):
     f = np.asarray(f, dtype=np.float32)
     c = np.asarray(c, dtype=np.int64)
     B = f.shape[0]
-    x = f if compressed else soft_log(f)
+    x = soft_exp(f) if compressed else f              # 作者的网络吃原始特征
     lin = lambda n, t: t @ s[n + ".weight"].T + s[n + ".bias"]                    # noqa: E731
     emb = s["card.weight"] + s["attr"] @ s["attr_proj.weight"].T
     cc = np.clip(c[:, C_ORDER], 0, emb.shape[0] - 1)
@@ -188,17 +193,17 @@ def forward_np(ck: dict, f, c, compressed: bool = False):
         h = h + o @ s[p + "self_attn.out_proj.weight"].T + s[p + "self_attn.out_proj.bias"]
         y = _ln(h, s[p + "norm2.weight"], s[p + "norm2.bias"])
         u = lin(p + "linear1", y)
-        h = h + lin(p + "linear2", 0.5 * u * (1.0 + _erf(u / math.sqrt(2.0))))
+        h = h + lin(p + "linear2", np.maximum(u, 0.0))
     h = _ln(h, s["norm.weight"], s["norm.bias"])
-    pm = present[:, :, None].astype(np.float32)
-    gp = np.concatenate([h[:, 0], (h * pm).sum(1) / np.maximum(pm.sum(1), 1.0)], -1)
+    gp = np.concatenate([h[:, 0], h.mean(1)], -1)
     sl = lambda n: h[:, OFF[n][0]:OFF[n][1]]                                      # noqa: E731
     board, hand = sl("board"), sl("hand")
-    mag = np.einsum("bhd,bkd->bhk", lin("q_mag", hand), board) / math.sqrt(d)
+    mag = np.einsum("bhd,bkd->bhk", lin("q_mag", hand), board)
     logits = np.concatenate([lin("h_global", gp), lin("h_buy", sl("shop"))[..., 0], lin("h_sell", board)[..., 0],
                              lin("h_activate", board)[..., 0], lin("h_choose", sl("choice"))[..., 0],
                              lin("h_play", hand).reshape(B, -1), mag.reshape(B, -1), lin("h_move", board).reshape(B, -1)], 1)
-    v = lin("value.2", np.maximum(lin("value.0", gp), 0.0))[:, 0]
+    u = lin("value.0", gp)
+    v = lin("value.2", 0.5 * u * (1.0 + _erf(u / math.sqrt(2.0))))[:, 0]
     return logits.astype(np.float32), v.astype(np.float32)
 
 
@@ -234,7 +239,7 @@ def build_torch(ck: dict, allow_moves: bool = False):
             mk = lambda n, i, o: self._lin(n, i, o)                               # noqa: E731
             self.f_global, self.f_board, self.f_item = mk("f_global", GF, d), mk("f_board", MF, d), mk("f_item", IF, d)
             self.f_opp, self.f_oppb = mk("f_opp", OPPF, d), mk("f_oppb", MF, d)
-            layer = nn.TransformerEncoderLayer(d, H, 4 * d, dropout=0.0, activation="gelu", batch_first=True,
+            layer = nn.TransformerEncoderLayer(d, H, 4 * d, dropout=0.0, activation="relu", batch_first=True,
                                                norm_first=True)
             self.enc = nn.TransformerEncoder(layer, L, enable_nested_tensor=False)
             self.enc.load_state_dict({k[len("encoder."):]: v for k, v in s.items() if k.startswith("encoder.")})
@@ -258,8 +263,10 @@ def build_torch(ck: dict, allow_moves: bool = False):
             return super().train(False)
 
         def forward(self, f, c, mask, compressed: bool = False, slow: bool = False):
-            from .model import soft_log as soft_log_t
-            x = f.float() if compressed else soft_log_t(f.float())
+            x = f.float()
+            if compressed:                              # 训练数据是压缩过的：还原成原始特征
+                ax = x.abs()
+                x = torch.where(ax <= 1, x, torch.sign(x) * torch.exp(ax.clamp(max=40.0) - 1.0))
             B = x.shape[0]
             cc = c.long()[:, self.c_order].clamp(0, self.emb.shape[0] - 1)
             tok = [self.f_global(x[:, :GF]) + self.g0]
@@ -280,11 +287,10 @@ def build_torch(ck: dict, allow_moves: bool = False):
             present[:, 1:] = pres[0]
             present[:, 1:OFF["misc"][0]] |= torch.cat(pres[1:], 1)
             h = self.norm(self.enc(h))
-            pm = present.unsqueeze(-1).to(h.dtype)
-            gp = torch.cat([h[:, 0], (h * pm).sum(1) / pm.sum(1).clamp(min=1.0)], -1)
+            gp = torch.cat([h[:, 0], h.mean(1)], -1)
             sl = lambda n: h[:, OFF[n][0]:OFF[n][1]]                              # noqa: E731
             board, hand = sl("board"), sl("hand")
-            mag = torch.einsum("bhd,bkd->bhk", self.q_mag(hand), board) / math.sqrt(self.d)
+            mag = torch.einsum("bhd,bkd->bhk", self.q_mag(hand), board)
             lg = torch.cat([self.h_global(gp), self.h_buy(sl("shop")).squeeze(-1), self.h_sell(board).squeeze(-1),
                             self.h_activate(board).squeeze(-1), self.h_choose(sl("choice")).squeeze(-1),
                             self.h_play(hand).reshape(B, -1), mag.reshape(B, -1), self.h_move(board).reshape(B, -1)], 1)
@@ -293,7 +299,7 @@ def build_torch(ck: dict, allow_moves: bool = False):
                 other = m[:, :A_MOVE].any(-1, keepdim=True)
                 m = m & ~(other & (torch.arange(m.shape[1], device=m.device) >= A_MOVE))
             lg = lg.float().masked_fill(~m, -1e9)
-            v = self.v2(F.relu(self.v0(gp))).squeeze(-1).float()
+            v = self.v2(F.gelu(self.v0(gp))).squeeze(-1).float()
             return lg, v, torch.zeros(B, 8, device=x.device)
 
     return ExtModel()
