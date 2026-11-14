@@ -286,7 +286,10 @@ class EntityTransformer(nn.Module):
             raise ValueError(f"卡牌属性表有 {table.shape[0]} 行，现在的卡牌有 {n} 张（TavernGym 换过版本？）")
         dev = self.card.static.device
         self.register_buffer("card_attr", torch.from_numpy(np.ascontiguousarray(table)).to(dev), persistent=False)
-        self.attr_proj = nn.Linear(table.shape[1], self.dc, bias=False).to(dev)
+        import warnings
+        with warnings.catch_warnings():                 # 没有表时是 0 列的 Linear（torch 会提醒“0 个元素”，无害）
+            warnings.simplefilter("ignore")
+            self.attr_proj = nn.Linear(table.shape[1], self.dc, bias=False).to(dev)
         nn.init.zeros_(self.attr_proj.weight)
 
     def embed_card(self, idx: torch.Tensor) -> torch.Tensor:

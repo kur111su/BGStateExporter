@@ -59,6 +59,16 @@ def resolve(device: str = "auto", rollout: str = "auto") -> tuple[str, str]:
     return device, rollout
 
 
+def mps_amp(setting: str = "auto") -> bool:
+    """MPS 上用不用 bfloat16 混合精度：true / false 强制；auto = bench-device 测过、而且开着更快才用。"""
+    s = str(setting).lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    if s in ("0", "false", "no", "off"):
+        return False
+    return bool(((bench_choice() or {}).get("best") or {}).get("amp"))
+
+
 def perf_cores() -> int:
     """性能核数量（Apple 芯片的效率核跑模拟器很慢，线程数按性能核算）；别的平台 = 逻辑核数。"""
     if is_mac():

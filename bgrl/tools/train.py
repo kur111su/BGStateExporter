@@ -69,6 +69,9 @@ def parse(argv=None):
         setattr(cfg, k, v)
     if not a.run and recipe.get("run"):
         a.run = recipe["run"]
+    a.run = a.run.replace("\\", "/")                  # 配方里的 runs\\v3 在 Mac / Linux 上是一个怪名字的目录
+    a.restore = a.restore.replace("\\", "/")
+    a.init = a.init.replace("\\", "/")
     for f in dataclasses.fields(Config):
         v = getattr(a, f.name, None)
         if v is not None:
@@ -107,6 +110,8 @@ def main() -> int:
         print(f"从 {latest} 继续（第 {tr.iter} 轮）")
         if a.restore:
             tr.restore(a.restore)
+            if Path(a.restore).name == "restore_src.pt":    # 临时副本，用完删掉（不然每次多占一份模型大小）
+                Path(a.restore).unlink(missing_ok=True)
     elif a.init:
         tr.init_from(a.init)
     if a.stage:
@@ -114,10 +119,10 @@ def main() -> int:
 
     full_keys = ("iter", "decisions", "games_done", "dps", "t_collect", "t_env", "t_net", "t_update", "gpu_mem_gb", "kl", "ent", "vf", "place_bot", "place_league",
                  "eval_place", "eval_top1", "eval_boost_place", "eval_boost_top1", "eval_boost_top4", "eval_boost_score", "snapshot", "snapshot_dist", "snapshot_tier",
-                 "place_cgift", "cgift_games", "cgift_formed", "cgifts", "cgift_by_comp", "look_n", "look_fail", "look_changed", "look_gain", "look_to", "look_buf", "t_look", "look_ce", "look_agree", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_buy", "pro_sell", "pro_choose", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "tgt_q", "eng_q", "keep_sold", "aux_comp", "comp_acc", "drift", "kl_teacher", "teacher_coef", "teacher_core", "teacher_sure", "teacher_agree", "boost_strength", "seeded", "place_seeded", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac", "noop_move", "noop_freeze", "noop_cancel", "shape_fin", "shape_repay", "ent_coef", "guard_avg", "guard_ref", "guard_best", "guard_bad", "guard_fix", "guard_capped", "guard_scale", "grow", "grow_n", "t_grow", "boost_floor", "seeded_by_comp", "gifts", "gift_hand_full", "place_gift", "gift_games")
+                 "place_cgift", "cgift_games", "cgift_formed", "cgifts", "cgift_by_comp", "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_buy", "pro_sell", "pro_choose", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_q", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "tgt_q", "eng_q", "keep_sold", "aux_comp", "comp_acc", "drift", "kl_teacher", "teacher_coef", "teacher_core", "teacher_sure", "teacher_agree", "boost_strength", "seeded", "place_seeded", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac", "noop_move", "noop_freeze", "noop_cancel", "shape_fin", "shape_repay", "ent_coef", "guard_avg", "guard_ref", "guard_best", "guard_bad", "guard_fix", "guard_capped", "guard_scale", "grow", "grow_n", "t_grow", "boost_floor", "seeded_by_comp", "gifts", "gift_hand_full", "place_gift", "gift_games")
     verbose = a.verbose or bool(os.environ.get("GITHUB_ACTIONS"))
     if not verbose:
-        print("每轮只显示主要几项（全部字段在 runs\\v3\\log.jsonl；曲线看面板的“看板”或 runs\\v3\\dashboard.md；"
+        print("每轮只显示主要几项（全部字段在 runs/v3/log.jsonl；曲线看面板的“看板”或 runs/v3/dashboard.md；"
               "要像以前那样全打印加 --verbose）", flush=True)
 
     def f(rec, k, fmt="{:.2f}", dash="-"):

@@ -17,6 +17,7 @@
   bridge    A4 局面重建检查（tools/tg_bridge_check.py）
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
+  doctor    检查项目完整：环境、代码、训练进度、数据、竞技场（--fix 清掉多余的；tools/doctor.py）
   bench-device  测哪种设备组合训练最快（Mac：MPS / CPU），写进 reports/device.json，训练 device = auto 时照它选
   test      跑单元测试（tests/ 里的 test_*.py）
   info      看环境：Python、torch、可用设备（CUDA / MPS）、TavernGym 版本、训练进度
@@ -38,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 TOOLS = {"train": "train",
          "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
-         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "arena": "arena_run", "cleanup": "cleanup"}
+         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "doctor": "doctor", "arena": "arena_run", "cleanup": "cleanup"}
 
 
 def _run_tool(name: str, args: list[str]) -> int:

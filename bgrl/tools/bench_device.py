@@ -19,9 +19,10 @@ sys.path.insert(0, str(HERE))
 from rl.device import BENCH, available, perf_cores  # noqa: E402
 
 
-def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: str, steps: int = 32) -> dict:
+def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: str, steps: int = 32, amp: bool = False) -> dict:
     cmd = [sys.executable, "-X", "utf8", str(HERE / "tools" / "train.py"), "--bench", "--iters", str(iters), "--device", dev,
-           "--rollout-device", rdev, "--threads", str(threads), "--verbose", "--steps-per-iter", str(steps)]
+           "--rollout-device", rdev, "--threads", str(threads), "--verbose", "--steps-per-iter", str(steps),
+           "--amp-mps", "true" if amp else "false"]
     if recipe:
         cmd += ["--recipe", recipe]
     if size:
@@ -36,7 +37,8 @@ def run_one(dev: str, rdev: str, iters: int, threads: int, size: str, recipe: st
                 recs.append(json.loads(line))
             except ValueError:
                 pass
-    out = {"device": dev, "rollout": rdev, "ok": p.returncode == 0 and bool(recs), "sec": round(time.time() - t0, 1)}
+    out = {"device": dev, "rollout": rdev, "amp": bool(amp and dev == "mps"), "threads": threads,
+           "ok": p.returncode == 0 and bool(recs), "sec": round(time.time() - t0, 1)}
     if not out["ok"]:
         out["error"] = (p.stdout + p.stderr).strip().splitlines()[-3:]
         return out
@@ -80,23 +82,31 @@ def main(argv=None) -> int:
         print("所有组合都失败了，训练会用默认设备", flush=True)
         return 1
     best = max(ok, key=lambda r: r.get("dps", 0))
-    best["threads"] = threads
     allc = os.cpu_count() or threads
     if not a.threads and allc > threads:                # 再试一下把效率核也用上
         print(f"  测 更新 {best['device']} + 采样 {best['rollout']}，模拟器线程 {allc}（含效率核）…", flush=True)
         r = run_one(best["device"], best["rollout"], a.iters, allc, a.size, recipe, a.steps)
-        r["threads"] = allc
         res.append(r)
         if r["ok"]:
             print(f"    {r.get('dps', 0):.0f} 决策/秒", flush=True)
             if r.get("dps", 0) > best.get("dps", 0) * 1.03:
                 best = r
+    if best["device"] == "mps":                         # MPS 上再试 bfloat16 混合精度（更新快，但要确认不出错、不变慢）
+        print(f"  测 更新 mps（bfloat16 混合精度）+ 采样 {best['rollout']}，线程 {best['threads']} …", flush=True)
+        r = run_one("mps", best["rollout"], a.iters, best["threads"], a.size, recipe, a.steps, amp=True)
+        res.append(r)
+        if r["ok"]:
+            print(f"    {r.get('dps', 0):.0f} 决策/秒（更新 {r.get('t_update', 0):.1f}s）", flush=True)
+            if r.get("dps", 0) > best.get("dps", 0) * 1.05:
+                best = r
+        else:
+            print("    失败（不用混合精度）：" + " | ".join(r.get("error", [])), flush=True)
     BENCH.parent.mkdir(parents=True, exist_ok=True)
     BENCH.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "threads": best["threads"], "results": res,
                                  "best": {"device": best["device"], "rollout": best["rollout"], "dps": best.get("dps", 0),
-                                          "threads": best["threads"]}},
+                                          "threads": best["threads"], "amp": best.get("amp", False)}},
                                 ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"最快：更新 {best['device']} + 采样 {best['rollout']}、线程 {best['threads']}，{best.get('dps', 0):.0f} 决策/秒 → {BENCH}"
+    print(f"最快：更新 {best['device']}{'（bfloat16）' if best.get('amp') else ''} + 采样 {best['rollout']}、线程 {best['threads']}，{best.get('dps', 0):.0f} 决策/秒 → {BENCH}"
           "（训练设备选 auto 时照这个）", flush=True)
     return 0
 

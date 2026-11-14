@@ -24,7 +24,7 @@ from panel import jobs as J  # noqa: E402
 
 PALETTE = ["#2f6fdf", "#e0702a", "#2e9e5b", "#c23b5b", "#7a5bd6", "#8a8a8a"]
 ICON = {"queued": "🕒", "running": "▶", "done": "✔", "failed": "✘", "stopped": "■", "lost": "⚠"}
-PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型", "keep_from": "快照留到第几轮"}
+PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型", "keep_from": "快照留到第几轮", "fix": "顺手清理（删错目录、临时副本、.DS_Store）"}
 CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data/external/model.pt）",
            "auto": "自动（实测最快的）", "mps": "MPS（Apple 芯片 GPU）", "cuda": "CUDA（NVIDIA 显卡）", "cpu": "CPU"}
 SHORT = {
@@ -50,7 +50,7 @@ PAGES = [("看板", None, ""),
          ("测试", ["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。"),
          ("数据", ["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。"),
          ("竞技场", None, ""),
-         ("维护", ["cleanup_preview", "cleanup", "selftest", "info"], "清理前先点“看看会删什么”。训练在跑的时候，清理会排在训练后面。"),
+         ("维护", ["doctor", "cleanup_preview", "cleanup", "selftest", "info"], "清理前先点“看看会删什么”。训练在跑的时候，清理会排在训练后面。"),
          ("任务输出", None, "")]
 ARENA_KEYS = ["arena_check", "arena_practice", "arena_match", "arena_loop"]
 CARD_W, CARD_H = 300, 230
@@ -73,7 +73,7 @@ QPushButton#primary { background: #2f6fdf; color: #ffffff; border-color: #2f6fdf
 QPushButton#primary:disabled { background: #a9c1ee; border-color: #a9c1ee; color: #ffffff; }
 QPushButton#danger { color: #c23b5b; }
 QPushButton:checked { background: #2f6fdf; color: #ffffff; border-color: #2f6fdf; }
-QPlainTextEdit { background: #1e1e22; color: #e6e6ea; border-radius: 6px; font-family: Menlo, "SF Mono", Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", monospace; font-size: 12px; }
+QPlainTextEdit { background: #1e1e22; color: #e6e6ea; border-radius: 6px; font-family: Menlo, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC", monospace; font-size: 12px; }
 QTableWidget { background: #ffffff; border: 1px solid #e3e1dc; gridline-color: #ecebe7; }
 QHeaderView::section { background: #f0efec; border: none; border-bottom: 1px solid #e3e1dc; padding: 4px 6px; font-weight: 600; }
 QListWidget#matches { background: #ffffff; border: 1px solid #e3e1dc; border-radius: 8px; }
