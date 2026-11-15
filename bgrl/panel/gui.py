@@ -1,4 +1,4 @@
-"""程序看板（桌面程序，PySide6 + pyqtgraph）：训练看板、所有操作、竞技场对局，都在一个窗口里。Windows 双击 panel.bat，Mac 双击 panel.command。
+"""程序看板（桌面程序，PySide6 + pyqtgraph）：训练看板、所有操作、竞技场对局，都在一个窗口里。双击 panel.command。
 
 只是界面：任务的启动 / 排队 / 停止在 panel/jobs.py（独立进程跑，关掉这个窗口不影响训练，再打开能接着看）；
 要显示的数据在 panel/data.py 算。不开网页、不监听端口。

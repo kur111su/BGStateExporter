@@ -8,9 +8,7 @@
 
 ## 怎么用
 
-**Windows**：第一次双击 `bgrl\setup.bat`（装环境），之后双击 `bgrl\panel.bat` 打开面板。
-
-**Mac（Apple 芯片）**：第一次在“终端”里运行
+项目在 Mac（Apple 芯片）上跑。第一次在“终端”里运行
 
 ```
 cd 放项目的目录/BGStateExporter/bgrl && ./setup.sh
@@ -36,14 +34,15 @@ cd 放项目的目录/BGStateExporter/bgrl && ./setup.sh
 
 ```
 bgrl/                       全部代码（Python）
-  setup.bat / panel.bat     Windows：装环境 / 打开面板
-  setup.sh / panel.command  Mac / Linux：装环境 / 打开面板
+  setup.sh / panel.command  装环境 / 打开面板
   panel/                    面板：jobs.py + runner.py 任务层（启动、排队、停止），data.py 数据层，gui.py 界面（PySide6）
   bg.py                     统一命令入口（python bg.py <命令>）
   paths.py                  路径
   configs/v3.json           训练配方（训练的全部设置）
   tg/                       TavernGym 桥接：动作编号、观察布局、卡牌目录、高分回放解析、局面重建
-  rl/                       模型、PPO 训练、设备选择（device.py：CUDA / MPS / CPU）（奖励塑形、模仿学习分开放）、课程、示范格式、阵容打分、对手库
+  rl/                       模型（model.py）、训练主流程（ppo.py）、设置（config.py）、采样（rollout.py）、老师（teacher.py）、
+                            保险和考试守护（guard.py）、奖励塑形（shaping.py）、模仿（imitation.py）、课程（calibrate.py）、
+                            设备选择（device.py：MPS / CPU）、外部模型（extnet.py）、阵容打分、对手库（奖励塑形、模仿学习分开放）、课程、示范格式、阵容打分、对手库
   tools/                    各命令的实现
   arena/                    竞技场：模型打包、契约核对、连接器策略、对局查看器
   tests/                    单元测试和 CI 用的局面样本

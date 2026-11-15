@@ -1,6 +1,6 @@
-"""bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：Windows 双击 panel.bat，Mac 双击 panel.command；按钮跑的就是这些命令）。
+"""bgrl 的统一入口：python bg.py <命令> [参数]（平时用面板：双击 panel.command；按钮跑的就是这些命令）。
 
-  panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；Windows 的 panel.bat、Mac 的 panel.command 就是它）
+  panel     程序看板（桌面程序）：训练看板 + 所有操作 + 竞技场对局（panel/gui.py；panel.command 就是它）
   train     训练（面板里的“训练” = --recipe configs/v3.json --resume，接着 runs/v3 练；参数同 tools/train.py：--smoke、--bench、--run、--recipe、--iters …）
   tavernbench  用 TavernBench（论文的 368 题评测集）测模型，和 TavernAgent、大语言模型比（tools/tavernbench.py）
   prolib    高分对局（Firestone 6500+ 分享包）→ 高分阵容库 runs/pro_boards.json + 汇总曲线 rl/pro_profile.json

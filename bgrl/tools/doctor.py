@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -80,7 +79,7 @@ def check_env(R: Report) -> None:
             R.maybe("这台 Mac 上 MPS 用不了，训练只能用 CPU（很慢）", "macOS 要 12.3 以上；重新运行 setup.sh 装 PyTorch")
         del torch
     except ImportError:
-        R.no("PyTorch 没装", "运行 setup（Mac：./setup.sh；Windows：setup.bat）")
+        R.no("PyTorch 没装", "运行 ./setup.sh")
     try:
         import taverngym
         pin = (ROOT / "taverngym" / "PIN.txt").read_text(encoding="utf-8")

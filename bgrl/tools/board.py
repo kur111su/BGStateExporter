@@ -29,9 +29,10 @@ def main(argv=None) -> int:
         return 1
     print(f"看板 → {p}（图在 {run / 'board'}）", flush=True)
     if a.open:
-        import os
-        if hasattr(os, "startfile"):
-            os.startfile(str(p))                           # noqa: S606 —— Windows 用默认程序打开
+        import subprocess
+        import sys
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(p)], check=False)
     return 0
 
 

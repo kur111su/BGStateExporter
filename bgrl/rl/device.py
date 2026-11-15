@@ -1,4 +1,4 @@
-"""算力选择：Windows / Linux 上有 NVIDIA 显卡用 CUDA，Mac（Apple 芯片）用 MPS（Metal），都没有用 CPU。
+"""算力选择：Mac（Apple 芯片）用 MPS（Metal）；有 NVIDIA 显卡的 Linux 用 CUDA；都没有用 CPU。项目现在只在 Mac 上跑（CI 在 Linux 上用 CPU）。
 
 训练分两段：采样（模拟器 + 模型一次几百个局面的前向）和更新（大批量反向传播）。Apple 芯片上小批量前向用 CPU
 往往比 MPS 快（每次调 GPU 有固定开销），大批量更新用 MPS 快——所以采样和更新可以用不同的设备

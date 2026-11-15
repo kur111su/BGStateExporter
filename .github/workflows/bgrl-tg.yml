@@ -9,20 +9,19 @@ on:
 
 jobs:
   bridge:
-    runs-on: windows-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install TavernGym wheel
-        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $commit = (Get-Content bgrl/taverngym/PIN.txt | Select-String '^commit=').ToString().Split('=')[1]
-          $tag = "taverngym-" + $commit.Substring(0,7)
-          $whl = "taverngym-1.0.0-cp310-abi3-win_amd64.whl"
-          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/${{ github.repository }}/releases/download/$tag/$whl" -OutFile $whl
-          python -m pip install numpy $whl
+          tag="taverngym-$(grep '^commit=' bgrl/taverngym/PIN.txt | cut -d= -f2 | cut -c1-7)"
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern '*manylinux*x86_64*.whl' --pattern '*linux_x86_64*.whl' --dir whl || true
+          python -m pip install numpy whl/*.whl
       - name: Bridge check (A4)
         run: python -X utf8 bgrl/tools/tg_bridge_check.py bgrl/tests/fixtures/recruit_states_v2.jsonl bgrl/tests/fixtures/recruit_states_v3.jsonl --annotate --out bridge_report.json
       - uses: actions/upload-artifact@v4

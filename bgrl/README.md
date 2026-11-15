@@ -2,16 +2,16 @@
 
 在 TavernGym（MCG-NJU/AutoTavern，MIT，锁定的版本见 `taverngym/PIN.txt`）里用 PPO 训练一个实体 Transformer 策略；训练、考试、阵容测试全在模拟器里。练出来的模型打竞技场（TavernArena）：只在官方服务器上的模拟对局里出动作，不操作真实的炉石客户端。
 
-需要 Python 3.10～3.13（推荐 3.12，安装时勾选 “Add python.exe to PATH”）和 NVIDIA 显卡驱动。
+在 Mac（Apple 芯片）上跑：训练用 GPU（MPS），没有合适的 Python 时 `setup.sh` 会自动装一个。
 
-## 双击入口（2 个 .bat）
+## 入口（2 个）
 
 | 文件 | 做什么 |
 | --- | --- |
-| `setup.bat` | 第一次用、或更新后运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch（CUDA），跑测试和几轮极小训练。`setup.bat bench` 另外测三种模型大小的训练速度 |
-| `panel.bat` | **面板**（桌面程序，不开浏览器）：训练看板 + 所有操作 + 竞技场对局 + 任务输出，都在一个窗口里。第一次会装 PySide6 和 pyqtgraph（约 200 MB）。关掉窗口不影响正在跑的训练和任务，再双击能接着看 |
+| `setup.sh` | 第一次用、或更新后在“终端”里运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch，跑测试和几轮极小训练，最后测设备速度。`./setup.sh quick` 不测速 |
+| `panel.command` | 双击打开**面板**（桌面程序）：训练看板 + 所有操作 + 竞技场对局 + 任务输出，都在一个窗口里。关掉窗口不影响正在跑的训练和任务，再打开还能看到 |
 
-## 面板（`panel.bat`）
+## 面板（`panel.command`）
 
 顶上一行状态（训练在不在跑、轮数、最近考试、正在跑 / 排队的任务数），左边选页：
 
@@ -61,7 +61,7 @@
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
 | `arena` | `tools/arena_run.py` | 竞技场：`check` / `practice` / `match` / `loop [--update]` / `view` |
 | `cleanup` | `tools/cleanup.py` | 清理旧文件：不加 `--yes` 只列出来；`--keep-from N` 快照留到第几轮为止 |
-| `panel` | `panel/gui.py` | 面板（`panel.bat` 就是它）；`--web` = 网页版（`panel/app.py`） |
+| `panel` | `panel/gui.py` | 面板（`panel.command` 就是它） |
 | `test` | `tests/test_*.py` | 单元测试 |
 | `info` | — | 环境、对局记录数、训练进度 |
 
@@ -69,7 +69,7 @@
 
 ## 训练配方
 
-`configs/v3.json` 是训练（面板的“训练”）的全部设置：`run`（训练目录）、`config`（`rl/ppo.py` 的 `Config` 字段和值）、`notes`（每组设置是干什么的）。优先级：`Config` 默认值 < 配方 < 命令行。要试别的设置，复制一份改名（例如 `configs/v4.json`，把 `run` 改成 `runs\v4`），然后 `bg.py train --recipe configs/v4.json --resume`。`tests/test_recipe.py` 检查配方里的字段都存在，并且 `train.bat` 得到的设置和改用配方之前那串命令行参数完全一样。
+`configs/v3.json` 是训练（面板的“训练”）的全部设置：`run`（训练目录）、`config`（`rl/config.py` 的 `Config` 字段和值）、`notes`（每组设置是干什么的）。优先级：`Config` 默认值 < 配方 < 命令行。要试别的设置，复制一份改名（例如 `configs/v4.json`，把 `run` 改成 `runs\v4`），然后 `bg.py train --recipe configs/v4.json --resume`。`tests/test_recipe.py` 检查配方里的字段都存在，并且 `train.bat` 得到的设置和改用配方之前那串命令行参数完全一样。
 
 ## 模块和依赖方向
 
@@ -92,7 +92,13 @@ tg/               TavernGym 桥接（不需要 torch）
 
 rl/               模型和训练
   model.py        实体 Transformer：指针式动作头 + 价值头 + 名次头（small / medium / large）
-  ppo.py          训练主流程（Trainer）：批量环境采样、GAE、PPO 更新、对手库快照、评估、健康检查和自动回滚、检查点
+  ppo.py          训练主流程（Trainer）：批量环境采样、PPO 更新、对手库快照、评估、检查点、train 循环
+  config.py       训练的全部设置（Config）
+  rollout.py      Policy（出动作，可在另一设备放副本）、Rollout（一轮的经验、GAE）、名次奖励表
+  teacher.py      老师模型：读老师、每轮先算好它的答案、系数
+  guard.py        保险：健康检查和自动回滚、考试守护（best.pt）、预热、熵系数、--restore
+  device.py       设备选择（MPS / CPU）、线程数
+  extnet.py       外部模型（jimmypretend/hearthstone-bg-ppo）的读取和网络
   shaping.py      奖励塑形（Trainer 继承）：升本节奏、金币流向、无效刷新、阵容成型，每个座位的塑形状态
   imitation.py    模仿学习（Trainer 继承）：读示范、按类别 / 回合 / 卡牌加权、损失、命中率、模仿强度自动调
   demos.py        示范数据格式：动作类别 KINDS、读写分片、soft_log、按买的卡挑示范（bought_in）
@@ -127,7 +133,7 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 
 ## CI
 
-- `.github/workflows/taverngym.yml`：改 `taverngym/PIN.txt` 后编译 Windows / Linux 安装包，发布为预发布 `taverngym-<commit>`。
+- `.github/workflows/taverngym.yml`：改 `taverngym/PIN.txt` 后编译 macOS / Linux 安装包，发布为预发布 `taverngym-<commit>`。
 - `.github/workflows/bgrl-tg.yml`：A4 重建检查（用 `tests/fixtures` 里的样本）。
 - `.github/workflows/bgrl-rl.yml`：单元测试（`bg.py test`）、TavernBench 冒烟、对手画像、冒烟训练（默认、加强对手、按配方、模仿高分玩家），CPU。`bgrl/` 下 rl、tg、tools、configs、tests、arena 有改动就跑。
 

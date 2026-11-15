@@ -1,4 +1,4 @@
-# Build Windows, macOS (Apple silicon) and Linux wheels of TavernGym (MCG-NJU/AutoTavern, MIT) at the commit pinned in bgrl/taverngym/PIN.txt
+# Build macOS (Apple silicon) and Linux wheels of TavernGym (MCG-NJU/AutoTavern, MIT) at the commit pinned in bgrl/taverngym/PIN.txt
 # and publish them as a *prerelease* (prereleases are ignored by the plugin's auto-update, which follows
 # releases/latest). Release notes must stay ASCII.
 name: TavernGym wheels
@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-24.04]
+        os: [macos-latest, ubuntu-24.04]
         python: ["3.12"]   # the wheel is abi3 (cp310-abi3): one build serves Python 3.10+
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="taverngym-${TG_COMMIT:0:7}"
-          notes="Windows, macOS (Apple silicon) and Linux wheels of TavernGym (https://github.com/${TG_REPO}, MIT License) built from commit ${TG_COMMIT}. Not affiliated with Blizzard. See TavernGym-LICENSE.txt and TavernGym-NOTICE.txt. Install: run bgrl/setup.bat (Windows) or bgrl/setup.sh (macOS / Linux)."
+          notes="macOS (Apple silicon) and Linux wheels of TavernGym (https://github.com/${TG_REPO}, MIT License) built from commit ${TG_COMMIT}. Not affiliated with Blizzard. See TavernGym-LICENSE.txt and TavernGym-NOTICE.txt. Install: run bgrl/setup.bat (Windows) or bgrl/setup.sh (macOS / Linux)."
           if printf '%s' "$notes" | grep -qP '[^\x00-\x7F]'; then echo "notes must be ASCII"; exit 1; fi
           gh release delete "$tag" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$tag" dist/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "$tag" --notes "$notes"
