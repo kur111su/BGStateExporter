@@ -201,6 +201,8 @@ class Config:
     # 只学老师的某几类动作（hard 模式）：例如 "sell" = 只在老师有把握、而且它最想做的是“卖随从”的局面上学；可选
     # end / refresh / freeze / upgrade / buy / sell / play，逗号分开。空 = 全学。teacher_from_turn：早于这一回合的局面不学
     teacher_chunk: int = 512       # 老师一次算多少个局面（小 = 省内存；结果一样）
+    # 每轮只让老师算这么大比例的局面（随机抽；损失按比例放大，力度不变）。老师一个局面要算 125 个词，全算很慢
+    teacher_frac: float = 1.0
     teacher_actions: str = ""
     teacher_from_turn: int = 0
     # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6

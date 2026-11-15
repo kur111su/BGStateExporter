@@ -43,6 +43,9 @@ class TeacherMixin:
         if getattr(cfg, "teacher_from_turn", 0) > 0:     # 第 0 个特征 = 回合 / 20（≤ 1，压缩不改它）
             turn = np.rint(np.asarray(b["f"][:, 0], dtype=np.float32) * 20)
             rows = rows[turn >= cfg.teacher_from_turn]
+        frac = float(getattr(cfg, "teacher_frac", 1.0))
+        if 0 < frac < 1 and len(rows) > 1:               # 只算一部分（随机抽）
+            rows = np.sort(np.random.choice(rows, size=max(1, int(len(rows) * frac)), replace=False))
         ch = max(1, int(getattr(cfg, "teacher_chunk", 512)))
         want = teacher_action_mask(getattr(cfg, "teacher_actions", ""), n_actions)
         for q in range(0, len(rows), ch):

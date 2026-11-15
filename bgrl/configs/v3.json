@@ -45,6 +45,7 @@
   "teacher_core_mult": 1.0,
   "teacher_mode": "hard",
   "teacher_conf": 0.4,
+  "teacher_frac": 0.5,
   "teacher_actions": "",
   "teacher_from_turn": 1,
   "aux_comp_coef": 0.05,

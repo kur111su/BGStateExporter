@@ -72,6 +72,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         self.dev = torch.device(dname)
         self.rdev = torch.device(rname)
         if dname == "mps":                              # Mac：显存就是系统内存，而且不做半精度（占用约是 3070 上的两倍）：一份放小一半
+            self._micro_recipe = cfg.micro_batch       # 半精度实测能用的话再放回去（内存减半）
             cfg.micro_batch = min(cfg.micro_batch, int(os.environ.get("BGRL_MPS_MICRO", "256")))
             cfg.teacher_chunk = min(cfg.teacher_chunk, cfg.micro_batch)
         print(f"设备：更新 {dname}，采样 {rname}，模拟器线程 {cfg.threads}" +
@@ -481,6 +482,9 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         torch.mps.empty_cache()
         if use:
             self.amp = True
+            cfg.micro_batch = max(cfg.micro_batch, min(512, getattr(self, "_micro_recipe", cfg.micro_batch)))
+            cfg.teacher_chunk = max(cfg.teacher_chunk, cfg.micro_batch)
+            print(f"  半精度内存减半：每份放回 {cfg.micro_batch} 个样本", flush=True)
             self.learner.amp = True
             for pol in self.snap_cache.values():
                 pol.amp = True
@@ -504,7 +508,9 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         hard = getattr(cfg, "teacher_mode", "hard") != "kl"
         t_ta = t_tp = None
         if tcoef > 0 and hard:                           # 老师的答案先算好（每轮一次，不是每个 epoch 每一份都算）
+            t0_t = time.time()
             t_ta, t_tp = self._teacher_targets(b, A_N)
+            stats["t_teacher"].append(time.time() - t0_t)
             stats["teacher_rows"].append(float((t_ta >= 0).mean()))
         if self.dev.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
@@ -571,7 +577,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                             sure = ((t(t_tp[j], torch.float32) >= cfg.teacher_conf) & (ta >= 0)).float()
                             ta = ta.clamp(min=0)
                             nll_t = -logp_all.gather(1, ta.unsqueeze(1)).squeeze(1).clamp(max=20)
-                            loss = loss + tcoef * (nll_t * sure * tw_t).mean()
+                            boost = 1.0 / min(1.0, max(0.05, float(getattr(cfg, "teacher_frac", 1.0))))   # 只算了一部分局面：按比例放大
+                            loss = loss + tcoef * boost * (nll_t * sure * tw_t).mean()
                             stats["teacher_sure"].append(float(sure.mean()))
                             if sure.any():
                                 agree = (logp_all.argmax(-1) == ta).float()
