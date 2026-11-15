@@ -104,9 +104,9 @@ def check_stop(root: Path):
         assert not J.STOP_FILE.exists()                                     # 用完收走，下次启动训练不会被它停掉
         # 中途出错退出：自动接着跑（去掉 --restore），不是无限重试
         mark = root / "run" / "crashed_once"
-        code = ("import pathlib, sys; p = pathlib.Path(sys.argv[1]); print('args', sys.argv[2:], flush=True)\n"
+        crash = ("import pathlib, sys; p = pathlib.Path(sys.argv[1]); print('args', sys.argv[2:], flush=True)\n"
                 "if not p.exists():\n    p.write_text('x'); sys.exit(5)\nprint('resumed ok', flush=True)")
-        j = J.start("r:x", steps=[[PY, "-c", code, str(mark), "--resume", "--restore", "best.pt"]], root=root, spawn=False)
+        j = J.start("r:x", steps=[[PY, "-c", crash, str(mark), "--resume", "--restore", "best.pt"]], root=root, spawn=False)
         j.update(retry=2, retry_after=0)
         J._write(J._path(j["id"], root=root), j)
         R.run(j["id"], root, 0.05)
