@@ -32,6 +32,7 @@ SHORT = {
     "train_restore": "模型退回考试最好的那一版，从那里接着练。",
     "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
     "bench_device": "比几种设备组合的训练速度，记下最快的（约 5–15 分钟）。",
+    "bench_mlx": "比 MLX 和 PyTorch 谁快，判断值不值得换（约 1–2 分钟）。",
     "board": "按最新日志重画 dashboard.md 和曲线图。",
     "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
     "comptest_seeded": "第 8–10 回合换成高手的成型场面，再自己打。",
@@ -46,7 +47,7 @@ SHORT = {
     "info": "Python、PyTorch / 显卡、TavernGym 版本。",
 }
 PAGES = [("看板", None, ""),
-         ("训练", ["train", "train_restore", "bench_device", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。"),
+         ("训练", ["train", "train_restore", "bench_device", "bench_mlx", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。"),
          ("测试", ["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。"),
          ("数据", ["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。"),
          ("竞技场", None, ""),

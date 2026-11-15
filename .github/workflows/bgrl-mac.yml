@@ -36,6 +36,10 @@ jobs:
           .venv/bin/python -X utf8 -c "import torch; print('mps', torch.backends.mps.is_available())"
           .venv/bin/python -X utf8 bg.py bench-device --iters 2
           cat reports/device.json
+      - name: MLX vs PyTorch benchmark script (the runner has no GPU, so this only checks that the script runs)
+        working-directory: bgrl
+        continue-on-error: true
+        run: .venv/bin/python -X utf8 bg.py bench-mlx --steps 3 --warm 1
       - name: Desktop panel smoke test
         working-directory: bgrl
         run: QT_QPA_PLATFORM=offscreen .venv/bin/python -X utf8 tests/gui_smoke.py ../shots
