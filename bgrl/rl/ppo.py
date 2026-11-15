@@ -937,6 +937,41 @@ class Trainer(ShapingMixin, ImitationMixin):
 
     # ---------------- 更新 ----------------
 
+    @torch.no_grad()
+    def _teacher_targets(self, b, n_actions: int):
+        """老师在这一轮每个局面上最想做的动作和它的概率（hard 模式用）：→ (动作 [n]，不学的局面是 -1；概率 [n])。
+        只算要学的局面（teacher_from_turn 起），每块大小固定（最后一块补齐）——形状不变，MPS 不会越攒越多。
+        teacher_actions 限定了动作类别的，老师最想做的不在里面就记 -1。"""
+        cfg = self.cfg
+        n = len(b["a"])
+        ta = np.full(n, -1, dtype=np.int64)
+        tp = np.zeros(n, dtype=np.float32)
+        rows = np.arange(n)
+        if getattr(cfg, "teacher_from_turn", 0) > 0:     # 第 0 个特征 = 回合 / 20（≤ 1，压缩不改它）
+            turn = np.rint(np.asarray(b["f"][:, 0], dtype=np.float32) * 20)
+            rows = rows[turn >= cfg.teacher_from_turn]
+        ch = max(1, int(getattr(cfg, "teacher_chunk", 512)))
+        want = teacher_action_mask(getattr(cfg, "teacher_actions", ""), n_actions)
+        for q in range(0, len(rows), ch):
+            j = rows[q:q + ch]
+            k = len(j)
+            if k < ch:
+                j = np.concatenate([j, np.repeat(j[-1:], ch - k)])
+            f = torch.as_tensor(b["f"][j], dtype=torch.float32).to(self.dev)
+            c = torch.as_tensor(b["c"][j], dtype=torch.long).to(self.dev)
+            m = torch.as_tensor(np.unpackbits(b["m"][j], axis=1)[:, :n_actions].astype(bool)).to(self.dev)
+            with torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+                lg = self.teacher(f, c, m, compressed=True)[0].float()
+            p, a = F.softmax(lg, -1).max(-1)
+            ta[j[:k]] = a.cpu().numpy()[:k]
+            tp[j[:k]] = p.cpu().numpy()[:k]
+        if want is not None:
+            ok = ta >= 0
+            ta[ok & (want[np.clip(ta, 0, None)] <= 0)] = -1
+        if self.dev.type == "mps":
+            torch.mps.empty_cache()
+        return ta, tp
+
     def update(self, b):
         cfg = self.cfg
         self.model.train()
@@ -950,6 +985,11 @@ class Trainer(ShapingMixin, ImitationMixin):
             stats["teacher_coef"].append(tcoef)
         stop = False
         A_N = self.model.L.actions
+        hard = getattr(cfg, "teacher_mode", "hard") != "kl"
+        t_ta = t_tp = None
+        if tcoef > 0 and hard:                           # 老师的答案先算好（每轮一次，不是每个 epoch 每一份都算）
+            t_ta, t_tp = self._teacher_targets(b, A_N)
+            stats["teacher_rows"].append(float((t_ta >= 0).mean()))
         if self.dev.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         for _ in range(cfg.epochs):
@@ -997,35 +1037,29 @@ class Trainer(ShapingMixin, ImitationMixin):
                         loss = loss + cfg.anchor_coef * kl_anchor
                         stats["kl_anchor"].append(kl_anchor.item())
                     if tcoef > 0:
-                        with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
-                            # 老师分块算：外部模型 125 个词不屏蔽，一次算 4096 个局面在 Mac（MPS，float32）上要十几 GB 内存
-                            ch = int(getattr(cfg, "teacher_chunk", 512)) or f.shape[0]
-                            tl = torch.cat([F.log_softmax(self.teacher(f[q:q + ch], c[q:q + ch], m[q:q + ch],
-                                                                       compressed=True)[0].float(), -1)
-                                            for q in range(0, f.shape[0], ch)])
-                        kl_rows = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1)
-                        kl_t = kl_rows.mean()
                         tw = self._teacher_rows(b["f"][j], b["c"][j])
                         if tw is not None:
                             stats["teacher_core"].append(float((tw > 1).mean()))
-                        tw_t = t(tw, torch.float32) if tw is not None else torch.ones_like(kl_rows)
-                        if getattr(cfg, "teacher_mode", "hard") == "kl":
+                        tw_t = t(tw, torch.float32) if tw is not None else torch.ones(len(j), device=self.dev)
+                        if not hard:                                     # kl：整个分布向老师靠（要现算老师的分布）
+                            with torch.no_grad(), torch.autocast(self.dev.type, dtype=torch.bfloat16, enabled=self.amp):
+                                ch = int(getattr(cfg, "teacher_chunk", 512)) or f.shape[0]
+                                tl = torch.cat([F.log_softmax(self.teacher(f[q:q + ch], c[q:q + ch], m[q:q + ch],
+                                                                           compressed=True)[0].float(), -1)
+                                                for q in range(0, f.shape[0], ch)])
+                            kl_rows = (tl.exp() * (tl - logp_all)).masked_fill(~m, 0).sum(-1)
                             loss = loss + tcoef * (kl_rows * tw_t).mean()
+                            stats["kl_teacher"].append(kl_rows.mean().item())
                         else:                                            # 只在老师有把握的局面，学老师最想做的那个动作
-                            tp, ta = tl.max(-1)
-                            sure = (tp.exp() >= cfg.teacher_conf).float()
-                            want = teacher_action_mask(getattr(cfg, "teacher_actions", ""), logp_all.shape[1])
-                            if want is not None:
-                                sure = sure * t(want, torch.float32)[ta]
-                            if getattr(cfg, "teacher_from_turn", 0) > 0:
-                                sure = sure * (torch.round(f[:, 0].float() * 20) >= cfg.teacher_from_turn).float()
+                            ta = t(t_ta[j], torch.long)
+                            sure = ((t(t_tp[j], torch.float32) >= cfg.teacher_conf) & (ta >= 0)).float()
+                            ta = ta.clamp(min=0)
                             nll_t = -logp_all.gather(1, ta.unsqueeze(1)).squeeze(1).clamp(max=20)
                             loss = loss + tcoef * (nll_t * sure * tw_t).mean()
                             stats["teacher_sure"].append(float(sure.mean()))
                             if sure.any():
                                 agree = (logp_all.argmax(-1) == ta).float()
                                 stats["teacher_agree"].append(float((agree * sure).sum() / sure.sum()))
-                        stats["kl_teacher"].append(kl_t.item())
                     self.scaler.scale(loss * w).backward()
                     with torch.no_grad():
                         kl = ((ratio - 1) - torch.log(ratio)).mean().item()
@@ -1047,6 +1081,8 @@ class Trainer(ShapingMixin, ImitationMixin):
                 stats["grad_norm"].append(float(gn))
                 self.opt.step()
                 self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
+                if self.dev.type == "mps":                 # MPS 的缓存只涨不退：每个小批还一次
+                    torch.mps.empty_cache()
                 if sum(kls) > cfg.target_kl:
                     stop = True
                     break
@@ -1594,7 +1630,22 @@ class Trainer(ShapingMixin, ImitationMixin):
                 torch.mps.empty_cache()
             self._apply_warmup()
             t1 = time.time()
-            upd = self.update(batch) if batch is not None else {}
+            try:
+                upd = self.update(batch) if batch is not None else {}
+            except RuntimeError as ex:                  # 显存 / 内存不够：清缓存、每份减半，这一轮重算一次（不行再报错退出）
+                if "out of memory" not in str(ex) or cfg.micro_batch <= 32:
+                    raise
+                import gc
+                self.opt.zero_grad(set_to_none=True)
+                gc.collect()
+                if self.dev.type == "mps":
+                    torch.mps.empty_cache()
+                elif self.dev.type == "cuda":
+                    torch.cuda.empty_cache()
+                cfg.micro_batch = max(32, cfg.micro_batch // 2)
+                cfg.teacher_chunk = min(cfg.teacher_chunk, cfg.micro_batch)
+                print(f"  内存不够：清缓存，每份改成 {cfg.micro_batch} 个样本，这一轮的更新重算", flush=True)
+                upd = self.update(batch)
             t_upd = time.time() - t1
             self.iter += 1
             problem = self.health(upd) or self._drift(upd.get("ent"), self.n_noop / max(1, n_dec))
