@@ -102,6 +102,23 @@ def check_stop(root: Path):
         jj = J.load(j["id"], root)
         assert jj["status"] == "stopped" and jj["rc"] == 0 and "saved" in J.tail(j["id"], root=root), jj
         assert not J.STOP_FILE.exists()                                     # 用完收走，下次启动训练不会被它停掉
+        # 中途出错退出：自动接着跑（去掉 --restore），不是无限重试
+        mark = root / "run" / "crashed_once"
+        code = ("import pathlib, sys; p = pathlib.Path(sys.argv[1]); print('args', sys.argv[2:], flush=True)\n"
+                "if not p.exists():\n    p.write_text('x'); sys.exit(5)\nprint('resumed ok', flush=True)")
+        j = J.start("r:x", steps=[[PY, "-c", code, str(mark), "--resume", "--restore", "best.pt"]], root=root, spawn=False)
+        j.update(retry=2, retry_after=0)
+        J._write(J._path(j["id"], root=root), j)
+        R.run(j["id"], root, 0.05)
+        jj, out = J.load(j["id"], root), J.tail(j["id"], root=root)
+        assert jj["status"] == "done" and jj["rc"] == 0 and "resumed ok" in out and "自动接着练（第 1 / 2 次）" in out, (jj, out)
+        assert "['--resume', '--restore', 'best.pt']" in out and "args ['--resume']" in out, out
+        j = J.start("r:y", steps=[[PY, "-c", "import sys; sys.exit(7)"]], root=root, spawn=False)
+        j.update(retry=2, retry_after=0)
+        J._write(J._path(j["id"], root=root), j)
+        R.run(j["id"], root, 0.05)
+        jj = J.load(j["id"], root)
+        assert jj["status"] == "failed" and jj["rc"] == 7 and J.tail(j["id"], root=root).count("自动接着练") == 2, jj
         j = J.start("train", steps=[[PY, "-c", code, str(root / "arena" / "STOP")]], root=root, spawn=False)
         j.update(stop="file", stop_file=str(root / "arena" / "STOP"))        # 连续计分局：自己的停止文件
         J._write(J._path(j["id"], root=root), j)

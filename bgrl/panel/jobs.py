@@ -60,9 +60,9 @@ _TRAIN = {"threads": ("int", _threads_default(), 1, 256), "device": ("choice", "
 _CKPT = ("choice", "latest", ("latest", "best", "external"))
 # 任务 → 标题、分组、说明、参数 {名字: (类型, 默认, …)}、怎么拼命令、怎么停（file = 让训练自己存盘退出）、要不要二次确认
 SPECS: dict[str, dict] = {
-    "train": dict(title="训练", group="train", stop="file", params=dict(_TRAIN),
+    "train": dict(title="训练", group="train", stop="file", params=dict(_TRAIN), retry=3, awake=True,
                   desc="接着 runs/v3 练（configs/v3.json）。停止 = 这一轮跑完、存好进度再退出。", build=_train),
-    "train_restore": dict(title="退回 best.pt 再练", group="train", stop="file",
+    "train_restore": dict(title="退回 best.pt 再练", group="train", stop="file", retry=3, awake=True,
                           params=dict(_TRAIN),
                           confirm="模型退回考试成绩最好的那一版（runs/v3/best.pt），那之后练的丢掉（日志和快照还在）。",
                           desc="接着 runs/v3 的日志练，但模型换回 best.pt、优化器重新开始。停了以后再点普通的“训练”接着练，不用再点这个。",
@@ -218,6 +218,8 @@ def start(key: str, params: dict | None = None, root: Path | None = None, steps:
     j = {"id": jid, "key": key, "title": spec["title"], "group": spec["group"], "params": p,
          "steps": steps if steps is not None else spec["build"](p), "stop": spec.get("stop", "kill"),
          "stop_file": spec.get("stop_file"),
+         # retry：中途出错退出（不是自己点的停止）自动接着练几次；awake：跑的时候不让 Mac 睡眠
+         "retry": int(spec.get("retry", 0)), "awake": bool(spec.get("awake", False)),
          "status": "queued", "created": now, "started": None, "ended": None, "rc": None, "pid": None}
     _write(_path(jid, root=root), j)
     _path(jid, "beat", root).write_text("", encoding="utf-8")

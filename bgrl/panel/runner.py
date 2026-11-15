@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -59,10 +60,16 @@ def run(jid: str, root: Path | None = None, poll: float = 1.0) -> int:
     stop_file = Path(j["stop_file"]) if j.get("stop_file") else J.STOP_FILE
     with log.open("ab") as out:
         for step in j["steps"]:
+          tries = 0
+          while True:
             out.write((f"$ {' '.join(Path(step[0]).name if k == 0 else str(a) for k, a in enumerate(step))}\n").encode("utf-8"))
             out.flush()
+            cmd = list(step)
+            if j.get("awake") and sys.platform == "darwin" and shutil.which("caffeinate"):
+                cmd = ["caffeinate", "-i", *cmd]           # 跑的时候不让 Mac 睡眠（屏幕可以关）
+            t_start = time.time()
             try:
-                p = subprocess.Popen(step, cwd=str(J.ROOT), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                p = subprocess.Popen(cmd, cwd=str(J.ROOT), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                                      env=env, **kw)
             except OSError as ex:
                 out.write(f"启动不了：{ex}\n".encode("utf-8"))
@@ -88,13 +95,38 @@ def run(jid: str, root: Path | None = None, poll: float = 1.0) -> int:
                             p.kill()
                 time.sleep(poll)
             rc = p.returncode
-            if rc != 0 or stopped:
-                break
+            # 中途出错退出（不是自己点的停止），而且已经跑了一阵：等一会儿自动接着练（去掉 --restore，不然又退回去）
+            if rc != 0 and not stopped and tries < int(j.get("retry") or 0) and time.time() - t_start > float(j.get("retry_after", 180)):
+                tries += 1
+                step = _drop_restore(step)
+                out.write(f"出错退出（返回码 {rc}）：30 秒后自动接着练（第 {tries} / {j['retry']} 次）\n".encode("utf-8"))
+                out.flush()
+                time.sleep(30 if poll >= 0.5 else poll)
+                if not J.stop_requested(jid, root):
+                    continue
+                stopped = True
+            break
+          if rc != 0 or stopped:
+              break
     if asked:
         stop_file.unlink(missing_ok=True)
     save(status="stopped" if stopped else ("done" if rc == 0 else "failed"), rc=rc, ended=time.time())
     touch()
     return 0
+
+
+def _drop_restore(step: list) -> list:
+    """去掉 --restore X / --init X：出错后自动接着练时不能再退回一次。"""
+    out, skip = [], False
+    for a in step:
+        if skip:
+            skip = False
+            continue
+        if a in ("--restore", "--init"):
+            skip = True
+            continue
+        out.append(a)
+    return out
 
 
 def main() -> int:
