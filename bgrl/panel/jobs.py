@@ -67,6 +67,13 @@ SPECS: dict[str, dict] = {
                           confirm="模型退回考试成绩最好的那一版（runs/v3/best.pt），那之后练的丢掉（日志和快照还在）。",
                           desc="接着 runs/v3 的日志练，但模型换回 best.pt、优化器重新开始。停了以后再点普通的“训练”接着练，不用再点这个。",
                           build=lambda p: [_train(p)[0] + ["--restore", "runs/v3/best.pt"]]),
+    "distill": dict(title="向老师集中学", group="train", stop="file", awake=True,
+                    params={"rounds": ("int", 120, 5, 2000), **_TRAIN},
+                    confirm="先存一份当前模型（runs/v3/pre_distill.pt），然后每轮打 128 局、把外部模型老师在每个局面的答案整个学过来，"
+                            "每 10 轮考一次；学完把考试最好的那一版写回 runs/v3/latest.pt（都没开始前好就不变）。",
+                    desc="离线向老师学（DAgger）：一轮约 1 分钟，120 轮约 2 小时；和训练不能同时跑。学完再点“训练”接着练。",
+                    build=lambda p: [_bg("distill", "--rounds", p["rounds"], "--threads", p["threads"],
+                                         *(["--device", p["device"]] if p.get("device", "auto") != "auto" else []))]),
     "teacher": dict(title="老师模型", group="train", params={},
                     desc="只模仿高分示范，挑留出局上最好的一版 → runs/teacher.pt。约 15–25 分钟，和训练不能同时跑。",
                     build=lambda p: [_bg("teacher")]),
