@@ -59,7 +59,7 @@ class ImitationMixin:
         return d
 
     def _demo_format_ok(self, d) -> bool:
-        """示范的动作数、观察长度和当前环境一样（老师训练 tools/teacher.py 没有环境，只比动作数）。"""
+        """示范的动作数、观察长度和当前环境一样。"""
         return d["m"].shape[1] == self.model.L.actions and d["f"].shape[1:] == self.obs[self.envs[0][0]]["features"].shape[1:]
 
     def _demo_tensors(self, j, d, shuffle: bool = False):

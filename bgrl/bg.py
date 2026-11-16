@@ -9,7 +9,6 @@
   cardvalue 高手怎么挑卡：每张卡的挑中倍率、关键卡、经济卡 → rl/card_value.json（tools/cardvalue.py）
   simcards  引擎实测的卡牌价值和配合：高分场面拿掉一 / 两张卡再打 → rl/sim_value.json（tools/simcards.py）
   playbook  目标阵容的配套卡：高手正在做某一套时比平时多买的卡 → rl/target_comps.json 的 support（tools/playbook.py）
-  teacher   老师模型：只模仿高分示范、按留出局挑最好的一版 → runs/teacher.pt（训练时在模型自己的局面上教；tools/teacher.py）
   board     训练看板：读 runs/v3/log.jsonl 画曲线 → runs/v3/dashboard.md + board/*.svg（训练时也会每 10 轮自动重画；tools/board.py）
   goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
   arena     竞技场：check / practice / match / loop / view（tools/arena_run.py）
@@ -18,7 +17,6 @@
   profile   B1 对手强度画像：真人 vs 脚本机器人（tools/opp_profile.py）
   bench     A1 TavernGym 测速（tools/tg_bench.py）
   doctor    检查项目完整：环境、代码、训练进度、数据、竞技场（--fix 清掉多余的；tools/doctor.py）
-  bench-mlx     比 MLX 和 PyTorch（MPS）训练同样大小的网络谁快，判断值不值得换成 MLX（tools/mlx_bench.py）
   bench-device  测哪种设备组合训练最快（Mac：MPS / CPU），写进 reports/device.json，训练 device = auto 时照它选
   test      跑单元测试（tests/ 里的 test_*.py）
   info      看环境：Python、torch、可用设备（CUDA / MPS）、TavernGym 版本、训练进度
@@ -45,8 +43,8 @@ sys.path.insert(0, str(ROOT))
 
 TOOLS = {"train": "train",
          "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
-         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "teacher": "teacher", "playbook": "playbook", "board": "board",
-         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "bench-mlx": "mlx_bench", "doctor": "doctor", "arena": "arena_run", "cleanup": "cleanup", "distill": "distill"}
+         "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "playbook": "playbook", "board": "board",
+         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "doctor": "doctor", "arena": "arena_run", "cleanup": "cleanup", "distill": "distill"}
 
 
 def _run_tool(name: str, args: list[str]) -> int:
@@ -75,7 +73,7 @@ def _info() -> int:
     from paths import DEFAULT_RUN
     print("Python", sys.version.split()[0])
     try:
-        import torch
+        import torch  # noqa: F401
         from rl.device import describe
         print(describe())
     except ImportError:

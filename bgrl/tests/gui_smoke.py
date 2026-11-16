@@ -151,10 +151,12 @@ def main() -> int:
         tests.cards["comptest"].inputs["games"].setValue(128)
         tests.cards["comptest"].go.click()
         assert started[-1] == ("comptest", {"games": 128, "ckpt": "latest"}), started
+        assert set(win.pages[1].cards) == {"train", "train_restore"}
         train = win.pages[1].cards["train"]
         assert not train.go.isVisible() and train.stop.isEnabled()          # 训练在跑：只有停止
-        ar = win.pages[4]
-        win.nav.setCurrentRow(4)
+        ia = [n for n, _k, _n in G.PAGES].index("竞技场")
+        ar = win.pages[ia]
+        win.nav.setCurrentRow(ia)
         win.tick()
         assert ar.follow and ar.sel == "live001" and ar.view["live"] and ar.view["turn"] == 6, (ar.sel, ar.view["turn"])
         assert ar.list.count() == 177 and ar.tiles.count() == 6

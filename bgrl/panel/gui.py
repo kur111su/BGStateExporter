@@ -24,35 +24,21 @@ from panel import jobs as J  # noqa: E402
 
 PALETTE = ["#2f6fdf", "#e0702a", "#2e9e5b", "#c23b5b", "#7a5bd6", "#8a8a8a"]
 ICON = {"queued": "🕒", "running": "▶", "done": "✔", "failed": "✘", "stopped": "■", "lost": "⚠"}
-PARAM_ZH = {"rounds": "轮数", "games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型", "keep_from": "快照留到第几轮", "fix": "顺手清理（删错目录、临时副本、.DS_Store）"}
+PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型"}
 CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data/external/model.pt）",
            "auto": "自动（实测最快的）", "mps": "MPS（Apple 芯片 GPU）", "cuda": "CUDA（NVIDIA 显卡）", "cpu": "CPU"}
 SHORT = {
     "train": "接着 runs/v3 练。停止 = 这一轮跑完存盘再退出。",
     "train_restore": "模型退回考试最好的那一版，从那里接着练。",
-    "distill": "把外部模型老师的打法整个学过来（约 2 小时），再接着训练。",
-    "teacher": "只模仿高分示范的老师模型，约 15–25 分钟。",
-    "bench_device": "比几种设备组合的训练速度，记下最快的（约 5–15 分钟）。",
-    "bench_mlx": "比 MLX 和 PyTorch 谁快，判断值不值得换（约 1–2 分钟）。",
-    "board": "按最新日志重画 dashboard.md 和曲线图。",
     "comptest": "打高分阵容的对手：成型比例、最终阵容、金币流向。",
     "comptest_seeded": "第 8–10 回合换成高手的成型场面，再自己打。",
     "goldflow": "前几回合的钱花在哪，和 6500+ 高手比。",
     "tavernbench": "论文的 368 题评测集，只用 CPU。",
-    "prodemos": "data/firestone 的高分对局 → 决策样本。",
-    "cardvalue": "高手怎么挑卡：挑中倍率、关键卡、经济卡。",
-    "playbook": "各套目标阵容的配套卡。改过阵容表后跑一次。",
-    "cleanup_preview": "只列出会删什么、各有多大，不删。",
-    "cleanup": "删旧训练目录、旧快照、去掉的功能留下的文件。",
-    "selftest": "跑一遍单元测试，几分钟。",
-    "info": "Python、PyTorch / 显卡、TavernGym 版本。",
 }
 PAGES = [("看板", None, ""),
-         ("训练", ["train", "train_restore", "distill", "bench_device", "bench_mlx", "teacher", "board"], "训练和老师模型不能同时跑（后点的排队）。训练时可以同时跑一个测试。"),
+         ("训练", ["train", "train_restore"], "训练时可以同时跑一个测试。"),
          ("测试", ["comptest", "comptest_seeded", "goldflow", "tavernbench"], "测试一次跑一个，后点的排队。阵容测试的汇总也会出现在看板上。"),
-         ("数据", ["prodemos", "cardvalue", "playbook"], "从本机的高分对局数据重新生成训练用的样本和统计。原始数据和样本只在本机。"),
          ("竞技场", None, ""),
-         ("维护", ["doctor", "cleanup_preview", "cleanup", "selftest", "info"], "清理前先点“看看会删什么”。训练在跑的时候，清理会排在训练后面。"),
          ("任务输出", None, "")]
 ARENA_KEYS = ["arena_check", "arena_practice", "arena_match", "arena_loop"]
 CARD_W, CARD_H = 300, 230

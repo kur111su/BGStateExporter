@@ -9,7 +9,7 @@
 | 文件 | 做什么 |
 | --- | --- |
 | `setup.sh` | 第一次用、或更新后在“终端”里运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch，跑测试和几轮极小训练，最后测设备速度。`./setup.sh quick` 不测速 |
-| `panel.command` | 双击打开**面板**（桌面程序）：训练看板 + 所有操作 + 竞技场对局 + 任务输出，都在一个窗口里。关掉窗口不影响正在跑的训练和任务，再打开还能看到 |
+| `panel.command` | 双击打开**面板**（桌面程序）：训练看板 + 训练 / 测试 + 竞技场对局 + 任务输出，都在一个窗口里。关掉窗口不影响正在跑的训练和任务，再打开还能看到 |
 
 ## 面板（`panel.command`）
 
@@ -20,17 +20,11 @@
 | 看板 | — | — | 关键指标（和 500 轮前比，绿 = 变好）、曲线（可选范围，拖动平移 / 缩放）、“送整套阵容”“拿着成型阵容打”等表、事件；日志变了自动刷新 |
 | 训练 | 训练 | `bg.py train --recipe configs\v3.json --resume` | 训练 `runs\v3`（设置全在 `configs\v3.json`，见下面“训练配方”），停止 = 这一轮跑完、存好进度再退出，再点开始接着练；`runs\v3` 还没有模型时从 `runs\v2\latest.pt` 开始。命令行再写的参数优先：`train.bat --threads 4` → `runs\v3\log.jsonl`、`latest.pt`、`snapshots\` |
 | 训练 | 退回 best.pt 再练 | `bg.py train … --restore runs/v3/best.pt` | 模型退回考试成绩最好的那一版、优化器重新开始，日志接着记；先弹确认框。停了以后用普通的“训练”接着练 |
-| 训练 | 老师模型 | `bg.py teacher` | 老师模型：只模仿高分示范（`runs\pro_demos` + `runs\h13_demos`），从头学，留出局交叉熵最好的那一版存下来；之后 `train.bat` 自动用它（先关掉 train.bat；约 15–25 分钟） |
-| 训练 | 重画看板 | `bg.py board` | 按最新日志重画 `runs\v3\dashboard.md` |
 | 测试 | 阵容测试 | `bg.py goldflow --boosted --games N` | 阵容测试：同上，但对手是打高分真人阵容的机器人（`goldflow --boosted`），另外比最终阵容（主种族、常见搭配、关键卡、金色）、挑卡（关键卡 / 经济卡 / 引擎实测关键卡）和每回合的阵容强度（场面打同期高分阵容的胜率，前四 / 后四 / 高分阵容自己） |
 | 测试 | 拿着成型阵容测试 | `bg.py goldflow --boosted --seed-comps 8,9,10` | 拿着成型阵容的阵容测试：和 `comptest.bat` 一样对全强度高分阵容打 256 局，但每局第 8 / 9 / 10 回合把模型的场面换成高手同一回合已经成型、本局凑得成的 S / A 阵容，之后模型自己打（`goldflow --boosted --seed-comps 8,9,10`）：按阵容列平均名次 / 吃鸡 / 前四，加上每回合阵容强度——模型拿到成型阵容以后能不能把场面养起来、吃鸡。两个测试都能加 `--late-ckpt runs\teacher.pt`（`--late-from 10`）：第 10 回合起换老师模型打，看后期换成模仿高手的打法场面能不能养起来（结果文件名后加 `_late`） |
 | 测试 | 金币流向 | `bg.py goldflow --games N` | 前几回合的金币流向：模型（64 局对脚本机器人）和 6500+ 玩家并排比，每回合花在升本 / 买 / 刷新 / 发动 / 黑暗之赐上的钱、升本率。`--games 128`、`--ckpt …` |
 | 测试 | TavernBench 评测 | `bg.py tavernbench` | 用 TavernBench（论文的 368 题评测集）测当前模型，和 TavernAgent、大语言模型、Jev 比。只用 CPU，训练开着也行 |
-| 数据 | 高分样本 | `bg.py prodemos data/firestone` | 从 `data\firestone` 里的高分对局生成决策样本：Firestone 6500+ 分享包的 zip（不用解压）、单局 HSReplay 回放（`.xml` / `.xml.zip`）、HDT 的 AI 复盘包（`*复盘包.zip` 或套着复盘包的 zip），可以混着放、可以放子文件夹；每次全部重新生成。约 10–20 分钟（加了选择示范后，慢一点的电脑 30–60 分钟） |
-| 数据 | 卡牌价值 / 阵容配套卡 | `bg.py cardvalue` / `bg.py playbook` | 高手怎么挑卡 → `rl/card_value.json`；目标阵容的配套卡 → `rl/target_comps.json` |
 | 竞技场 | 打包并检查 / 练习局 / 计分局 / 连续计分局 | `bg.py arena check / practice / match / loop [--update]` | 上面一排：操作按钮、战绩（局数、平均名次、第一、前四、Elo、当前模型）、名次分布、近期表现；左边对局列表，右边单局（预计名次曲线、每回合每一步、候选概率、场面 / 手牌 / 酒馆、最终 8 席），默认跟着正在打的那一局。计分的两个按钮会先弹确认框。结果在 `arena\results\` |
-| 维护 | 看看会删什么 / 清理旧文件 | `bg.py cleanup [--keep-from N] [--yes]` | 旧的训练目录、第 N 轮以前的快照（每 1000 轮留一个）、去掉的功能留下的文件（包括旧的 .bat）。先看再删，删之前弹确认框；训练在跑时排在训练后面 |
-| 维护 | 自检 / 环境信息 | `bg.py test` / `bg.py info` | 单元测试；Python、PyTorch、TavernGym 版本 |
 | 任务输出 | — | — | 选一个任务看它的实时输出；任务记录（什么时候跑的、结果） |
 
 三层：**任务层** `panel/jobs.py` + `panel/runner.py`（只用标准库）——每个任务一个独立进程，状态和输出在 `reports\panel\jobs\`；同一组的任务一次跑一个、后来的排队（训练 / 老师模型 / 清理一组，测试一组，数据一组，竞技场一组），不同组可以同时跑。**数据层** `panel/data.py`——看板的指标 / 曲线 / 表、竞技场的战绩和单局每一步（不依赖界面库，单元测试直接测）。**界面层** `panel/gui.py`（PySide6 + pyqtgraph）只显示和点按钮。原来的网页版 `panel/app.py`（Streamlit）还留着备用：`bg.py panel --web`。
@@ -53,13 +47,16 @@
 | `nativedemos` | `tools/native_demos.py` | 已经是 TavernGym 观察格式的别人对局（例如万三的 `human_native_v0.npz`）→ 决策样本 `runs\h13_demos\`、对手阵容库 `runs\h13_boards.json`、汇总 `rl/h13_profile.json`（升本节奏、最终阵容、常见搭配，只有统计数字） |
 | `cardvalue` | `tools/cardvalue.py` | 高分示范里每次买卡时的选项 → 每张卡的挑中倍率、关键卡、经济卡、高手的买法比例 `rl/card_value.json`（只有统计数字） |
 | `simcards` | `tools/simcards.py` | 引擎实测的卡牌价值和配合：高分阵容库里的场面在 TavernGym 里拿掉一张 / 两张卡再打同期高分阵容，看胜率掉多少 → `rl/sim_value.json`（关键卡、好搭配，只有统计数字；约 2–3 分钟） |
-| `teacher` | `tools/teacher.py` | 老师模型（见上面面板的“老师模型”）：`--init` 从某个检查点开始（默认从头学：从训练中的模型开始时它已经背过示范，再学只会更差）、`--steps`、`--batch`、`--patience` |
 | `playbook` | `tools/playbook.py` | 目标阵容的配套卡：高手正在做某一套（核心卡过半、本族 ≥ 2）时比平时多买 1.5 倍以上的卡 → `rl/target_comps.json` 的 `support`（只有统计数字；几秒） |
 | `tavernbench` | `tools/tavernbench.py` | C3 TavernBench 评测；`--ckpt` 指定模型、`--smoke` 冒烟 |
 | `bridge` | `tools/tg_bridge_check.py` | A4 局面重建检查 |
 | `profile` | `tools/opp_profile.py` | B1 对手画像：真人对局的汇总（`rl/real_profile.json`）vs 脚本机器人 |
 | `bench` | `tools/tg_bench.py` | A1 TavernGym 测速 |
 | `arena` | `tools/arena_run.py` | 竞技场：`check` / `practice` / `match` / `loop [--update]` / `view` |
+| `distill` | `tools/distill.py` | 向外部模型老师集中学（DAgger）：`--rounds`、`--games`；学完把考试最好的一版写回 `runs/v3/latest.pt`，开始前的存成 `pre_distill.pt` |
+| `board` | `tools/board.py` | 重画训练看板（训练时每 10 轮自动重画） |
+| `doctor` | `tools/doctor.py` | 检查环境、代码、训练进度、数据是否完整；`--fix` 顺手清理 |
+| `bench-device` | `tools/bench_device.py` | 比几种设备组合的训练速度，记下最快的（训练设备选“自动”时用） |
 | `cleanup` | `tools/cleanup.py` | 清理旧文件：不加 `--yes` 只列出来；`--keep-from N` 快照留到第几轮为止 |
 | `panel` | `panel/gui.py` | 面板（`panel.command` 就是它） |
 | `test` | `tests/test_*.py` | 单元测试 |
@@ -95,7 +92,8 @@ rl/               模型和训练
   ppo.py          训练主流程（Trainer）：批量环境采样、PPO 更新、对手库快照、评估、检查点、train 循环
   config.py       训练的全部设置（Config）
   rollout.py      Policy（出动作，可在另一设备放副本）、Rollout（一轮的经验、GAE）、名次奖励表
-  teacher.py      老师模型：读老师、每轮先算好它的答案、系数
+  teacher.py      老师：读老师、每轮先算好它的答案、系数
+  tribes.py       种族课程：一部分局强制出现模型还不会的种族
   guard.py        保险：健康检查和自动回滚、考试守护（best.pt）、预热、熵系数、--restore
   device.py       设备选择（MPS / CPU）、线程数
   extnet.py       外部模型（jimmypretend/hearthstone-bg-ppo）的读取和网络
