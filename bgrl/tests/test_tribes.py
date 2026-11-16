@@ -57,7 +57,45 @@ def main():
     bst.full.add(1)
     assert bst._seat_plan(1, 1) is not None and bst.strength_at(6, 1) == 1.0 and bst.strength_at(6) == 0.0
     assert bst.finish(1) is True and 1 not in bst.full
+    starter_checks()
     print("tribes ok", forced, sorted(lob))
+
+
+def starter_checks():
+    """起步牌：种族课程局第 4 回合招募时往手里放 2 张新种族阵容的核心卡，只放一次。"""
+    import json
+    from rl.tribes import TribeStarter, new_comps
+    from rl.comp import load_target_comps
+    from tg.catalog import base_of_index
+    from tg.obs import C_HAND, N_HAND
+    nc = new_comps(load_target_comps())
+    assert nc and all(not (set(c["tribes"]) & set(STRONG)) for c in nc)
+    env = BatchEnv(1, seed=11, controlled=(0,), threads=1, config={})
+    tl = TribeLobbies(1.0, ["BEAST", "MECHANICAL", "UNDEAD"], 3, {}, seed=2)
+    assert tl.apply(env, 0)
+    st = TribeStarter(1.0, turn=4, cards=2, seed=3)
+    assert st.begin(0, tl.active[0]) and st.active() == {0}
+    gave = False
+    for _ in range(4000):
+        o = env.observe()
+        if st.apply(env, o["features"]):
+            o = env.observe()
+            hand = {base_of_index(int(x)) for x in o["cards"][0][C_HAND:C_HAND + N_HAND] if x > 0}
+            comp = next(c for c in nc if c["name"] == st.plan[0]["comp"])
+            assert len(hand & comp["core"]) >= 1, (hand, comp["core"])
+            assert int(round(float(o["features"][0][0]) * 20)) == 4
+            gave = True
+            assert not st.apply(env, o["features"])          # 只给一次
+            break
+        a = np.zeros(env.n_slots, dtype=np.int64)
+        for i in np.flatnonzero(o["ready"]):
+            m = o["action_mask"][i]
+            a[i] = 0 if m[0] else int(np.flatnonzero(m)[0])
+        env.step(a)
+    assert gave, "第 4 回合没给起步牌"
+    assert st.finish(0) and st.finish(0) is None
+    assert not TribeStarter(0.0).begin(0, {"BEAST"})
+    print("starter ok", json.dumps(sorted(hand))[:120])
 
 
 if __name__ == "__main__":

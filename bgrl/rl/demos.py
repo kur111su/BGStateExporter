@@ -132,6 +132,8 @@ def bought_in(d, which: str, root: Path | None = None):
       spelltgt   （选择类示范）法术选的目标是“吃法术”的随从：恶魔干扰者（养酒馆）、守门融合怪（施放茶具）、
                  地卜大师鲁古格（宝石连锁）、暮光猎潮者（手牌随从 +8/+8）
       tgtS / tgtA / tgtB  买的是 S / A / B 级目标阵容（rl/target_comps.json，bgbuddy.gg）的核心卡
+      tgtnew     买的是新种族（野猪人 / 恶魔 / 元素以外）S / A 阵容的核心卡
+      lobnew     （所有示范）本局野猪人 / 恶魔 / 元素都没开
       tgtfit     买的核心卡和场上 / 手里已有的核心卡属于同一套目标阵容——在往那套阵容成型
       tgtsup     正在做一套 S / A 阵容（核心卡过半、本族 ≥ 2），买的是这套的配套卡（rl/target_comps.json 的 support，
                  bg.py playbook：高手做这套时比平时多买的卡）——成型以后提升实力、倒转经济、卡牌联动
@@ -142,6 +144,9 @@ def bought_in(d, which: str, root: Path | None = None):
                  布莱恩让战吼触发两次（南海卖艺者下回合 2 块钱、各种加攻防的战吼翻倍），打战吼随从换经济 / 换身材"""
     if "c" not in d:
         return None
+    if which == "lobnew":                               # 本局野猪人 / 恶魔 / 元素都没开：高手在这种酒馆里怎么打
+        from .tribes import STRONG, lobby_has_any
+        return ~lobby_has_any(d["f"], list(STRONG)) if "f" in d else None
     if which == "spelltgt":
         from tg.actions import A_CHOOSE
         from tg.catalog import base_of_index
@@ -175,6 +180,13 @@ def bought_in(d, which: str, root: Path | None = None):
         bm = tab.building(d["c"][buy], lobby_bits(d["f"][buy]) if "f" in d else None)
         hit = (tab.supp[np.clip(cards.astype(np.int64), 0, len(tab.supp) - 1)] & bm).any(1)
         sel[buy[hit]] = True
+        return sel
+    if which == "tgtnew":                               # 买的是新种族 S / A 阵容（老师不会的种族）的核心卡
+        from .comp import load_target_comps
+        from .tribes import new_comps
+        want = set().union(*(c["core"] for c in new_comps(load_target_comps(root)))) if load_target_comps(root) else set()
+        idx = [i for i, b in base.items() if b in want]
+        sel[buy[np.isin(cards, idx)]] = True
         return sel
     if which in ("tgtS", "tgtA", "tgtB", "tgtfit"):
         from .comp import load_target_comps

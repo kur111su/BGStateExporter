@@ -278,6 +278,11 @@ class Config:
     # 种族课程局从加强开始的回合起机器人全换成高分阵容（全强度，和考试一样）。第 27450 轮前没有：这些局平均 3.2–3.4 名，
     # 和普通机器人局一样，不成型也能赢，256 局阵容测试里野兽 / 亡灵 / 机械……成型还是 0%
     tribe_full: bool = False
+    # 起步牌（rl/tribes.py 的 TribeStarter，反向课程）：tribe_start_p 的种族课程局在第 tribe_start_turn 回合往手里放
+    # tribe_start_cards 张一套新种族阵容（老师不会的种族）的核心卡；这些局不换成型场面。0 = 不用
+    tribe_start_p: float = 0.0
+    tribe_start_turn: int = 4
+    tribe_start_cards: int = 2
     # 老师只在本局开了这几个种族之一的局面上教（老师只会野猪人 / 恶魔 / 元素，别的局里它会把模型往回拉）。空 = 都教
     teacher_need_tribes: str = ""
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期

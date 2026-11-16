@@ -146,6 +146,14 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.tribes = TribeLobbies(cfg.tribe_frac, pool, cfg.tribe_force, cfg.rules(), seed=cfg.seed)
             print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
                   + (f"；老师只在开了 {cfg.teacher_need_tribes} 之一的局面上教" if cfg.teacher_need_tribes else ""), flush=True)
+        self.tribe_start = None
+        if self.tribes is not None and cfg.tribe_start_p > 0:
+            from .tribes import TribeStarter
+            self.tribe_start = TribeStarter(cfg.tribe_start_p, cfg.tribe_start_turn, cfg.tribe_start_cards, seed=cfg.seed)
+            print(f"起步牌：{cfg.tribe_start_p:.0%} 的种族课程局在第 {cfg.tribe_start_turn} 回合往手里放 {cfg.tribe_start_cards} 张"
+                  f"新种族阵容的核心卡（{len(self.tribe_start.comps)} 套可选）", flush=True)
+        self.tribe_new_start: list[bool] = []          # 给过起步牌的种族课程局：成了新种族阵容
+        self.tribe_new_free: list[bool] = []           # 没给的：成了新种族阵容（真正要看的——自己从零做出来）
         self.tribe_places: list[int] = []
         self.tribe_new_comp: list[bool] = []           # 种族课程局：最后成了老师不会的种族的阵容（这一轮）
         self.tribe_comps: dict[str, int] = {}          # 种族课程局最后成了哪套（上次考试以来）
@@ -224,6 +232,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.cgifts.plan.clear()
         if name == "bot" and self.tribes is not None:
             self.tribes.clear()
+            if self.tribe_start is not None:
+                self.tribe_start.clear()
             if getattr(self.booster, "full", None) is not None:
                 self.booster.full.clear()
         self.obs[name] = new.observe()
@@ -350,6 +360,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                 new = bool(ct) and not (ct & self._strong_tribes())
                                 self.tribe_places.append(pl_t)
                                 self.tribe_new_comp.append(new)
+                                st = self.tribe_start.finish(int(i)) if self.tribe_start is not None else None
+                                (self.tribe_new_free if st is None else self.tribe_new_start).append(new)
                                 self.tribe_comps[cn or "没成型"] = self.tribe_comps.get(cn or "没成型", 0) + 1
                                 for t in tribal:                # (名次, 成了用到这个种族的阵容)
                                     self.tribe_by.setdefault(t, []).append((pl_t, t in ct))
@@ -400,6 +412,15 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                             raise
                         self._rebuild_env(ei, ex)
                         continue
+                if name == "bot" and self.tribe_start is not None:  # 种族课程起步牌：往手里放新种族的核心卡（不切 GAE）
+                    try:
+                        if self.tribe_start.apply(env, self.obs[name]["features"]):
+                            self.obs[name] = env.observe()
+                    except BaseException as ex:            # noqa: BLE001
+                        if not is_panic(ex):
+                            raise
+                        self._rebuild_env(ei, ex)
+                        continue
                 if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
                     try:
                         if self.gifts.apply(env, self.obs[name]["features"], skip=self.cgifts.active() if self.cgifts else None):
@@ -413,6 +434,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                 if name == "bot":
                     skip = (self.gifts.active() if self.gifts is not None else set()) | \
                            (self.cgifts.active() if self.cgifts is not None else set())
+                    if self.tribe_start is not None:
+                        skip |= self.tribe_start.active()      # 起步牌局自己往下做，不换成型场面
                 for sd in ((self.seeder,) if name == "bot" else ()):
                     if sd is None:                         # 成型阵容课程（换整个场面）
                         continue
@@ -443,8 +466,12 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                 full = getattr(self.booster, "full", None)
                                 if full is not None:
                                     full.discard(int(g))
+                                if self.tribe_start is not None:
+                                    self.tribe_start.plan.pop(int(g), None)
                                 if self.tribes.apply(env, int(g)):
                                     swapped = True         # 种族课程：换成指定种族的一局（episode 编号不变）
+                                    if self.tribe_start is not None:
+                                        self.tribe_start.begin(int(g), self.tribes.active.get(int(g), ()))
                                     if cfg.tribe_full and full is not None:
                                         full.add(int(g))   # 对手全强度（和考试一样）
                             self.episode[name][g] = env.episode_index(int(g))
@@ -1031,7 +1058,12 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     rec["place_tribe"] = round(float(np.mean(self.tribe_places)), 3)
                     rec["tribe_games"] = len(self.tribe_places)
                     rec["tribe_newcomp"] = round(float(np.mean(self.tribe_new_comp)), 3)
-                self.tribe_places, self.tribe_new_comp = [], []
+                for k, v in (("tribe_newcomp_free", self.tribe_new_free), ("tribe_newcomp_start", self.tribe_new_start)):
+                    if v:
+                        rec[k] = round(float(np.mean(v)), 3)
+                if self.tribe_start is not None:
+                    rec.update(self.tribe_start.take_stats())
+                self.tribe_places, self.tribe_new_comp, self.tribe_new_free, self.tribe_new_start = [], [], [], []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:

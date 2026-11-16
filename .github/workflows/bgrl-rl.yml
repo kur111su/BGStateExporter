@@ -60,6 +60,7 @@ jobs:
           python -X utf8 bgrl/tests/test_review_pack.py bgrl/runs/_packs_ci
           python -X utf8 bgrl/bg.py prodemos bgrl/runs/_packs_ci --workers 1 --val-every 3 --out bgrl/runs/_pack_demos_ci
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,end:2"
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 8 --pro-coef 0.05 --pro-weights "upgrade:3,tgtnew:3,lobnew:2" --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tribe-frac 1.0 --tribe-full true --tribe-start-p 1.0 --tribe-start-turn 2 --tribe-start-cards 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,simkey:2,simsyn:2,engine:3,tgtS:2,tgtfit:2" --target-bonus 0.15 --demo-shop-shuffle true --combat-bonus 0.3 --combat-from-turn 2 --econ-bonus 0.01 --comp-bonus 0.03 --comp-weights "1,0,0"
           python -X utf8 bgrl/bg.py simcards --per-turn 3 --out bgrl/runs/_sim_value_ci.json
           python -X utf8 bgrl/bg.py playbook --pro-data bgrl/runs/pro_demos --out bgrl/runs/_target_comps_ci.json
