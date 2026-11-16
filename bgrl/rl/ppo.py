@@ -147,6 +147,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
                   + (f"；老师只在开了 {cfg.teacher_need_tribes} 之一的局面上教" if cfg.teacher_need_tribes else ""), flush=True)
         self.tribe_places: list[int] = []
+        self.tribe_new_comp: list[bool] = []           # 种族课程局：最后成了老师不会的种族的阵容（这一轮）
+        self.tribe_comps: dict[str, int] = {}          # 种族课程局最后成了哪套（上次考试以来）
         self.tribe_by: dict[str, list] = {}            # 种族课程：种族 → [(名次)]（上次考试以来）
         self.cgift_by: dict[str, list] = {}            # 送整套阵容：阵容 → [(名次, 最后做成这套没有)]（上次考试以来）
         self.cgift_iter: list = []                     # 同上，这一轮的
@@ -222,6 +224,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.cgifts.plan.clear()
         if name == "bot" and self.tribes is not None:
             self.tribes.clear()
+            if getattr(self.booster, "full", None) is not None:
+                self.booster.full.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -341,9 +345,14 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                             tribal = self.tribes.finish(int(i)) if name == "bot" and self.tribes is not None else None
                             if tribal is not None and not seeded and not cg:
                                 pl_t = int(info["placement"][i])
+                                cn = self._comp_name(fcomp) if fcomp is not None else ""
+                                ct = self._comp_tribes().get(cn, frozenset())
+                                new = bool(ct) and not (ct & self._strong_tribes())
                                 self.tribe_places.append(pl_t)
-                                for t in tribal:
-                                    self.tribe_by.setdefault(t, []).append(pl_t)
+                                self.tribe_new_comp.append(new)
+                                self.tribe_comps[cn or "没成型"] = self.tribe_comps.get(cn or "没成型", 0) + 1
+                                for t in tribal:                # (名次, 成了用到这个种族的阵容)
+                                    self.tribe_by.setdefault(t, []).append((pl_t, t in ct))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
                                 if gifted and self.gifts is not None:
@@ -430,8 +439,14 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     for g in np.unique(np.flatnonzero(dones) // k):
                         e = env.episode_index(int(g))
                         if e != self.episode[name][g]:
-                            if name == "bot" and self.tribes is not None and self.tribes.apply(env, int(g)):
-                                swapped = True             # 种族课程：换成指定种族的一局（episode 编号不变）
+                            if name == "bot" and self.tribes is not None:
+                                full = getattr(self.booster, "full", None)
+                                if full is not None:
+                                    full.discard(int(g))
+                                if self.tribes.apply(env, int(g)):
+                                    swapped = True         # 种族课程：换成指定种族的一局（episode 编号不变）
+                                    if cfg.tribe_full and full is not None:
+                                        full.add(int(g))   # 对手全强度（和考试一样）
                             self.episode[name][g] = env.episode_index(int(g))
                             self._assign(name, env, off, int(g))
                     if swapped:
@@ -858,6 +873,18 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self._comp_names = [c["name"] for c in load_target_comps()]
         return self._comp_names[int(k)] if k is not None and 0 <= int(k) < len(self._comp_names) else ""
 
+    def _comp_tribes(self) -> dict:
+        """阵容名字 → 它的核心卡用到的种族（rl/target_comps.json）。"""
+        if getattr(self, "_comp_tribe_map", None) is None:
+            from .comp import load_target_comps
+            self._comp_tribe_map = {c["name"]: frozenset(c.get("tribes") or ()) for c in load_target_comps()}
+        return self._comp_tribe_map
+
+    @staticmethod
+    def _strong_tribes() -> frozenset:
+        from .tribes import STRONG
+        return frozenset(STRONG)
+
     def _final_comp(self, s: int) -> int:
         """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""
         from .model import K_MAX
@@ -1003,7 +1030,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                 if self.tribe_places:
                     rec["place_tribe"] = round(float(np.mean(self.tribe_places)), 3)
                     rec["tribe_games"] = len(self.tribe_places)
-                self.tribe_places = []
+                    rec["tribe_newcomp"] = round(float(np.mean(self.tribe_new_comp)), 3)
+                self.tribe_places, self.tribe_new_comp = [], []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
@@ -1026,10 +1054,15 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                                     round(float(np.mean([f for _, f in v])), 3)]
                                                 for k, v in sorted(self.cgift_by.items())}
                         self.cgift_by = {}
-                    if self.tribe_by:                      # 种族课程：每个强制的种族 [局数, 平均名次, 吃鸡率]（上次考试以来）
-                        rec["tribe_by"] = {k: [len(v), round(float(np.mean(v)), 2), round(float(np.mean([p == 1 for p in v])), 3)]
+                    if self.tribe_by:                      # 种族课程：每个强制的种族 [局数, 平均名次, 吃鸡率, 成了用这个种族的阵容的比例]
+                        rec["tribe_by"] = {k: [len(v), round(float(np.mean([p for p, _ in v])), 2),
+                                               round(float(np.mean([p == 1 for p, _ in v])), 3),
+                                               round(float(np.mean([f for _, f in v])), 3)]
                                            for k, v in sorted(self.tribe_by.items())}
                         self.tribe_by = {}
+                    if self.tribe_comps:                   # 种族课程局最后成了哪套（局数，多的在前）
+                        rec["tribe_comps"] = dict(sorted(self.tribe_comps.items(), key=lambda kv: -kv[1]))
+                        self.tribe_comps = {}
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
                         rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}

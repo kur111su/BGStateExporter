@@ -35,7 +35,7 @@ KPI_GROUPS = [
     ("考试：全强度高分阵容", [("eval_boost_top1", "吃鸡率", False, 3), ("eval_boost_score", "等效名次（按奖励表）", True, 3),
                        ("eval_boost_place", "平均名次", True, 3), ("eval_boost_top4", "前四率", False, 3)]),
     ("训练对局", [("place_boost", "加强局名次", True, 3), ("boost_strength", "加强局强度", False, 3),
-              ("place_bot", "机器人局名次", True, 3), ("place_gift", "送牌局名次", True, 3), ("place_tribe", "种族课程局名次", True, 3),
+              ("place_bot", "机器人局名次", True, 3), ("place_gift", "送牌局名次", True, 3), ("place_tribe", "种族课程局名次", True, 3), ("tribe_newcomp", "种族课程局成新阵容", False, 3),
               ("place_cgift", "送整套阵容局名次", True, 3), ("cgift_formed", "送整套：最后做成", False, 3)]),
     ("场面与阵容", [("cs_late", "第 10 回合后场面", False, 3), ("grow", "后期每回合养场面", False, 3),
                ("tgt_q", "目标阵容接近度", False, 3), ("eng_q", "引擎配燃料", False, 3),

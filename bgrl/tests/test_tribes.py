@@ -49,6 +49,14 @@ def main():
     assert seen, "这局没打完"
     # 概率 0：不换
     assert not TribeLobbies(0.0, list(WEAK), 3, {}).apply(env, 1)
+    # 种族课程局全强度：加强概率 0、强度 0 的机器人加强器，full 里的局照样加强、每个座位都换
+    from rl.calibrate import ProBoardBooster
+    bst = ProBoardBooster({5: [{"tier": 3, "board": [["BG_LOE_077", 3, 3]]}]}, frac=0.0, start_turn=5)
+    bst.strength = 0.0
+    assert bst._seat_plan(0, 1) is None and bst.strength_at(6, 0) == 0.0
+    bst.full.add(1)
+    assert bst._seat_plan(1, 1) is not None and bst.strength_at(6, 1) == 1.0 and bst.strength_at(6) == 0.0
+    assert bst.finish(1) is True and 1 not in bst.full
     print("tribes ok", forced, sorted(lob))
 
 
