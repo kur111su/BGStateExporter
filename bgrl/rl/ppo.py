@@ -139,6 +139,15 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.cgifts = CompGifts(cfg.cgift_frac, cg_turns, p=cfg.cgift_p, seed=cfg.seed)
             print(f"送整套阵容：{cfg.cgift_frac:.0%} 的机器人局开局定一套本局凑得成的目标阵容（{len(self.cgifts.comps)} 套），"
                   f"第 {cfg.cgift_turns} 回合每回合 {cfg.cgift_p:.0%} 的机会送一张这套还没有的核心卡", flush=True)
+        self.tribes = None
+        if cfg.tribe_frac > 0 and cfg.games_bot:
+            from .tribes import TribeLobbies, parse_types
+            pool = parse_types(cfg.tribe_pool)
+            self.tribes = TribeLobbies(cfg.tribe_frac, pool, cfg.tribe_force, cfg.rules(), seed=cfg.seed)
+            print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
+                  + (f"；老师只在开了 {cfg.teacher_need_tribes} 之一的局面上教" if cfg.teacher_need_tribes else ""), flush=True)
+        self.tribe_places: list[int] = []
+        self.tribe_by: dict[str, list] = {}            # 种族课程：种族 → [(名次)]（上次考试以来）
         self.cgift_by: dict[str, list] = {}            # 送整套阵容：阵容 → [(名次, 最后做成这套没有)]（上次考试以来）
         self.cgift_iter: list = []                     # 同上，这一轮的
         self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
@@ -211,6 +220,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.gifts.plan.clear()
         if name == "bot" and self.cgifts is not None:
             self.cgifts.plan.clear()
+        if name == "bot" and self.tribes is not None:
+            self.tribes.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -327,6 +338,17 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
                                 seeded = True              # 不算进 place_bot / 加强强度
+                            tribal = self.tribes.finish(int(i)) if name == "bot" and self.tribes is not None else None
+                            if tribal is not None and not seeded and not cg:
+                                pl_t = int(info["placement"][i])
+                                self.tribe_places.append(pl_t)
+                                for t in tribal:
+                                    self.tribe_by.setdefault(t, []).append(pl_t)
+                                if self.booster is not None:
+                                    self.booster.finish(int(i))
+                                if gifted and self.gifts is not None:
+                                    self.gift_places.append(pl_t)
+                                seeded = True              # 不算进 place_bot / 加强强度
                             elif gifted and not seeded:    # 送牌局：单独记名次
                                 self.gift_places.append(int(info["placement"][i]))
                                 if self.booster is not None:
@@ -404,11 +426,16 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     continue
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
+                    swapped = False
                     for g in np.unique(np.flatnonzero(dones) // k):
                         e = env.episode_index(int(g))
                         if e != self.episode[name][g]:
-                            self.episode[name][g] = e
+                            if name == "bot" and self.tribes is not None and self.tribes.apply(env, int(g)):
+                                swapped = True             # 种族课程：换成指定种族的一局（episode 编号不变）
+                            self.episode[name][g] = env.episode_index(int(g))
                             self._assign(name, env, off, int(g))
+                    if swapped:
+                        self.obs[name] = env.observe()
             t_net += tb - ta
             t_env += time.time() - tb
         # 没打完的：用当前局面的价值自举
@@ -971,6 +998,12 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
                     rec["gift_games"] = len(self.gift_places)
                 self.gift_places = []
+            if self.tribes is not None:
+                rec.update(self.tribes.take_stats())
+                if self.tribe_places:
+                    rec["place_tribe"] = round(float(np.mean(self.tribe_places)), 3)
+                    rec["tribe_games"] = len(self.tribe_places)
+                self.tribe_places = []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
@@ -993,6 +1026,10 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                                     round(float(np.mean([f for _, f in v])), 3)]
                                                 for k, v in sorted(self.cgift_by.items())}
                         self.cgift_by = {}
+                    if self.tribe_by:                      # 种族课程：每个强制的种族 [局数, 平均名次, 吃鸡率]（上次考试以来）
+                        rec["tribe_by"] = {k: [len(v), round(float(np.mean(v)), 2), round(float(np.mean([p == 1 for p in v])), 3)]
+                                           for k, v in sorted(self.tribe_by.items())}
+                        self.tribe_by = {}
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
                         rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}

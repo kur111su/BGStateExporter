@@ -269,6 +269,14 @@ class Config:
     cgift_frac: float = 0.0
     cgift_turns: str = "5,6,7,8,9,10,11"
     cgift_p: float = 0.7
+    # 种族课程（rl/tribes.py，第 27116 轮起）：tribe_frac 的机器人局开局时强制本局出现 tribe_force 个 tribe_pool 里的种族
+    # （模型还不会的），剩下的种族随机。这些局名次单独记（place_tribe、tribe_by：每个种族的局数 / 平均名次 / 吃鸡率），
+    # 不算进 place_bot / 加强强度。0 = 不用
+    tribe_frac: float = 0.0
+    tribe_force: int = 3
+    tribe_pool: str = "BEAST,DRAGON,MECHANICAL,MURLOC,PIRATE,UNDEAD,ABERRATION"
+    # 老师只在本局开了这几个种族之一的局面上教（老师只会野猪人 / 恶魔 / 元素，别的局里它会把模型往回拉）。空 = 都教
+    teacher_need_tribes: str = ""
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
     # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
     # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
