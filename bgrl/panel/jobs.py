@@ -34,7 +34,8 @@ def _bg(*args) -> list[str]:
 def _train(p):
     init = [] if (RUN / "latest.pt").exists() or not (ROOT / "runs" / "v2" / "latest.pt").exists() \
         else ["--init", "runs/v2/latest.pt"]
-    dev = ["--device", p["device"]] if p.get("device", "auto") != "auto" else []
+    d = p.get("device", "mps")
+    dev = ["--device", d] if d != "auto" else []
     return [_bg("train", "--recipe", "configs/v3.json", "--resume", *init, "--threads", p["threads"], *dev)]
 
 
@@ -56,7 +57,7 @@ def _arena(mode):
 
 
 _GAMES = ("int", 64, 16, 1024)
-_TRAIN = {"threads": ("int", _threads_default(), 1, 256), "device": ("choice", "auto", ("auto", "mps", "cuda", "cpu"))}
+_TRAIN = {"threads": ("int", _threads_default(), 1, 256), "device": ("choice", "mps", ("mps", "auto", "cpu"))}
 _CKPT = ("choice", "latest", ("latest", "best", "external"))
 # 任务 → 标题、分组、说明、参数 {名字: (类型, 默认, …)}、怎么拼命令、怎么停（file = 让训练自己存盘退出）、要不要二次确认
 SPECS: dict[str, dict] = {

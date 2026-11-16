@@ -9,8 +9,8 @@ from .model import SIZES
 @dataclass
 class Config:
     run_dir: str = "runs/default"
-    # auto = 有 NVIDIA 显卡用 cuda，Apple 芯片用 mps，否则 cpu；跑过 bg.py bench-device 的按实测最快的选（rl/device.py）
-    device: str = "auto"
+    # 默认 mps（Mac 的 GPU）；没有 MPS 的机器（CI）自动改用 CPU。auto = 有 NVIDIA 显卡用 cuda、Apple 芯片用 mps、否则 cpu，跑过 bg.py bench-device 的按实测最快的选（rl/device.py）
+    device: str = "mps"
     # 采样（模型出动作）用的设备：auto = 实测最快的 / 和 device 一样；也可以 cpu、mps、cuda。和 device 不同时采样用一份副本，每次更新后同步
     rollout_device: str = "auto"
     seed: int = 0
