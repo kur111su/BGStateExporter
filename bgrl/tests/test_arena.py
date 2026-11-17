@@ -94,6 +94,8 @@ def main() -> int:
         assert steps > 20, steps
         rec = [json.loads(x) for x in (arena / "records" / "test.jsonl").read_text(encoding="utf-8").splitlines()]
         assert len(rec) == steps and all(r["text"] for r in rec) and rec[0]["top"], rec[0]
+        est = [r for r in rec if r.get("place") is not None]       # 名次头：期望名次 1–8、吃鸡 ≤ 前四
+        assert est and all(1 <= r["place"] <= 8 and 0 <= r["p1"] <= r["p4"] <= 1 for r in est), est[:1]
         assert agent.describe(8, {"me": {"shop": [{"name_zh": "测试"}]}}) == "买 测试"
         print(f"arena OK：{steps} 步，全部合法；日志 {sorted(p.name for p in (arena / 'logs').glob('test*'))}")
     finally:

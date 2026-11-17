@@ -133,11 +133,22 @@ def _show_turn(context: dict, f) -> None:
         pass
 
 
-def _show_end(st: dict, value) -> None:
-    """结束回合：这回合各类操作的次数 + 价值头估计的名次。"""
+def _place_est(pl) -> tuple[float, float, float] | None:
+    """名次头（rl/model.py 的 p_head，训练时用每局最后的名次当标签学 8 个名次的概率）→ (期望名次, 吃鸡概率, 前四概率)。
+    以前用价值头换算（1 + (1 - 价值) × 3.5），价值里扣着还没扣回的阵容 / 引擎 / 场面奖励、名次奖励表也不是线性的，
+    场面越强反而算得越差（强场面显示第 6 名）。"""
+    try:
+        p = F.softmax(pl.reshape(-1)[:8].float(), -1)
+        return float((p * torch.arange(1, 9, dtype=p.dtype)).sum()), float(p[0]), float(p[:4].sum())
+    except Exception:                              # noqa: BLE001
+        return None
+
+
+def _show_end(st: dict, est) -> None:
+    """结束回合：这回合各类操作的次数 + 名次头估计的名次。"""
     try:
         done = "、".join(f"{ZH_KIND.get(k, k)} {n}" for k, n in st["counts"].items() if k != "end" and n)
-        place = "" if value is None else f"，预计名次 {1.0 + (1.0 - float(value)) * 3.5:.1f}"
+        place = "" if est is None else f"，预计名次 {est[0]:.1f}（吃鸡 {est[1]:.0%}、前四 {est[2]:.0%}）"
         guard = "、".join(f"{k} {n}" for k, n in st["guards"].items() if n)
         _say(f"    结束回合（{done or '没操作'}{place}）" + (f" 保护：{guard}" if guard else ""))
     except Exception:                              # noqa: BLE001
@@ -208,7 +219,7 @@ def describe(a: int, view: dict) -> str:
     return f"把 {_nm(board, f_)} 从第 {f_ + 1} 位移到第 {t_ + 1} 位"
 
 
-def _record(context: dict, a: int, top: list, value, guard: str | None = None):
+def _record(context: dict, a: int, top: list, value, guard: str | None = None, est=None):
     """追加一行到 records/<对局>.jsonl。对手部分每回合只存第一步（不变的东西不重复存）。出错不影响出牌。"""
     try:
         st = context["state"]
@@ -222,7 +233,8 @@ def _record(context: dict, a: int, top: list, value, guard: str | None = None):
                "phase": context.get("phase"), "used": context.get("actions_used"), "left_ms": context.get("remaining_ms"),
                "action": int(a), "text": describe(int(a), view), "guard": guard, "model": META["model_version"],
                "value": None if value is None else round(float(value), 4),
-               "place": None if value is None else round(1.0 + (1.0 - float(value)) * 3.5, 2),
+               "place": None if est is None else round(est[0], 2),
+               "p1": None if est is None else round(est[1], 3), "p4": None if est is None else round(est[2], 3),
                "top": [[int(x), round(float(p_), 4), describe(int(x), view)] for x, p_ in top], "view": v}
         RECORDS.mkdir(exist_ok=True)
         with open(RECORDS / f"{context['match_id']}.jsonl", "a", encoding="utf-8") as fh:
@@ -279,7 +291,8 @@ def act(observation, context):
     f = np.array(observation["features"][:NF], dtype=np.float32)        # 复制：连接器给的数组是只读的
     c = np.asarray(observation["cards"][:NC], dtype=np.int64)
     c = REMAP[np.clip(c, 0, len(REMAP) - 1)]
-    logits, value, _ = MODEL(torch.from_numpy(f)[None], torch.from_numpy(c)[None], torch.from_numpy(m)[None])
+    logits, value, pl = MODEL(torch.from_numpy(f)[None], torch.from_numpy(c)[None], torch.from_numpy(m)[None])
+    est = _place_est(pl)
     lg = logits[0].float().masked_fill(~torch.from_numpy(m), float("-inf"))
     probs = F.softmax(lg, -1)
     a = int(torch.argmax(probs))
@@ -302,9 +315,9 @@ def act(observation, context):
     elif not (A_CHOOSE <= a < A_PLAY):
         st["trigger"] = a
     st["counts"][kind_of(a)] += 1
-    _record(context, a, top, float(value.reshape(-1)[0]))
+    _record(context, a, top, float(value.reshape(-1)[0]), est=est)
     if a == A_END:
-        _show_end(st, float(value.reshape(-1)[0]))
+        _show_end(st, est)
         _log(st, context["match_id"])
         st["counts"], st["guards"] = Counter(), Counter()
     return a
