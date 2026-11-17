@@ -295,6 +295,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         self.ref_idx[:] = -1                           # 上一轮的步编号在这一轮无效
         t0 = time.time()
         t_env = t_net = 0.0
+        self.t_infer, self.n_calls, self.rows_calls = 0.0, 0, 0   # t_net 里纯模型前向的部分（其余是塑形、记账、阵容强度……）
         for _ in range(cfg.steps_per_iter):
             # 先把所有环境里同一个模型要算的局面合在一起，一次前向（比每个环境各算一次快）
             ta = time.time()
@@ -309,7 +310,11 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             for rid, parts in groups.items():
                 cat = lambda key: np.concatenate([self.obs[self.envs[ei][0]][key][idx] for ei, idx in parts])  # noqa: E731
                 f, c, m = cat("features"), cat("cards"), cat("action_mask")
+                ti = time.perf_counter()
                 res = self._policy(rid)(f, c, m, want_obs=(rid == 0))
+                self.t_infer += time.perf_counter() - ti            # Policy 返回 numpy，已经等显卡算完
+                self.n_calls += 1
+                self.rows_calls += len(f)
                 a = res[0]
                 o = 0
                 for ei, idx in parts:
@@ -1063,6 +1068,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             rec = {"iter": self.iter, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": n_dec,
                    "games_done": self.finished, "dps": round(n_dec / max(t_col + t_upd, 1e-6)),
                    "t_collect": round(t_col, 1), "t_env": round(t_env, 1), "t_net": round(t_net, 1),
+                   "t_infer": round(getattr(self, "t_infer", 0.0), 1), "rows_per_call": round(self.rows_calls / max(1, self.n_calls), 1),
                    "t_update": round(t_upd, 1), "device": f"{self.dev.type}+{self.rdev.type}", "threads": cfg.threads,
                    "lr": self.opt.param_groups[0]["lr"], "ent_coef": round(cfg.ent_coef, 5),
                    "noop_frac": round(self.n_noop / max(1, n_dec), 3),
