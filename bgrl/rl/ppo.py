@@ -622,7 +622,9 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         tok = None
         if getattr(cfg, "bucket_tokens", False) and hasattr(self.model, "token_counts"):
             tok = self.model.token_counts(b["c"])
-        for _ in range(cfg.epochs):
+        for ep_i in range(cfg.epochs):
+            if ep_i:
+                idx = np.random.permutation(n)                 # 每遍重新打乱，小批的组合不重复
             for s in range(0, n, cfg.minibatch):
                 mb = idx[s:s + cfg.minibatch]
                 if tok is not None:                        # 词数相近的排在一起（梯度不变，打包更省）
