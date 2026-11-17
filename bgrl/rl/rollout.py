@@ -54,8 +54,8 @@ class Policy:
         else:
             a = torch.distributions.Categorical(logits=logits).sample()
         logp = torch.log_softmax(logits, -1).gather(1, a.unsqueeze(1)).squeeze(1)
-        self.bad_rows += int(getattr(self.model, "last_bad", 0))
         out = (a.cpu().numpy()[:n], logp.float().cpu().numpy()[:n], v.float().cpu().numpy()[:n])
+        self.bad_rows += int(getattr(self.model, "last_bad", 0))       # 动作已经取回了，这时候数不会多等
         if want_obs:
             out = out + (fz.half().cpu().numpy()[:n],)
         return out

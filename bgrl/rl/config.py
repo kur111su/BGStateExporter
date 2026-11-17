@@ -52,6 +52,8 @@ class Config:
     # 30 次约等于 0.2 个名次，正常需要的一两次几乎不受影响
     noop_penalty: float = 0.003
     epochs: int = 1
+    # 更新分段计时（t_data / t_fwd / t_bwd / t_bc / t_opt，秒/轮）：分段点要等显卡算完，会慢一点，只在测速时开
+    profile_update: bool = False
     anchor_coef: float = 0.1
     anchor_iters: int = 100
     # 对手库 / 检查点

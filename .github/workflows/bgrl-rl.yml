@@ -51,6 +51,7 @@ jobs:
           python -X utf8 bgrl/bg.py distill --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2
           python -X utf8 bgrl/tests/test_tribes.py
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --profile-update true --aux-comp-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 1 --verbose
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 6 --tribe-frac 1.0 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-need-tribes QUILBOAR,DEMON
           python -X utf8 bgrl/arena/export.py --ckpt bgrl/runs/_ext_ci.pt --out bgrl/runs/_ext_bundle_ci && exit 1 || test ! -e bgrl/runs/_ext_bundle_ci/model.pt
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
