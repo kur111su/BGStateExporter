@@ -546,6 +546,13 @@ def check_guard():
     Trainer._guard_apply(t)
     assert abs(cfg.pro_coef - 0.025) < 1e-12
     assert Trainer._guard(SimpleNamespace(cfg=SimpleNamespace(guard=False)), 4.0) == {}
+    # --restore：最好成绩跟着硬盘上的 best.pt 走，不清零（以前清零后第一次凑满的更差平均覆盖了 best.pt）
+    old = {**Trainer._guard_new(), "best": 4.57, "best_iter": 28850, "evals": [4.4], "scale": 0.5, "metric": "place"}
+    g = Trainer._guard_restart(old, {"iter": 27800, "guard": {"eval_avg": 4.375}})
+    assert (g["best"], g["best_iter"], g["evals"], g["scale"], g["metric"]) == (4.375, 27800, [], 1.0, "place")
+    g = Trainer._guard_restart(old, {"model": {}})                               # 退回快照：沿用原来的
+    assert (g["best"], g["best_iter"]) == (4.57, 28850)
+    assert Trainer._guard_restart(Trainer._guard_new(), {})["best"] is None
     return outs[7]
 
 

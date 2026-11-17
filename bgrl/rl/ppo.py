@@ -891,6 +891,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         self.model.load_state_dict(sd)
         self.model._ver = getattr(self.model, "_ver", 0) + 1          # 采样用的副本下次出动作前同步
         print(f"从 {path} 的参数开始", flush=True)
+        return ck if isinstance(ck, dict) else {}
 
     def save(self):
         torch.save({"model": self.model.state_dict(), "opt": self.opt.state_dict(), "iter": self.iter,

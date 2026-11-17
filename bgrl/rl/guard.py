@@ -60,6 +60,20 @@ class GuardMixin:
     def _guard_new() -> dict:
         return {"evals": [], "best": None, "best_iter": None, "bad": 0, "n": 0, "scale": 1.0, "metric": None}
 
+    @classmethod
+    def _guard_restart(cls, old: dict, ck: dict) -> dict:
+        """--restore 以后的考试守护：最近几次考试从头记，但“最好成绩”留着，和硬盘上的 best.pt 对得上。
+        退回的检查点本身带考试成绩（best.pt 存的 guard.eval_avg）就用它；否则（退回某个快照）沿用原来的最好成绩。
+        以前这里整个清零：第 28579 轮退回 best.pt（第 27800 轮，4.375）以后，第 28850 轮第一次凑满的平均 4.57
+        直接覆盖了 best.pt。"""
+        g = {**cls._guard_new(), "metric": (old or {}).get("metric")}
+        gi = ck.get("guard") if isinstance(ck, dict) else None
+        if isinstance(gi, dict) and gi.get("eval_avg") is not None:
+            g["best"], g["best_iter"] = float(gi["eval_avg"]), (int(ck["iter"]) if ck.get("iter") is not None else None)
+        elif (old or {}).get("best") is not None:
+            g["best"], g["best_iter"] = old["best"], old.get("best_iter")
+        return g
+
     def _guard_metric(self) -> str:
         """守护比的是什么：平均名次（"place"），或者按名次奖励表算的等效名次（"score:<表>"）。"""
         spec = str(getattr(self.cfg, "place_reward", "") or "").replace(" ", "")
@@ -209,7 +223,7 @@ class GuardMixin:
     def restore(self, path):
         """接着训练目录练（对手库、加强强度、模仿强度都保留），但模型参数换成某个快照的、优化器重新开始，
         轮数退回快照那一轮，对手库里比它新的快照删掉（那是变坏以后的自己）。"""
-        self.init_from(path)
+        ck = self.init_from(path) or {}
         self.opt = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr, eps=1e-5)
         m = re.search(r"it(\d+)", Path(path).name)
         if m:
@@ -224,7 +238,7 @@ class GuardMixin:
         self.good = None
         self.teacher_t0 = None                         # 老师的作用从退回的那一轮重新慢慢加
         self.repay_t0 = None
-        self.guard_st = self._guard_new()              # 考试守护从头记（best.pt 会被第一次凑满的平均覆盖）
+        self.guard_st = self._guard_restart(self.guard_st, ck)
         self._guard_apply()
         self._start_warmup()
         self._reset_drift()
