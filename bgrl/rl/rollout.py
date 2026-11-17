@@ -14,8 +14,11 @@ class Policy:
     device 和模型所在的设备不同时（采样用 CPU、更新用 MPS / CUDA），在 device 上放一份副本，
     模型的版本号（_ver，训练器每次改参数时加 1）变了就同步一次。"""
 
-    def __init__(self, model, device, amp=False, copy=False):
+    def __init__(self, model, device, amp=False, copy=False, groups: int = 1, min_group: int = 64):
         self.src, self.device = model, device
+        # 按词数分组前向（groups > 1）：同一步里各局处在不同回合，前期局面约 20 个词、后期约 60 个，打包时一批截到最长那行；
+        # 按词数排序切成 groups 份分别算，少算空词。每份至少 min_group 行（太小了多一次调用的固定开销不划算）
+        self.groups, self.min_group = max(1, int(groups)), max(1, int(min_group))
         self.amp = amp and device.type in ("cuda", "mps")
         self.bad_rows = 0                      # 输出出现 NaN 的局面数（应该一直是 0）
         if next(model.parameters()).device.type == device.type and not copy:
@@ -38,6 +41,17 @@ class Policy:
     def __call__(self, f, c, m, greedy=False, want_obs=False):
         """want_obs=True 时另外返回压缩后的观察（float16，存训练数据用：压缩后最大十几，不会溢出）。"""
         self.sync()
+        n = len(f)
+        k = min(self.groups, n // self.min_group)
+        if k > 1 and hasattr(self.model, "token_counts"):
+            order = np.argsort(self.model.token_counts(c), kind="stable")
+            parts = [self._run(f[j], c[j], m[j], greedy, want_obs) for j in np.array_split(order, k)]
+            inv = np.empty(n, dtype=np.int64)
+            inv[order] = np.arange(n)
+            return tuple(np.concatenate([p[i] for p in parts])[inv] for i in range(len(parts[0])))
+        return self._run(f, c, m, greedy, want_obs)
+
+    def _run(self, f, c, m, greedy, want_obs):
         n = len(f)
         if self.device.type == "mps" and n % 64:        # MPS：局面数凑成 64 的倍数（重复最后一行，算完丢掉），原因同上
             pad = 64 - n % 64

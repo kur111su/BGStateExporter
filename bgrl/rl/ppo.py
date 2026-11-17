@@ -97,7 +97,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         self.since_rollback = 0
         self.good = None                       # 最近一次健康时的模型和优化器（出问题时回退到这里）
         self.model._ver = 0
-        self.learner = Policy(self.model, self.rdev, self.amp)
+        self.learner = Policy(self.model, self.rdev, self.amp, groups=cfg.rollout_groups)
         self.envs = []                                 # (名字, 环境, 槽位起点)
         off = 0
         if cfg.games_bot:
@@ -277,7 +277,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             model = build_model(**self.mkw).to(self.rdev)
             model.load_state_dict(torch.load(m.path, map_location=self.rdev))
             model.eval()
-            self.snap_cache[name] = Policy(model, self.rdev, self.amp)
+            self.snap_cache[name] = Policy(model, self.rdev, self.amp, groups=self.cfg.rollout_groups)
             if len(self.snap_cache) > 12:
                 self.snap_cache.pop(next(iter(self.snap_cache)))
         return self.snap_cache[name]

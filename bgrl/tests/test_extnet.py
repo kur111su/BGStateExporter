@@ -205,6 +205,13 @@ def policy_copy_checks():
     with torch.no_grad():
         d = float((pol.model(torch.from_numpy(f), torch.from_numpy(cc), torch.from_numpy(m))[0] - lg_src).abs().max())
     assert d < 1e-5, d
+    # 按词数分组前向：顺序还原以后和不分组完全一样（取最大概率、同一个模型）
+    f2, c2, m2 = sample_obs(40)
+    p1 = Policy(src, torch.device("cpu"), groups=1)
+    p3 = Policy(src, torch.device("cpu"), groups=3, min_group=8)
+    r1, r3 = p1(f2, c2, m2, greedy=True, want_obs=True), p3(f2, c2, m2, greedy=True, want_obs=True)
+    assert len(r1) == len(r3) == 4 and all(x.shape == y.shape for x, y in zip(r1, r3))
+    assert (r1[0] == r3[0]).all() and np.abs(r1[2] - r3[2]).max() < 1e-4 and np.abs(r1[3].astype(float) - r3[3].astype(float)).max() < 1e-3
     dev, rdev = resolve("auto", "auto")
     assert dev in available() and rdev in available()
     assert resolve("cpu", "same") == ("cpu", "cpu")
