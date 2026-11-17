@@ -292,7 +292,7 @@ function recentChart(games){const box=$('#recent');box.replaceChildren();const g
  const hit=el('rect',{x:L,y:T,width:W-L-R,height:H-T-B,fill:'transparent',tabindex:0},svg);
  const pick=e=>{const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const q=pt.matrixTransform(svg.getScreenCTM().inverse());let i=Math.round((q.x-L-8)/((W-L-R-16)/Math.max(1,n-1)));i=Math.max(0,Math.min(n-1,i));return i};
  hit.addEventListener('pointermove',e=>{const i=pick(e),m=g[i];cross.setAttribute('x1',x(i));cross.setAttribute('x2',x(i));cross.setAttribute('visibility','visible');ring.setAttribute('cx',x(i));ring.setAttribute('cy',y(m.placement));ring.setAttribute('visibility','visible');
-  showTip(e,[`第 ${m.placement} 名`,`${cat[m.category]||m.category} · ${fmtT(m.created)}`,`${m.model||''}${m.score_after!=null?` · Elo ${(m.score_after-m.score_before>=0?'+':'')+(m.score_after-m.score_before).toFixed(1)}`:''}`])});
+  showTip(e,[`第 ${m.placement} 名`,`${cat[m.category]||m.category} · ${fmtT(m.created)}`,`${m.model||''}${m.score_after!=null?` · Elo ${(m.score_after-m.score_before>=0?'+':'')+(m.score_after-m.score_before).toFixed(2)}`:''}`])});
  hit.addEventListener('pointerleave',()=>{hideTip();cross.setAttribute('visibility','hidden');ring.setAttribute('visibility','hidden')});
  hit.addEventListener('click',e=>{const m=g[pick(e)];if(m)pick_(m.id)})}
 
@@ -301,7 +301,7 @@ function renderStats(){if(!SUM)return;const all=SUM.matches.filter(m=>m.placemen
  const g=CAT=='all'?all:all.filter(m=>catKey(m.category)==CAT);
  const avg=g.length?g.reduce((a,m)=>a+m.placement,0)/g.length:null,t1=g.filter(m=>m.placement==1).length,t4=g.filter(m=>m.placement<=4).length;
  let t=`<div class="tile"><small>参赛结果</small><b>${g.length}</b></div><div class="tile"><small>平均名次</small><b>${avg?avg.toFixed(2):'-'}</b></div><div class="tile"><small>第一</small><b>${g.length?(t1/g.length*100).toFixed(0)+'%':'-'}</b><small>${t1} 局</small></div><div class="tile"><small>前四</small><b>${g.length?(t4/g.length*100).toFixed(0)+'%':'-'}</b><small>${t4} 局</small></div>`;
- const elo=g.filter(m=>m.score_after!=null);if(elo.length)t+=`<div class="tile"><small>纯 AI Elo</small><b>${elo.at(-1).score_after.toFixed(1)}</b><small>${elo.length} 局${elo.length>=5?'':' · 满 5 局才有正式排名'}</small></div>`;
+ const elo=g.filter(m=>m.score_after!=null);if(elo.length)t+=`<div class="tile"><small>纯 AI Elo</small><b>${elo.at(-1).score_after.toFixed(2)}</b><small>${elo.length} 局${elo.length>=5?'':' · 满 5 局才有正式排名'}</small></div>`;
  t+=`<div class="tile"><small>当前模型</small><b>${esc(SUM.model||'-')}</b></div>`;
  $('#tiles').innerHTML=t;distChart(g);recentChart(g)}
 
@@ -310,7 +310,7 @@ async function loadSummary(){const r=await fetch('/api/summary');SUM=await r.jso
  renderStats();
  const liveM=s.matches.find(m=>m.live);$('#follow').className='btn'+(FOLLOW?' sel':'');$('#follow').textContent=FOLLOW?(liveM?'跟随中：正在打的对局':'跟随中：最近一局'):'看正在打的';
  if(FOLLOW){const want=liveM?liveM.id:(s.matches[0]||{}).id;if(want&&want!==SEL){SEL=want;TURN=null;DEC=null;loadMatch()}}
- $('#list').innerHTML=s.matches.map(m=>`<div class="item ${m.id==SEL?'sel':''}" onclick="pick_('${esc(m.id)}')"><div class="pl ${m.placement?'p'+m.placement:'plive'}">${m.placement||(m.live?'●':'?')}</div><div><div>${esc(cat[m.category]||m.category)}${m.hero?' · '+esc(m.hero):''}${m.tier?' '+esc(m.tier)+' 本':''}</div><small>${fmtT(m.created)} · ${m.turns??'-'} 回合 · ${esc(m.model||'')}${m.score_after!=null?` · Elo ${(m.score_after-m.score_before>=0?'+':'')+(m.score_after-m.score_before).toFixed(1)}`:''}${m.live&&m.place_est?` · 预计 ${m.place_est} 名`:''}${m.records?'':' · 无逐步记录'}</small></div></div>`).join('')||'<div class="mute">还没有对局。</div>'}
+ $('#list').innerHTML=s.matches.map(m=>`<div class="item ${m.id==SEL?'sel':''}" onclick="pick_('${esc(m.id)}')"><div class="pl ${m.placement?'p'+m.placement:'plive'}">${m.placement||(m.live?'●':'?')}</div><div><div>${esc(cat[m.category]||m.category)}${m.hero?' · '+esc(m.hero):''}${m.tier?' '+esc(m.tier)+' 本':''}</div><small>${fmtT(m.created)} · ${m.turns??'-'} 回合 · ${esc(m.model||'')}${m.score_after!=null?` · Elo ${(m.score_after-m.score_before>=0?'+':'')+(m.score_after-m.score_before).toFixed(2)}`:''}${m.live&&m.place_est?` · 预计 ${m.place_est} 名`:''}${m.records?'':' · 无逐步记录'}</small></div></div>`).join('')||'<div class="mute">还没有对局。</div>'}
 async function doSync(){$('#sync').textContent='同步中…';await fetch('/api/sync');loadSummary()}
 async function pick_(id){FOLLOW=false;SEL=id;TURN=null;DEC=null;await loadMatch();loadSummary()}
 function followLive(){FOLLOW=true;SEL=null;loadSummary()}
@@ -328,7 +328,7 @@ function curve(recs){const pts=recs.filter(r=>r.place!=null);if(pts.length<2)ret
  return`<svg viewBox="0 0 ${W} ${Hh+4}" width="100%" style="max-width:${W}px">${[1,4,8].map(p=>`<text class="ax" x="2" y="${y(p)+4}">${p}</text>`).join('')}${marks}<path d="${d}" fill="none" stroke="var(--acc)" stroke-width="2"/></svg>`}
 function render(){const D=DATA;if(!D)return;const res=D.result,recs=D.records;let h='';
  if(res){const me=(res.participants||[]).find(p=>p.username==D.me)||{};h+=`<h2>第 ${esc(me.placement??'?')} 名 <small>${esc(cat[res.category]||res.category)} · ${esc(res.turns)} 回合 · ${Math.round(res.duration_seconds||0)} 秒 · ${esc(res.human_count)} 个 AI + ${esc(res.bot_count)} 个机器人</small></h2>`;
-  if(me.score_after!=null)h+=`<div>Elo ${me.score_before.toFixed(1)} → <b>${me.score_after.toFixed(1)}</b></div>`}
+  if(me.score_after!=null)h+=`<div>Elo ${me.score_before.toFixed(2)} → <b>${me.score_after.toFixed(2)}</b></div>`}
  else h+=`<h2>进行中 <small>每 3 秒刷新${FOLLOW?' · 跟着最新一步':' · 点“看正在打的”回到最新一步'}</small></h2>`;
  if(recs.length)h+=`<div class="mute" style="margin-top:8px">模型预计名次（每一步；越低越好）</div>`+curve(recs);
  const turns=[...new Set(recs.map(x=>x.turn))];if(turns.length)h+='<div class="turns">'+turns.map(t=>`<button class="${t==TURN?'sel':''}" onclick="FOLLOW=false;TURN=${JSON.stringify(t)};DEC=null;render()">${t==0?'选将':'第 '+esc(t)+' 回合'}</button>`).join('')+'</div>';

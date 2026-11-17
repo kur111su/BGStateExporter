@@ -987,7 +987,7 @@ class ArenaPage(QtWidgets.QWidget):
                  ("第一", f"{st['top1'] / n:.0%}" if n else "-", f"{st['top1']} 局"),
                  ("前四", f"{st['top4'] / n:.0%}" if n else "-", f"{st['top4']} 局")]
         if st["elo"] is not None:
-            items.append(("纯 AI Elo", f"{st['elo']:.1f}", f"{st['elo_n']} 局"))
+            items.append(("纯 AI Elo", f"{st['elo']:.2f}", f"{st['elo_n']} 局"))
         items.append(("当前模型", str(self.sum.get("model") or "-"), ""))
         for name, v, sub in items:
             self.tiles.addWidget(Tile(name, v, sub or "\u3000"))     # 这一排都留小字那一行，数字才对齐

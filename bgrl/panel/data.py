@@ -184,7 +184,7 @@ def match_line(m: dict) -> tuple[str, str]:
         top += f" · {m['hero']}" + (f" {m['tier']} 本" if m.get("tier") else "")
     sub = f"{fmt_time(m.get('created'))} · {m.get('turns') if m.get('turns') is not None else '-'} 回合 · {m.get('model') or ''}"
     if m.get("score_after") is not None and m.get("score_before") is not None:
-        sub += f" · Elo {m['score_after'] - m['score_before']:+.1f}"
+        sub += f" · Elo {m['score_after'] - m['score_before']:+.2f}"
     if m.get("live") and m.get("place_est"):
         sub += f" · 预计 {m['place_est']} 名"
     if not m.get("records"):
@@ -201,7 +201,7 @@ def match_parts(m: dict) -> dict:
     mid = " · ".join(x for x in (fmt_time(m.get("created")), f"{m['turns']} 回合" if m.get("turns") is not None else "") if x)
     low = []
     if m.get("score_after") is not None and m.get("score_before") is not None:
-        low.append(f"Elo {m['score_before']:.0f} → {m['score_after']:.0f}（{m['score_after'] - m['score_before']:+.1f}）")
+        low.append(f"Elo {m['score_before']:.2f} → {m['score_after']:.2f}（{m['score_after'] - m['score_before']:+.2f}）")
     if m.get("live") and m.get("place_est"):
         low.append(f"预计 {m['place_est']} 名")
     if not m.get("records"):
@@ -264,7 +264,7 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
         out["sub"] = (f"{CAT.get(res.get('category'), res.get('category'))} · {res.get('turns')} 回合 · "
                       f"{round(res.get('duration_seconds') or 0)} 秒 · {res.get('human_count')} 个 AI + {res.get('bot_count')} 个机器人")
         if me.get("score_after") is not None and me.get("score_before") is not None:
-            out["elo"] = f"Elo {me['score_before']:.1f} → {me['score_after']:.1f}（{me['score_after'] - me['score_before']:+.1f}）"
+            out["elo"] = f"Elo {me['score_before']:.2f} → {me['score_after']:.2f}（{me['score_after'] - me['score_before']:+.2f}）"
         for lu in sorted(res.get("final_lineups") or [], key=lambda x: x.get("placement") or 9):
             out["final"].append((f"{lu.get('placement')}" + ("（退赛）" if lu.get("forfeited") else ""),
                                  f"{lu.get('agent') or lu.get('kind') or ''} {lu.get('username') or ''}".strip(),
