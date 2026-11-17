@@ -292,6 +292,17 @@ class EntityTransformer(nn.Module):
             self.attr_proj = nn.Linear(table.shape[1], self.dc, bias=False).to(dev)
         nn.init.zeros_(self.attr_proj.weight)
 
+    def token_counts(self, c: np.ndarray) -> np.ndarray:
+        """每行大约有几个有内容的词（在 CPU 上从卡牌编号数，不用过模型）：训练时按它把相近的行排进同一份 micro，
+        打包以后每份截到的词数更少（每份截到这份里最多的那行）。只用来排序，不要求和 _tokens 的 present 完全一致。"""
+        c = np.asarray(c)
+        cs, L = self.cs, self.L
+        sl = lambda a, b=None: c[:, cs[a][0]:cs[b or a][1]]       # noqa: E731
+        n = 1 + (sl("hero") > 0).sum(1) + (sl("powers") > 0).sum(1) + (sl("deity", "source") > 0).sum(1)
+        n = n + (sl("quests").reshape(len(c), L.NQ, -1) > 0).any(2).sum(1) + (sl("secrets") > 0).any(1)
+        n = n + (sl("trinkets") > 0).sum(1) + (sl("board", "choice") > 0).sum(1) + (sl("opphero") > 0).sum(1)
+        return n.astype(np.int32)
+
     def embed_card(self, idx: torch.Tensor) -> torch.Tensor:
         """卡牌编号 → dc 维：编号嵌入 + 原来的静态特征 + 属性表（有的话）。"""
         e = self.card(idx)

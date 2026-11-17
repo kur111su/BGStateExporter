@@ -181,6 +181,39 @@ def time_encoder(model, dev, data, micro: int, amp: bool, masked: bool, reps: in
     return {"ms_per_micro": round(med * 1000, 1), "us_per_sample": round(med / micro * 1e6, 1)}, tms[len(tms) // 2]
 
 
+def time_pass(model, dev, data, micro: int, amp: bool, sort: bool, reps: int) -> dict:
+    """整批（这里是全部局面）按 micro 切开，前向 + 反向走一遍的总时间 / 样本数；sort：先按词数排序（训练的 bucket_tokens）。"""
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    from rl.model import soft_log
+    f, c, m, a = data
+    order = np.argsort(model.token_counts(c), kind="stable") if sort else np.arange(len(f))
+    sync = torch.mps.synchronize if dev.type == "mps" else torch.cuda.synchronize if dev.type == "cuda" else (lambda: None)
+    model.train(True)
+    best = None
+    for _ in range(reps + 1):
+        sync()
+        t0 = time.perf_counter()
+        for u in range(0, len(f), micro):
+            j = order[u:u + micro]
+            ft = soft_log(torch.as_tensor(f[j]).to(dev).float())
+            ct = torch.as_tensor(c[j], dtype=torch.long).to(dev)
+            mt = torch.as_tensor(m[j]).to(dev)
+            at = torch.as_tensor(a[j], dtype=torch.long).to(dev)
+            with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=amp):
+                lg, v, pl = model(ft, ct, mt, compressed=True)
+            lp = F.log_softmax(lg.float(), -1)
+            loss = -lp.gather(1, at.unsqueeze(1)).mean() + v.float().pow(2).mean()
+            loss.backward()
+        sync()
+        dt = time.perf_counter() - t0
+        best = dt if best is None else min(best, dt)
+        model.zero_grad(set_to_none=True)
+    return {"us_per_sample": round(best / len(f) * 1e6, 1)}
+
+
 def time_teacher(teacher, dev, data, micro: int, amp: bool, reps: int, warm: int) -> dict:
     import torch
     f, c, m, _ = data
@@ -292,6 +325,20 @@ def main(argv=None) -> int:
         finally:
             if dev.type == "mps":
                 torch.mps.empty_cache()
+    pa = {}                                            # 整批走一遍：不排序（原来）/ 按词数排序（bucket_tokens）
+    for sort in (False, True):
+        label = "整批一遍（" + ("按词数排序" if sort else "不排序") + "）"
+        try:
+            r = time_pass(model, dev, data, micro, amp, sort, max(1, a.reps // 4))
+            r["sec_per_iter"] = round(r["us_per_sample"] * a.per_iter / 1e6, 1)
+            res[label] = pa[sort] = r
+            print(f"{label:<22} {'':>8} {r['us_per_sample']:>9} {r['sec_per_iter']:>8.1f}", flush=True)
+        except Exception as ex:                          # noqa: BLE001
+            print(f"{label:<22} 失败：{type(ex).__name__}: {str(ex)[:160]}", flush=True)
+    if len(pa) == 2:
+        tc = model.token_counts(data[1])
+        print(f"  按词数排序：快 {1 - pa[True]['us_per_sample'] / pa[False]['us_per_sample']:.0%}"
+              f"（每行词数 {int(tc.min())}–{int(tc.max())}，中位 {int(np.median(tc))}）", flush=True)
     tp = ROOT / a.teacher
     if not a.smoke and tp.exists():
         try:

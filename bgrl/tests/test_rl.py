@@ -76,6 +76,10 @@ def main() -> int:
     with torch.no_grad():
         l3, v3, _ = m2(f, c, mk)
     assert torch.allclose(l1[legal], l3[legal], atol=1e-5) and torch.allclose(v1, v3, atol=1e-6), "旧检查点读进来结果变了"
+    with torch.no_grad():                               # 按词数排序用的 CPU 估计：和模型里真正的有内容词数基本一致
+        _, pres_ = ref_m._tokens(soft_log(f.float()), c.long())
+    true_n, est_n = pres_.sum(1).numpy(), ref_m.token_counts(c.numpy())
+    assert np.abs(true_n - est_n).max() <= 3 and np.corrcoef(true_n, est_n)[0, 1] > 0.95, (true_n[:8], est_n[:8])
     comps = load_target_comps()
     idx = {card_id(i): i for i in range(1, n_cards())}
     apm = next(x for x in comps if x["name"] == "机械 APM")

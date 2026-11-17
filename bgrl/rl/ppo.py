@@ -614,9 +614,14 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                 return now
             return t0
         zero = torch.zeros((), device=self.dev)
+        tok = None
+        if getattr(cfg, "bucket_tokens", False) and hasattr(self.model, "token_counts"):
+            tok = self.model.token_counts(b["c"])
         for _ in range(cfg.epochs):
             for s in range(0, n, cfg.minibatch):
                 mb = idx[s:s + cfg.minibatch]
+                if tok is not None:                        # 词数相近的排在一起（梯度不变，打包更省）
+                    mb = mb[np.argsort(tok[mb], kind="stable")]
                 self.opt.zero_grad(set_to_none=True)
                 acc: dict[str, torch.Tensor] = {}          # 名字 → 这个小批里各份 micro 的和（张量）
                 cnt: dict[str, int] = defaultdict(int)     # 名字 → 加了几份（求平均用）

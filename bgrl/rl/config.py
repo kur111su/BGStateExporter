@@ -54,6 +54,9 @@ class Config:
     epochs: int = 1
     # 更新分段计时（t_data / t_fwd / t_bwd / t_bc / t_opt，秒/轮）：分段点要等显卡算完，会慢一点，只在测速时开
     profile_update: bool = False
+    # 更新时每个小批里按“有内容的词数”排序再切成 micro：同一份里的行词数相近，打包截到的词少（Transformer 的计算和词数成正比，
+    # 注意力和词数平方成正比）。梯度是各份加起来，和原来完全一样，只是算得快
+    bucket_tokens: bool = True
     anchor_coef: float = 0.1
     anchor_iters: int = 100
     # 对手库 / 检查点
