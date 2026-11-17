@@ -64,6 +64,8 @@ class TeacherMixin:
         if want is not None:
             ok = ta >= 0
             ta[ok & (want[np.clip(ta, 0, None)] <= 0)] = -1
+        if "no_teacher" in b:                            # 种族课程局（tribe_teacher_off）：整局都不教
+            ta[np.asarray(b["no_teacher"], dtype=bool)] = -1
         need = str(getattr(cfg, "teacher_need_tribes", "") or "").strip()
         if need:                                         # 老师只在开了它会的种族的局面上教
             from .tribes import lobby_has_any, parse_types

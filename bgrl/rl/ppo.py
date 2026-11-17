@@ -146,10 +146,18 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             self.tribes = TribeLobbies(cfg.tribe_frac, pool, cfg.tribe_force, cfg.rules(), seed=cfg.seed)
             print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
                   + (f"；老师只在开了 {cfg.teacher_need_tribes} 之一的局面上教" if cfg.teacher_need_tribes else ""), flush=True)
+        self.tribe_focus: set[str] = set()
+        self.tribe_no_teacher: set[tuple[int, int]] = set()   # 种族课程局 (槽位, 第几局)：老师不教（tribe_teacher_off）
+        if self.tribes is not None and cfg.tribe_comps:
+            from .tribes import parse_comps
+            self.tribe_focus = set(parse_comps(cfg.tribe_comps))
+            print(f"种族课程只练：{'、'.join(sorted(self.tribe_focus))}" + ("；这些局老师不教" if cfg.tribe_teacher_off else ""),
+                  flush=True)
         self.tribe_start = None
         if self.tribes is not None and cfg.tribe_start_p > 0:
             from .tribes import TribeStarter
-            self.tribe_start = TribeStarter(cfg.tribe_start_p, cfg.tribe_start_turn, cfg.tribe_start_cards, seed=cfg.seed)
+            self.tribe_start = TribeStarter(cfg.tribe_start_p, cfg.tribe_start_turn, cfg.tribe_start_cards, seed=cfg.seed,
+                                            focus=self.tribe_focus or None)
             print(f"起步牌：{cfg.tribe_start_p:.0%} 的种族课程局在第 {cfg.tribe_start_turn} 回合往手里放 {cfg.tribe_start_cards} 张"
                   f"新种族阵容的核心卡（{len(self.tribe_start.comps)} 套可选）", flush=True)
         self.tribe_new_start: list[bool] = []          # 给过起步牌的种族课程局：成了新种族阵容
@@ -357,7 +365,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                 pl_t = int(info["placement"][i])
                                 cn = self._comp_name(fcomp) if fcomp is not None else ""
                                 ct = self._comp_tribes().get(cn, frozenset())
-                                new = bool(ct) and not (ct & self._strong_tribes())
+                                new = (cn in self.tribe_focus) if self.tribe_focus else (bool(ct) and not (ct & self._strong_tribes()))
                                 self.tribe_places.append(pl_t)
                                 self.tribe_new_comp.append(new)
                                 st = self.tribe_start.finish(int(i)) if self.tribe_start is not None else None
@@ -440,7 +448,9 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     if sd is None:                         # 成型阵容课程（换整个场面）
                         continue
                     try:
-                        if sd.seed(env, self.obs[name]["features"], skip=skip):
+                        focus = ({g: self.tribe_focus for g in self.tribes.active}
+                                 if self.tribe_focus and self.tribes is not None else None)
+                        if sd.seed(env, self.obs[name]["features"], skip=skip, focus=focus):
                             self.obs[name] = env.observe()
                             for g in sd.seeded_slots:
                                 self.rollout.cut(off + g)        # GAE 在换场面处切断（见 Rollout.cut）
@@ -472,6 +482,8 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                     swapped = True         # 种族课程：换成指定种族的一局（episode 编号不变）
                                     if self.tribe_start is not None:
                                         self.tribe_start.begin(int(g), self.tribes.active.get(int(g), ()))
+                                    if cfg.tribe_teacher_off:
+                                        self.tribe_no_teacher.add((off + int(g), int(self.rollout.ep[off + int(g)])))
                                     if cfg.tribe_full and full is not None:
                                         full.add(int(g))   # 对手全强度（和考试一样）
                             self.episode[name][g] = env.episode_index(int(g))
@@ -491,6 +503,10 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                 _, _, v = self.learner(obs["features"][live], obs["cards"][live], m)
                 last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
+        if batch is not None and self.tribe_no_teacher:    # 打完、已经交给这一轮训练的局下一轮用不到了
+            batch["no_teacher"] = np.isin(batch["slot"] * 1_000_000 + batch["ep"],
+                                          np.fromiter((sl * 1_000_000 + e for sl, e in self.tribe_no_teacher), dtype=np.int64))
+            self.tribe_no_teacher = {(sl, e) for sl, e in self.tribe_no_teacher if e >= int(self.rollout.ep[sl])}
         return batch, n_dec, time.time() - t0, t_env, t_net
 
     def _make_booster(self, frac: float, seed: int):

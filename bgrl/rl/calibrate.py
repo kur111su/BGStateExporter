@@ -378,7 +378,7 @@ class CompSeeder:
             cur = self.plan[g] = (episode, t)
         return cur[1]
 
-    def seed(self, env, features: np.ndarray, episodes=None, skip=None) -> bool:
+    def seed(self, env, features: np.ndarray, episodes=None, skip=None, focus=None) -> bool:
         """env：controlled=(0,) 的 BatchEnv（槽位 i = 对局 i，学习者是 0 号座位）。返回有没有改（改了要重新 observe）。
         skip：这些对局不换（送牌局，见 CardGifts）。"""
         from tg.obs import lobby
@@ -398,6 +398,8 @@ class CompSeeder:
             lob = lobby(features[g])
             ok = [x for x in self.pool.get(t, []) if all(r & lob for r in x[2])
                   and any(self._reachable(c, lob) for c in x[1])]
+            if focus and g in focus:                         # 种族课程局：只换这几套的场面
+                ok = [x for x in ok if any(c["name"] in focus[g] for c in x[1])]
             self.plan[g] = (self.plan[g][0], -2)                  # 这局不再试（-2 = 试过没换成，-1 = 换了）
             if not ok:
                 self.n_missing += 1

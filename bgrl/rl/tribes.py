@@ -81,6 +81,17 @@ class TribeLobbies:
         return out
 
 
+def parse_comps(spec: str) -> list[str]:
+    """“圣盾流龙族,喝茶流” → 名字列表；不认识的名字报错。"""
+    from .comp import load_target_comps
+    names = [x.strip() for x in str(spec or "").split(",") if x.strip()]
+    known = {c["name"] for c in load_target_comps()}
+    bad = [x for x in names if x not in known]
+    if bad:
+        raise ValueError(f"不认识的阵容 {bad}，可选 {sorted(known)}")
+    return names
+
+
 def new_comps(comps: list[dict]) -> list[dict]:
     """老师不会的种族的 S / A 阵容：核心卡有种族、而且一个都不是野猪人 / 恶魔 / 元素。"""
     return [c for c in comps if c["tier"] in "SA" and c.get("tribes") and not (set(c["tribes"]) & set(STRONG))]
@@ -96,10 +107,10 @@ class TribeStarter:
     亡灵、去买去留。起步牌让它从“手里已经有两张”开始往下做；等没给牌的课程局也开始成型（tribe_newcomp_free 往上走），
     再把 turn 往前、cards 往少调（反向课程）。"""
 
-    def __init__(self, p: float = 0.5, turn: int = 4, cards: int = 2, seed: int = 0):
+    def __init__(self, p: float = 0.5, turn: int = 4, cards: int = 2, seed: int = 0, focus: list[str] | None = None):
         from .calibrate import CompGifts
         self.cg = CompGifts(frac=0.0, seed=seed)          # 借它的卡牌表、next_card、_owned
-        self.comps = new_comps(self.cg.comps)
+        self.comps = [c for c in self.cg.comps if c["name"] in focus] if focus else new_comps(self.cg.comps)
         self.p, self.turn, self.cards = float(p), int(turn), int(cards)
         self.rng = np.random.default_rng(seed + 6151)
         self.plan: dict[int, dict] = {}               # 局 → {"forced", "done", "comp"}
@@ -139,7 +150,7 @@ class TribeStarter:
                 continue
             cur["done"] = True
             lob = lobby(features[g])
-            ok = [c for c in self.comps if reachable(c, lob) and set(c["tribes"]) & cur["forced"]]
+            ok = [c for c in self.comps if reachable(c, lob) and (not c.get("tribes") or set(c["tribes"]) & cur["forced"])]
             if not ok:
                 self.n_none += 1
                 continue

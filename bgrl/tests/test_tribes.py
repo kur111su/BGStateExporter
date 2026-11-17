@@ -95,6 +95,15 @@ def starter_checks():
     assert gave, "第 4 回合没给起步牌"
     assert st.finish(0) and st.finish(0) is None
     assert not TribeStarter(0.0).begin(0, {"BEAST"})
+    from rl.tribes import parse_comps
+    foc = parse_comps("圣盾流龙族, 喝茶流")
+    st2 = TribeStarter(1.0, focus=foc)
+    assert sorted(c["name"] for c in st2.comps) == sorted(foc)
+    try:
+        parse_comps("不存在的阵容")
+        raise AssertionError("不认识的阵容没报错")
+    except ValueError:
+        pass
     print("starter ok", json.dumps(sorted(hand))[:120])
 
 

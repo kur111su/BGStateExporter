@@ -283,6 +283,11 @@ class Config:
     tribe_start_p: float = 0.0
     tribe_start_turn: int = 4
     tribe_start_cards: int = 2
+    # 只练这几套（阵容名字，逗号分隔；rl/target_comps.json 里的 name）：起步牌只给这几套、种族课程局里成型阵容课程只换这几套的场面、
+    # “成新阵容”只算这几套。中立阵容（喝茶流）不要求用到强制的种族。空 = 老师不会的种族的全部 S / A
+    tribe_comps: str = ""
+    # 种族课程局里老师不教（按局算：这些局的所有局面；teacher_need_tribes 是按酒馆种族算）
+    tribe_teacher_off: bool = False
     # 老师只在本局开了这几个种族之一的局面上教（老师只会野猪人 / 恶魔 / 元素，别的局里它会把模型往回拉）。空 = 都教
     teacher_need_tribes: str = ""
     # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
