@@ -6,7 +6,7 @@
   1. 用 runs/v3/latest.pt 和机器人打一会儿，攒一批真实局面（各个回合都有）。
   2. 每种设置跑若干次“前向 + 损失 + 反向”（和训练同样的输入格式、同样的混合精度），前几次预热不算：
        完整（现在训练用的）、不打包空词（pack 关）、不要体系 / 联动感知、不要 311 维卡牌属性、全精度（不用 bfloat16）、
-       只算前向，还有 micro 256 / 1024 两种批大小。
+       只算前向、不过 Transformer（只剩输入和输出头）、只算 Transformer（带 / 不带屏蔽），还有 micro 256 / 1024 两种批大小。
   3. 老师（data/external/model.pt，有的话）只算前向。
 结果按“每个样本几微秒”和“换算成一轮 3.4 万样本要几秒”打印，写进 reports/bench_model.json。
 只读模型，不改训练、不写 runs/。约 2–4 分钟。训练正在跑时别测（抢同一块显卡，数不准）。
@@ -83,6 +83,14 @@ def make_variant(model, name: str):
             return z, torch.zeros(B, ne, d, device=c.device)
         model.sense_input = zero_sense
         undo.append(lambda: delattr(model, "sense_input"))
+    elif name == "noenc":                               # 不过 Transformer：只剩输入（嵌入、感知、对手随从）和输出头
+        enc = model.enc
+
+        class Skip(torch.nn.Module):
+            def forward(self, x, src_key_padding_mask=None):
+                return x
+        model.enc = Skip()
+        undo.append(lambda: setattr(model, "enc", enc))
     elif name == "noattr":
         tab, w = model.card_attr, model.attr_proj
         model.set_card_attr(None, k=0)
@@ -132,6 +140,45 @@ def time_steps(model, dev, data, micro: int, amp: bool, backward: bool, reps: in
     times.sort()
     med = times[len(times) // 2]
     return {"ms_per_micro": round(med * 1000, 1), "us_per_sample": round(med / micro * 1e6, 1)}
+
+
+def time_encoder(model, dev, data, micro: int, amp: bool, masked: bool, reps: int, warm: int) -> tuple[dict, int]:
+    """只算 Transformer 那几层（前向 + 反向）：输入是这批真实局面打包以后的词（同样的词数、同样的屏蔽）；
+    masked=False：同样的词数但不屏蔽（看屏蔽本身贵不贵）。"""
+    import torch
+
+    from rl.model import soft_log
+    f, c, m, _ = data
+    sync = torch.mps.synchronize if dev.type == "mps" else torch.cuda.synchronize if dev.type == "cuda" else (lambda: None)
+    model.train(True)
+    times, tms = [], []
+    for r in range(warm + reps):
+        s = (r * micro) % max(1, len(f) - micro)
+        j = slice(s, s + micro)
+        with torch.no_grad():
+            ft = soft_log(torch.as_tensor(f[j]).to(dev).float())
+            x, present = model._tokens(ft, torch.as_tensor(c[j], dtype=torch.long).to(dev))
+            order = torch.argsort((~present).to(torch.int32), dim=1, stable=True)
+            tm = int(present.sum(1).max())
+            tm = min(x.shape[1], -(-tm // 8) * 8)
+            idx = order[:, :tm]
+            xp = torch.gather(x, 1, idx.unsqueeze(-1).expand(-1, -1, x.shape[-1])).detach()
+            pp = torch.gather(present, 1, idx)
+        xp.requires_grad_(True)
+        tms.append(tm)
+        sync()
+        t0 = time.perf_counter()
+        model.zero_grad(set_to_none=True)
+        with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=amp):
+            h = model.enc(xp, src_key_padding_mask=~pp if masked else None)
+        h.float().pow(2).mean().backward()
+        sync()
+        if r >= warm:
+            times.append(time.perf_counter() - t0)
+    times.sort()
+    med = times[len(times) // 2]
+    tms.sort()
+    return {"ms_per_micro": round(med * 1000, 1), "us_per_sample": round(med / micro * 1e6, 1)}, tms[len(tms) // 2]
 
 
 def time_teacher(teacher, dev, data, micro: int, amp: bool, reps: int, warm: int) -> dict:
@@ -203,6 +250,7 @@ def main(argv=None) -> int:
         ("不要体系 / 联动感知", "nosense", micro, amp, True),
         ("不要 311 维卡牌属性", "noattr", micro, amp, True),
         ("全精度（不用 bfloat16）", "full", micro, False, True),
+        ("不过 Transformer（只剩输入和输出头）", "noenc", micro, amp, True),
         (f"micro {micro // 2}", "full", micro // 2, amp, True),
         (f"micro {micro * 2}", "full", micro * 2, amp, True),
     ]
@@ -229,6 +277,21 @@ def main(argv=None) -> int:
             base = r["us_per_sample"]
         r["vs_full"] = round(r["us_per_sample"] / base, 2)
         print(f"{label:<22} {r['ms_per_micro']:>8} {r['us_per_sample']:>9} {per_iter:>8.1f} {r['vs_full']:>6}×", flush=True)
+    for masked in (True, False):                       # 只算 Transformer 那几层
+        label = "只算 Transformer" + ("（带屏蔽）" if masked else "（不屏蔽）")
+        try:
+            r, tm = time_encoder(model, dev, data, micro, amp, masked, a.reps, a.warm)
+            r["tokens"] = tm
+            r["sec_per_iter"] = round(r["us_per_sample"] * a.per_iter / 1e6, 1)
+            r["vs_full"] = round(r["us_per_sample"] / base, 2) if base else None
+            res[label] = r
+            print(f"{label:<22} {r['ms_per_micro']:>8} {r['us_per_sample']:>9} {r['sec_per_iter']:>8.1f} {r['vs_full']:>6}×"
+                  f"（每行 {tm} 个词）", flush=True)
+        except Exception as ex:                          # noqa: BLE001
+            print(f"{label:<22} 失败：{type(ex).__name__}: {str(ex)[:160]}", flush=True)
+        finally:
+            if dev.type == "mps":
+                torch.mps.empty_cache()
     tp = ROOT / a.teacher
     if not a.smoke and tp.exists():
         try:
