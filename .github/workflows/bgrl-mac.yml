@@ -28,6 +28,8 @@ jobs:
           done
           echo "no macOS wheel in $tag"; exit 1
       - name: setup.sh (venv, TavernGym, PyTorch, tests, tiny training run)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash bgrl/setup.sh quick || { cat bgrl/reports/setup.txt | tail -80; exit 1; }
       - name: Device info + device benchmark (2 iterations per combination)
         working-directory: bgrl

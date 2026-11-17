@@ -51,7 +51,13 @@ esac
 STAMP=wheels/.installed
 if ! $VPY -c "import taverngym" >/dev/null 2>&1 || [ "$(cat "${STAMP}" 2>/dev/null)" != "${TAG}" ]; then
   say "下载 TavernGym ${TAG} ……"
-  WHL=$(curl -fsSL "https://api.github.com/repos/kur111su/BGStateExporter/releases/tags/${TAG}" |
+  API="https://api.github.com/repos/kur111su/BGStateExporter/releases/tags/${TAG}"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then                # CI：不带令牌的 API 有次数限制（403）
+    REL=$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" "${API}")
+  else
+    REL=$(curl -fsSL "${API}")
+  fi
+  WHL=$(printf '%s' "${REL}" |
         $VPY -c "import json,re,sys; a=[x['name'] for x in json.load(sys.stdin)['assets'] if x['name'].endswith('.whl') and re.search(r'${PAT}', x['name'])]; print(a[0] if a else '')")
   [ -n "${WHL}" ] || fail "${TAG} 里没有这台电脑能用的安装包（${PAT}）——要等 GitHub 上的 TavernGym 工作流编译好"
   curl -fsSL -o "wheels/${WHL}" "https://github.com/kur111su/BGStateExporter/releases/download/${TAG}/${WHL}" || fail "下载 ${WHL}"
