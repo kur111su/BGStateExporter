@@ -236,8 +236,15 @@ class GuardMixin:
         self.snap_cache.clear()
         self.active_snaps = []
         self.good = None
-        self.teacher_t0 = None                         # 老师的作用从退回的那一轮重新慢慢加
-        self.repay_t0 = None
+        # 老师强度、局末扣回势能（shape_repay）的爬坡：退回的模型本来就是在全强度下练出来的，接着用全强度。
+        # 以前这里清零、从 0 重新爬 300 轮：第 30060 轮退回以后审计看到局末扣回只有 3–31%，每局约 1.0 的
+        # 目标阵容 / 引擎联动 / 阵容强度势能白给（名次奖励每局平均才 0.24），老师也只剩一部分——每次退回都有 300 轮在练另一个目标。
+        # 退回快照时轮数会往回退，t0 要跟着挪到“已经爬满”，不然 iter < t0 会一直是 0。
+        cfg = self.cfg
+        if self.teacher_t0 is not None:
+            self.teacher_t0 = int(self.iter) - int(getattr(cfg, "teacher_ramp", 0) or 0)
+        if getattr(self, "repay_t0", None) is not None:
+            self.repay_t0 = int(self.iter) - int(getattr(cfg, "shape_repay_ramp", 1) or 1)
         self.guard_st = self._guard_restart(self.guard_st, ck)
         self._guard_apply()
         self._start_warmup()
