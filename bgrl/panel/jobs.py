@@ -80,16 +80,17 @@ SPECS: dict[str, dict] = {
                      build=lambda p: [_bg("goldflow", "--games", p["games"], *_ckpt(p))]),
     "tavernbench": dict(title="TavernBench 评测", group="test", params={},
                         desc="论文的 368 题评测集。只用 CPU，训练时也能跑。", build=lambda p: [_bg("tavernbench")]),
-    "arena_check": dict(title="竞技场：打包并检查", group="arena", params={},
-                        desc="把 runs/v3/latest.pt 打包成竞技场用的模型，核对契约和卡牌表（不排队、不计分）。",
-                        build=_arena("check")),
+    "arena_check": dict(title="竞技场：打包并检查", group="arena", params={"ckpt": ("choice", "best", ("best", "latest"))},
+                        desc="把 best.pt（考试守护挑出的最好一版，默认）或 latest.pt 打包成竞技场用的模型，核对契约和卡牌表（不排队、不计分）。",
+                        build=lambda p: [_bg("arena", "check", "--ckpt", "runs/v3/latest.pt" if p.get("ckpt") == "latest"
+                                             else "runs/v3/best.pt")]),
     "arena_practice": dict(title="竞技场：练习局", group="arena", params={}, desc="打一局练习（不计分）。", build=_arena("practice")),
     "arena_match": dict(title="竞技场：计分局（1 局）", group="arena", params={}, confirm="这一局计入竞技场排名。",
                         desc="打一局计分对局，打完就停。", build=_arena("match")),
     "arena_loop": dict(title="竞技场：连续计分局", group="arena", params={"update": ("bool", False)},
                        stop="file", stop_file=str(ARENA_STOP),
                        confirm="会一直打计分对局，直到你点停止或者连续失败 3 次；每一局都计入竞技场排名。",
-                       desc="一局接一局打计分对局。勾上“自动换新模型”：训练出的模型比打包的新 2 小时以上就重新打包。",
+                       desc="一局接一局打计分对局。勾上“自动换新模型”：best.pt 换了更好的一版（考试守护写的）就重新打包。",
                        build=_arena("loop")),
 }
 

@@ -78,8 +78,16 @@ def ensure_venv() -> bool:
     return True
 
 
+def default_ckpt() -> Path:
+    """竞技场默认打包 best.pt（考试守护挑出来的最好一版）；还没有 best.pt 就用 latest.pt。"""
+    best = ROOT / "runs" / "v3" / "best.pt"
+    return best if best.exists() else ROOT / "runs" / "v3" / "latest.pt"
+
+
 def package(extra=()) -> bool:
     """打包 + 核对；不成就换回上一次打包的模型（竞技场对局接着用它）。"""
+    if "--ckpt" not in extra:
+        extra = [*extra, "--ckpt", str(default_ckpt())]
     shutil.rmtree(PREV, ignore_errors=True)
     if BUNDLE.exists():
         BUNDLE.rename(PREV)
@@ -162,8 +170,8 @@ def play(rated: bool) -> int:
 
 
 def _newer_model() -> bool:
-    a, b = ROOT / "runs" / "v3" / "latest.pt", BUNDLE / "model.pt"
-    return a.exists() and (not b.exists() or a.stat().st_mtime > b.stat().st_mtime + 7200)
+    a, b = default_ckpt(), BUNDLE / "model.pt"                 # best.pt 换了新的就重新打包
+    return a.exists() and (not b.exists() or a.stat().st_mtime > b.stat().st_mtime + 60)
 
 
 STOP = ARENA / "STOP"                    # 面板的“停止”：放这个文件，手上这一局打完就不打下一局了
@@ -182,7 +190,7 @@ def loop(update: bool, max_games: int = 0, wait: float = 60.0) -> int:
     STOP.unlink(missing_ok=True)                           # 上次留下的停止请求不算
     while not max_games or n < max_games:
         if update and _newer_model():
-            print("训练出了更新的模型，重新打包 ……", flush=True)
+            print("best.pt 换了更好的一版，重新打包 ……", flush=True)
             package()
         n += 1
         print(f"\n===== 第 {n} 局计分对局（{time.strftime('%Y-%m-%d %H:%M:%S')}）=====", flush=True)
@@ -215,8 +223,8 @@ def view() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["check", "practice", "match", "loop", "view"])
-    ap.add_argument("--update", action="store_true", help="loop：训练出的模型比打包的新 2 小时以上就重新打包")
-    ap.add_argument("--ckpt", default="", help="check：打包这个检查点（默认 runs/v3/latest.pt）")
+    ap.add_argument("--update", action="store_true", help="loop：best.pt 比打包的新就重新打包")
+    ap.add_argument("--ckpt", default="", help="check：打包这个检查点（默认 runs/v3/best.pt，没有就用 latest.pt）")
     a = ap.parse_args()
     if a.mode != "view" and not (ARENA / "arena_client.py").exists():
         print("缺少官方连接器 arena/arena_client.py（它不在 Git 里，是从竞技场网站下载、保存在本机的）。\n"
