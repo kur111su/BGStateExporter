@@ -52,6 +52,7 @@ from .rollout import (  # noqa: F401
     place_score_equiv,
     seed_row,
 )
+from .audit import ShapeAudit
 from .shaping import ShapingMixin
 from .teacher import TEACHER_FAMILIES, TeacherMixin, teacher_action_mask  # noqa: F401
 
@@ -192,6 +193,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
         self.guard_base = {k: float(getattr(cfg, k)) for k in self._guard_keys()}
         self.guard_st = self._guard_new()
         self.mix = defaultdict(int)
+        self.audit = ShapeAudit()                      # 塑形审计（C3）：每项塑形给了多少分
         self.anchor_until = 0
         self.stats = deque(maxlen=2000)               # 学习者 0 号座位的名次（对机器人 / 对手库）
         self.log_f = open(self.run / "log.jsonl", "a", encoding="utf-8")
@@ -324,9 +326,17 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                     if rid == 0:
                         ak = a[o:o + k]
                         noop = is_noop(ak) | (ak == 7)                # 冻结、调站位、取消（打出 → 取消可以无限循环）
-                        r0 = self._shape(off + idx, f[o:o + k], ak, -cfg.noop_penalty * noop.astype(np.float64), c[o:o + k])
+                        tk = np.rint(f[o:o + k, 0] * 20).astype(int)
+                        r0 = -cfg.noop_penalty * noop.astype(np.float64)
+                        self.audit.count(ak, tk)
+                        self.audit.add("noop", r0, ak, tk)
+                        r0 = self._shape(off + idx, f[o:o + k], ak, r0, c[o:o + k])
+                        b = r0.copy()
                         r0 = self._combat_shape(env, off, idx, f[o:o + k], ak, r0)
+                        self.audit.add("combat", r0 - b, ak, tk)
+                        b = r0.copy()
                         r0 = self._grow_shape(env, off, idx, f[o:o + k], ak, r0)
+                        self.audit.add("grow", r0 - b, ak, tk)
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
@@ -351,7 +361,16 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                         if dones[i] and self.place_tab is not None and 1 <= int(info["placement"][i]) <= 8:
                             pl = int(info["placement"][i])         # 局末名次奖励换成表里的值（违规扣分留着）
                             r_env += float(self.place_tab[pl]) - linear_place_reward(pl)
-                        r_end = r_env + ((self._econ_close(off + int(i)) + self._shape_close(off + int(i))) if dones[i] else 0.0)
+                        if dones[i]:
+                            r_ec, r_rep = self._econ_close(off + int(i)), self._shape_close(off + int(i))
+                            self.audit.add_one("place", r_env)
+                            self.audit.add_one("econ_close", r_ec)
+                            self.audit.add_one("repay", r_rep)
+                            self.audit.episode()
+                            r_end = r_env + r_ec + r_rep
+                        else:
+                            self.audit.add_one("env", r_env)
+                            r_end = r_env
                         fcomp = self._final_comp(off + int(i)) if dones[i] else None
                         self.rollout.reward(off + int(i), r_end, bool(dones[i]), info["placement"][i], fcomp)
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
@@ -1109,6 +1128,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
             if mx.get("drift"):                        # 这一轮看起来在变乱（连续 drift_iters 轮就回退）
                 rec["drift"] = mx["drift"]
             self.mix = defaultdict(int)
+            rec.update(self.audit.take())              # sh_<项>：每局平均从这一项拿了多少分
             for name in ("bot", "league"):
                 ps = [p for e, p in self.stats if e == name and p > 0]
                 if ps:
@@ -1179,6 +1199,9 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
                                                round(float(np.mean([f for _, f in v])), 3)]
                                            for k, v in sorted(self.tribe_by.items())}
                         self.tribe_by = {}
+                    mid = self.audit.take_mid()            # 塑形审计：第 6–8 回合每种动作每做一次从各项拿多少分
+                    if mid:
+                        rec["shape_mid"] = mid
                     if self.tribe_comps:                   # 种族课程局最后成了哪套（局数，多的在前）
                         rec["tribe_comps"] = dict(sorted(self.tribe_comps.items(), key=lambda kv: -kv[1]))
                         self.tribe_comps = {}

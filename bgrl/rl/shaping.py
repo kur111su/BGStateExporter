@@ -187,6 +187,14 @@ class ShapingMixin:
         tb = self.tempo_now()
         turns = np.rint(f[:, 0] * 20).astype(int)
         dc = self.cfg.tempo_deficit
+        au = getattr(self, "audit", None)                  # 塑形审计（rl/audit.py）：每项给了多少分，按项记
+        b0 = r0.copy() if au is not None else None
+
+        def mark(term):
+            nonlocal b0
+            if au is not None:
+                au.add(term, r0 - b0, ak, turns)
+                b0 = r0.copy()
         for j in np.flatnonzero(ak == A_END):              # 结束回合：落后于目标曲线就扣分
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
@@ -196,6 +204,7 @@ class ShapingMixin:
             self.mix["gap_n"] += 1
             if dc > 0 and gap > 0:
                 r0[j] -= dc * gap
+        mark("tempo_gap")
         for j in np.flatnonzero(ak == A_UPGRADE):
             s = int(slots[j])
             ep = int(self.rollout.ep[s])
@@ -205,18 +214,25 @@ class ShapingMixin:
                 r0[j] += tb
                 self.mix["tempo_paid"] += 1
             self.upg_n[s] += 1
+        mark("tempo_up")
         if f.shape[1] > F_UPCOST:
             self._gold_shape(slots, f, ak, r0)
+            mark("gold")
         if c is not None and self.cfg.comp_bonus > 0:
             self._comp_shape(f, c, ak, r0)
+            mark("comp")
         if getattr(self.cfg, "target_bonus", 0) > 0 and c is not None:
             ShapingMixin._target_shape(self, slots, f, c, ak, r0)
+            mark("target")
         if getattr(self.cfg, "econ_bonus", 0) > 0 and f.shape[1] > 9:
             self._econ_shape(slots, f, ak, r0, c)
+            mark("econ")
         if getattr(self.cfg, "keep_penalty", 0) > 0 and c is not None:
             ShapingMixin._keep_shape(self, f, c, ak, r0)
+            mark("keep")
         if getattr(self.cfg, "engine_bonus", 0) > 0 and c is not None:
             ShapingMixin._engine_shape(self, slots, f, c, ak, r0)
+            mark("engine")
         return r0
 
     def _engine_shape(self, slots, f, c, ak, r0):
@@ -504,6 +520,8 @@ class ShapingMixin:
                     buy = A_BUY <= g["act"][s] < A_SELL and t >= self.cfg.starve_buy_from_turn
                     w = self.cfg.starve_buy_weight if buy else self.cfg.starve_gift_weight if g["act"][s] == A_DARK_GIFT else 1.0
                     self.rollout.r[prev] -= pen * w
+                    if getattr(self, "audit", None) is not None:    # 扣在上一步（花钱那一步）上
+                        self.audit.add_one("gold", -pen * w, g["act"][s], t)
             if not (g["ts_turn"][s] == t and g["ep"][s] == ep):         # 新回合的第一步
                 g["ts_turn"][s], g["ts_tier"][s], g["ts_aff"][s] = t, tier, int(up > 0 and gold >= up)
             behind = tier < self._tier_target(t) - 0.5
@@ -541,6 +559,8 @@ class ShapingMixin:
                     self.mix["refresh_waste"] += 1
                     if pen > 0 and (turns is None or int(turns[j]) <= until):
                         self.rollout.r[prev] -= pen
+                        if getattr(self, "audit", None) is not None:
+                            self.audit.add_one("refresh_waste", -pen, A_REFRESH, None if turns is None else int(turns[j]))
                 self.ref_idx[s] = self.rollout.last[s] if a == A_REFRESH else -1
             elif A_BUY <= a < A_SELL:
                 self.ref_idx[s] = -1

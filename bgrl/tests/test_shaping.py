@@ -59,6 +59,28 @@ def main() -> int:
     t4.upg_n[0] = 5                                         # 6 本：不落后，不扣
     assert Trainer._shape(t4, np.array([0]), f9, np.array([A_END]), np.zeros(1))[0] == 0.0
 
+    # 塑形审计（rl/audit.py）：按项记每局合计；第 6–8 回合按动作记每做一次平均拿多少
+    from rl.audit import ShapeAudit
+    au = ShapeAudit()
+    t4.audit, t4.upg_n[0] = au, 2
+    f7 = np.zeros((1, 4), dtype=np.float32)
+    f7[0, 0] = 7 / 20
+    t4.tier_curve[7] = 4.0                                  # 第 7 回合目标 4 本，现在 3 本 → 差 0.5 → 扣 0.005
+    au.count(np.array([A_END]), np.array([7]))
+    r = Trainer._shape(t4, np.array([0]), f7, np.array([A_END]), np.zeros(1))
+    assert abs(r[0] + 0.005) < 1e-9, r
+    au.count(np.array([A_BUY, A_BUY]), np.array([7, 7]))
+    au.add("noop", np.array([0.0, -0.02]), np.array([A_BUY, A_BUY]), np.array([7, 7]))
+    au.add_one("place", 1.5)
+    au.add_one("refresh_waste", -0.01, A_REFRESH, 3)        # 第 3 回合：只算进每局合计
+    au.episode()
+    au.episode()
+    out = au.take()
+    assert out == {"sh_noop": -0.01, "sh_place": 0.75, "sh_refresh_waste": -0.005, "sh_tempo_gap": -0.0025, "sh_eps": 2}, out
+    assert au.take() == {}
+    mid = au.take_mid()
+    assert mid == {"noop": {"buy": -0.01}, "tempo_gap": {"end": -0.005}, "_n": {"buy": 2, "end": 1}}, mid
+
     # 花掉升本的钱：第 2 回合 4 块、升本 4 块、1 本（目标 1.86 - 0.5 > 1 → 落后）
     #   发动 → 选（这一步花了 1 块：4 → 3，扣在“选”上）→ 买（3 → 0，之前就不够升本，不扣）→ 结束
     roll5 = SimpleNamespace(r=[], last=np.full(1, -1, dtype=np.int64), ep=np.zeros(1, dtype=np.int64))
