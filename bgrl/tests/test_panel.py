@@ -279,10 +279,13 @@ def check_data(tmp: Path):
     assert [c[0] for c in st["cats"]][0] == "all" and sum(c[2] for c in st["cats"][1:]) == 176
     one = D.arena_stats(s["matches"], "standard")
     assert one["n"] == one["elo_n"] > 0 and one["elo"] is not None and D.arena_stats(s["matches"], "practice")["elo"] is None
-    assert D.match_line(s["matches"][0])[0] == "●" and "预计" in D.match_line(s["matches"][0])[1]
+    assert D.current_match(s["matches"]) == "live001" and D.current_match([]) is None
+    assert D.current_match([m for m in s["matches"] if not m.get("live")]) == s["matches"][1]["id"]
     live = D.match_view(V.match("live001"), follow=True)
     assert live["live"] and live["turn"] == 6 and live["n"] == live["steps"][-1][0] and live["cands"][0] == ("升本", 0.62, True)
     assert dict(live["zones"])["手牌"] == ["★希望信使 2/3"] and ("gold", 6) in live["scalars"] and not live["final"]
+    assert [(t["slot"], t["name"], t["cost"]) for t in live["trinkets"]] == [("小饰品", "不祥之石", 3), ("大饰品", "", None)]
+    assert live["trinkets"][1]["turn"] == 9 and D.trinkets({})[0]["turn"] == 6
     done = D.match_view(V.match("m0175"), turn=2)
     assert not done["live"] and done["title"].startswith("第 ") and done["turn"] == 2 and done["n"] == done["steps"][0][0]
     assert len(done["final"]) == 2 and done["final"][0][5] != done["final"][1][5]

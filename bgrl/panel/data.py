@@ -153,38 +153,26 @@ def arena_stats(matches: list[dict], cat: str = "all") -> dict:
             "recent": [m["placement"] for m in g[-100:]], "avg20": avg(20), "avg50": avg(50), "avg100": avg(100)}
 
 
-def match_line(m: dict) -> tuple[str, str]:
-    """对局列表里的一行：(名次那一格, 说明)。"""
-    badge = str(m["placement"]) if m.get("placement") else ("●" if m.get("live") else "?")
-    top = CAT.get(m.get("category"), str(m.get("category") or ""))
-    if m.get("hero"):
-        top += f" · {m['hero']}" + (f" {m['tier']} 本" if m.get("tier") else "")
-    sub = f"{fmt_time(m.get('created'))} · {m.get('turns') if m.get('turns') is not None else '-'} 回合 · {m.get('model') or ''}"
-    if m.get("score_after") is not None and m.get("score_before") is not None:
-        sub += f" · Elo {m['score_after'] - m['score_before']:+.2f}"
-    if m.get("live") and m.get("place_est"):
-        sub += f" · 预计 {m['place_est']} 名"
-    if not m.get("records"):
-        sub += " · 无逐步记录"
-    return badge, f"{top}\n{sub}"
+TRINKET_SLOTS = (("小饰品", "trinket_lesser", "lesser_turn", 6), ("大饰品", "trinket_greater", "greater_turn", 9))
 
 
-def match_parts(m: dict) -> dict:
-    """对局列表一行：名次圆点；赛道 · 英雄 本数 / 时间 · 回合 / 模型 / Elo、预计名次、无逐步记录（各占一行）。"""
-    badge = str(m["placement"]) if m.get("placement") else ("●" if m.get("live") else "?")
-    top = "进行中" if m.get("live") else CAT.get(m.get("category"), str(m.get("category") or ""))
-    if m.get("hero"):
-        top += f" · {m['hero']}" + (f" {m['tier']} 本" if m.get("tier") else "")
-    mid = " · ".join(x for x in (fmt_time(m.get("created")), f"{m['turns']} 回合" if m.get("turns") is not None else "") if x)
-    low = []
-    if m.get("score_after") is not None and m.get("score_before") is not None:
-        low.append(f"Elo {m['score_before']:.2f} → {m['score_after']:.2f}（{m['score_after'] - m['score_before']:+.2f}）")
-    if m.get("live") and m.get("place_est"):
-        low.append(f"预计 {m['place_est']} 名")
-    if not m.get("records"):
-        low.append("无逐步记录")
-    return {"badge": badge, "place": m.get("placement"), "live": bool(m.get("live")), "top": top, "mid": mid,
-            "model": m.get("model") or "", "low": " · ".join(low)}
+def trinkets(me: dict) -> list[dict]:
+    """当前这一步手里的两个饰品（小 / 大）：{slot, name, text, cost, turn}；还没选的 name 为空、turn = 第几回合给。"""
+    have = [t for t in (me.get("trinkets") or []) if isinstance(t, dict)]
+    timing = me.get("trinket_timing") if isinstance(me.get("trinket_timing"), dict) else {}
+    out = []
+    for slot, kind, tkey, turn in TRINKET_SLOTS:
+        t = next((x for x in have if x.get("kind") == kind), None)
+        out.append({"slot": slot, "name": str(t.get("name_zh") or t.get("name") or t.get("id") or "?") if t else "",
+                    "text": str(t.get("text_zh") or t.get("text") or "").replace("\n", " ") if t else "",
+                    "cost": t.get("cost") if t else None, "turn": timing.get(tkey) if _num(timing.get(tkey)) else turn})
+    return out
+
+
+def current_match(matches: list[dict]) -> str | None:
+    """竞技场页只看当前这一局：正在打的；没有就最近打完的一局。"""
+    live = next((m for m in matches if m.get("live")), None)
+    return (live or (matches[0] if matches else {})).get("id")
 
 
 def card_info(c: dict) -> dict:
@@ -233,8 +221,8 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
     跟随正在打的对局时取最后一步，否则这一回合的第一步）。"""
     res, recs, me_name = d.get("result"), d.get("records") or [], d.get("me")
     out = {"live": res is None, "title": "进行中", "sub": "", "elo": "", "curve": [], "turns": [], "turn": None, "n": None,
-           "steps": [], "cands": [], "scalars": [], "zones": [], "cards": [], "stats": [], "final": [], "final_cards": [],
-           "note": ""}
+           "steps": [], "cands": [], "scalars": [], "zones": [], "cards": [], "stats": [], "trinkets": trinkets({}),
+           "final": [], "final_cards": [], "note": ""}
     if res:
         me = next((p for p in res.get("participants") or [] if p.get("username") == me_name), {})
         out["title"] = f"第 {me.get('placement', '?')} 名"
@@ -282,6 +270,7 @@ def match_view(d: dict, turn=None, n=None, follow: bool = False) -> dict:
         out["stats"].append(("血量", f"{int(me['health'])}" + (f" +{int(arm)}" if arm else "")))
     if _num(me.get("gold")):
         out["stats"].append(("金币", f"{int(me['gold'])}" + (f" / {int(me['max_gold'])}" if _num(me.get("max_gold")) else "")))
+    out["trinkets"] = trinkets(me)
     opp = (view or {}).get("opponents")
     if isinstance(opp, list) and opp and all(isinstance(o, dict) and "alive" in o for o in opp):
         out["stats"].append(("剩余人数", f"{1 + sum(bool(o['alive']) for o in opp)} 人"))

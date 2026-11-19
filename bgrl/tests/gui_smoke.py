@@ -83,6 +83,9 @@ def fake_arena(d: Path) -> None:
                             "place": round(rnd.uniform(2, 5), 1), "used": k, "action": 3, "model": "capri-it22170",
                             "top": [[3, .62, "升本"], [8, .2, "买 热气球测绘员"], [0, .1, "结束回合"]],
                             "view": {"me": {"gold": 6, "tier": 3, "health": 31,
+                                            "trinket_timing": {"lesser_turn": 6, "greater_turn": 9},
+                                            "trinkets": [{"kind": "trinket_lesser", "name_zh": "不祥之石", "cost": 3,
+                                                          "text_zh": "发现一张具有黑暗之赐的你多数随从的类型的等级4的随从牌。"}] if t >= 6 else [],
                                             "board": [{"name_zh": x, "attack": 5, "health": 6} for x in NAMES[:5]],
                                             "hand": [{"name_zh": NAMES[5], "attack": 2, "health": 3, "golden": True}],
                                             "shop": [{"name_zh": x, "attack": 3, "health": 3, "tier": 3, "cost": 3} for x in NAMES[2:6]]},
@@ -159,26 +162,21 @@ def main() -> int:
         win.nav.setCurrentRow(ia)
         win.tick()
         assert ar.follow and ar.sel == "live001" and ar.view["live"] and ar.view["turn"] == 6, (ar.sel, ar.view["turn"])
-        assert ar.list.count() == 177 and ar.tiles.count() == 6
+        assert ar.tiles.count() == 6 and not hasattr(ar, "list")          # 只看当前这一局，没有对局列表
         ar.btn["arena_match"].click()
         assert started[-1] == ("arena_match", {}), started
-        ar.list.setCurrentRow(1)                                             # 点一局打完的（有逐步记录）：停止跟随
-        assert not ar.follow and ar.sel == "m0175" and ar.view["final"] and ar.view["turns"], ar.sel
-        assert ar.final.count() == 2 and len(ar.view["final_cards"][0]) == 7
-        ar.turns.setCurrentIndex(2)
-        ar.steps.setCurrentRow(1)
-        assert ar.view["turn"] == 2 and ar.view["n"] == ar.view["steps"][1][0]
-        shot("4b_竞技场_看一局")
-        ar.detail_scroll.verticalScrollBar().setValue(ar.detail_scroll.verticalScrollBar().maximum())
-        shot("4d_竞技场_最终名次")
-        ar.list.setCurrentRow(5)                                             # 没有逐步记录的一局
-        assert ar.view["note"] and not ar.curve.isVisible()
-        ar.list.setCurrentRow(0)
         assert dict(ar.view["stats"]) == {"酒馆": "3 本", "血量": "31", "金币": "6", "剩余人数": "5 人"}, ar.view["stats"]
         assert "场面" in ar.zones.text() and "酒馆" in ar.zones.text() and ar.stat_box.count() == 4 and not ar.final_box.isVisibleTo(ar)
+        assert ar.trinket_box.count() == 2 and [t["name"] for t in ar.view["trinkets"]] == ["不祥之石", ""], ar.view["trinkets"]
+        assert not ar.follow_btn.isVisibleTo(ar)
         shot("4c_竞技场_进行中")
+        ar.turns.setCurrentIndex(2)                                          # 翻看前面的回合：停止跟随，出现“回到最新一步”
+        ar.steps.setCurrentRow(1)
+        assert not ar.follow and ar.view["turn"] == 2 and ar.view["n"] == ar.view["steps"][1][0]
+        assert [t["name"] for t in ar.view["trinkets"]] == ["", ""] and ar.follow_btn.isVisibleTo(ar)
+        shot("4b_竞技场_翻看")
         ar.follow_btn.click()
-        assert ar.follow and ar.sel == "live001"
+        assert ar.follow and ar.sel == "live001" and ar.view["turn"] == 6 and not ar.follow_btn.isVisibleTo(ar)
         out_view = win.pages[1].out                                           # 输出：只接新增的，选区和滚动位置不动
         log = J._path(next(j["id"] for j in J.jobs(d / "jobs") if j["key"] == "train"), "log", d / "jobs")
         win.nav.setCurrentRow(1)

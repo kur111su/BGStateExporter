@@ -593,36 +593,33 @@ class CardRow(QtWidgets.QWidget):
         lay.addStretch(1)
 
 
-class MatchRow(QtWidgets.QWidget):
-    """对局列表一行：左边名次圆点，右边三行字（赛道 · 英雄 / 时间 · 回合 · 模型 / Elo 或说明）。"""
+class TrinketCard(QtWidgets.QFrame):
+    """当前对局的一个饰品（小 / 大）：名字、价格、效果；还没选就写第几回合给。"""
 
-    def __init__(self, p: dict):
+    def __init__(self, t: dict):
         super().__init__()
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        lay = QtWidgets.QHBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(8)
-        col = "#1f8a4c" if p["live"] else PLACE_COLOR.get(p["place"], "#8a8a8a")
-        dot = QtWidgets.QLabel(p["badge"])
-        dot.setFixedSize(24, 24)
-        dot.setAlignment(Qt.AlignCenter)
-        dot.setStyleSheet(f"background:{col};color:#ffffff;border-radius:12px;font-weight:600;font-size:12px")
-        lay.addWidget(dot, 0, Qt.AlignTop)
-        txt = QtWidgets.QVBoxLayout()
-        txt.setSpacing(0)
-        a = QtWidgets.QLabel(p["top"])
-        a.setStyleSheet("font-weight:600;font-size:12px")
-        txt.addWidget(a)
-        for t in (p["mid"], p.get("model")):
-            if t:
-                b = QtWidgets.QLabel(t)
-                b.setStyleSheet("color:#6b6b70;font-size:11px")
-                txt.addWidget(b)
-        for part in (p["low"].split(" · ") if p["low"] else []):   # Elo、预计名次、无逐步记录：各占一行，窄列里不被截断
-            c = QtWidgets.QLabel(part)
-            c.setStyleSheet(f"color:{'#1f8a4c' if 'Elo' in part and '+' in part else '#c23b5b' if 'Elo' in part else '#6b6b70'};font-size:11px")
-            txt.addWidget(c)
-        lay.addLayout(txt, 1)
+        self.setObjectName("tile")
+        self.setMinimumWidth(190)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(1)
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(label(t["slot"], "mute"), 1)
+        if t.get("cost") is not None:
+            head.addWidget(label(f"{t['cost']} 金", "mute"))
+        lay.addLayout(head)
+        if t["name"]:
+            n = label(t["name"])
+            n.setStyleSheet("font-weight:600;font-size:14px;color:#7a5bd6")
+            lay.addWidget(n)
+            tx = label(t["text"], "mute", wrap=True)
+            tx.setToolTip(t["text"])
+            lay.addWidget(tx)
+        else:
+            lay.addWidget(label("还没选", "big"))
+            lay.addWidget(label(f"第 {t['turn']} 回合给" if t.get("turn") else "", "mute"))
+        lay.addStretch(1)
 
 
 class StandRow(QtWidgets.QFrame):
@@ -659,7 +656,8 @@ class StandRow(QtWidgets.QFrame):
         lay.addStretch(1)
 
 class ArenaPage(QtWidgets.QWidget):
-    """竞技场：上面一排操作和战绩，左边对局列表，右边单局（默认跟着正在打的那一局）。"""
+    """竞技场：上面一排操作和战绩；下面只看当前这一局（正在打的，没有就最近打完的）：左边预计名次和操作记录，
+    右边本数 / 血量 / 金币 / 人数、两个饰品、场面手牌酒馆、最终名次。默认跟着最新一步。"""
 
     def __init__(self, win):
         super().__init__()
@@ -682,7 +680,7 @@ class ArenaPage(QtWidgets.QWidget):
             self.btn[key] = b
             bar.addWidget(b)
         self.update_box = QtWidgets.QCheckBox("自动换新模型")
-        self.update_box.setToolTip("连续计分局：训练出的模型比打包的新 2 小时以上就重新打包")
+        self.update_box.setToolTip("连续计分局：best.pt 换了更好的一版就重新打包")
         bar.addWidget(self.update_box)
         self.stop_btn = QtWidgets.QPushButton("停止")
         self.stop_btn.setObjectName("danger")
@@ -710,35 +708,14 @@ class ArenaPage(QtWidgets.QWidget):
         stats.addWidget(rbox, 1)
         lay.addLayout(stats)
 
-        # 下半部分三列：对局列表 | 预计名次 + 操作记录 | 本数 / 血量 / 金币 / 人数、场面手牌酒馆、最终名次
+        # 下半部分两列：预计名次 + 操作记录 | 本数 / 血量 / 金币 / 人数、饰品、场面手牌酒馆、最终名次
         split = QtWidgets.QWidget()
         body = QtWidgets.QHBoxLayout(split)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(10)
 
-        left = QtWidgets.QWidget()
-        left.setFixedWidth(232)
-        ll = QtWidgets.QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        ll.setSpacing(4)
-        lh = QtWidgets.QHBoxLayout()
-        lh.addWidget(label("对局（新的在上）", "mute"), 1)
-        self.follow_btn = QtWidgets.QPushButton("跟随正在打的")
-        self.follow_btn.setCheckable(True)
-        self.follow_btn.setChecked(True)
-        self.follow_btn.clicked.connect(self.set_follow)
-        ll.addLayout(lh)
-        ll.addWidget(self.follow_btn)
-        self.list = QtWidgets.QListWidget()
-        self.list.setObjectName("matches")
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.list.setSpacing(0)
-        self.list.currentRowChanged.connect(self.pick)
-        ll.addWidget(self.list, 1)
-        body.addWidget(left)
-
         mid = QtWidgets.QWidget()
-        mid.setFixedWidth(280)
+        mid.setFixedWidth(320)
         ml = QtWidgets.QVBoxLayout(mid)
         ml.setContentsMargins(0, 0, 0, 0)
         ml.setSpacing(6)
@@ -785,16 +762,23 @@ class ArenaPage(QtWidgets.QWidget):
         dl.setContentsMargins(0, 0, 4, 0)
         dl.setSpacing(8)
         th = QtWidgets.QHBoxLayout()
-        self.d_title = label("选左边一局查看。", "big")
+        self.d_title = label("还没有对局。", "big")
         th.addWidget(self.d_title)
         self.d_sub = label("", "mute")
         th.addWidget(self.d_sub, 1)
         self.d_elo = label("")
         th.addWidget(self.d_elo)
+        self.follow_btn = QtWidgets.QPushButton("回到最新一步")   # 翻看了别的回合 / 步以后才出现
+        self.follow_btn.clicked.connect(self.set_follow)
+        self.follow_btn.setVisible(False)
+        th.addWidget(self.follow_btn)
         dl.addLayout(th)
         self.stat_box = QtWidgets.QHBoxLayout()               # 本数 / 血量 / 金币 / 人数
         self.stat_box.setSpacing(8)
         dl.addLayout(self.stat_box)
+        self.trinket_box = QtWidgets.QHBoxLayout()            # 小饰品、大饰品
+        self.trinket_box.setSpacing(8)
+        dl.addLayout(self.trinket_box)
         self.zone_box = QtWidgets.QFrame()                    # 场面 / 手牌 / 酒馆 / 待选：文字
         self.zone_box.setObjectName("panel")
         zl = QtWidgets.QVBoxLayout(self.zone_box)
@@ -874,15 +858,12 @@ class ArenaPage(QtWidgets.QWidget):
         self.sync_btn.setText("同步竞技场战绩")
         self.refresh(None)
 
-    def set_follow(self, on: bool) -> None:
-        self.follow = bool(on)
-        if self.follow:
-            self.sel = None
-        self.refresh(None)
+    def set_follow(self, *_a) -> None:
+        self.follow, self.turn, self.step = True, None, None
+        self.load_match(force=True)
 
     def _unfollow(self) -> None:
         self.follow = False
-        self.follow_btn.setChecked(False)
 
     # ---- 刷新
     def refresh(self, jobs) -> None:
@@ -908,14 +889,10 @@ class ArenaPage(QtWidgets.QWidget):
             self.d_note.setText(f"读对局记录出错：{ex}")
             return
         self.matches = self.sum["matches"]
-        live = next((m for m in self.matches if m.get("live")), None)
-        if self.follow:
-            want = live["id"] if live else (self.matches[0]["id"] if self.matches else None)
-            if want != self.sel:
-                self.sel, self.turn, self.step = want, None, None
-        self.follow_btn.setText("跟随中：正在打的对局" if self.follow and live else ("跟随中：最近一局" if self.follow else "跟随正在打的"))
+        want = D.current_match(self.matches)
+        if want != self.sel:                               # 换了一局（新开的 / 刚打完换到下一局）：跟着最新一步
+            self.sel, self.turn, self.step, self.follow = want, None, None, True
         self.draw_stats()
-        self.draw_list()
         self.load_match()
 
     def draw_stats(self) -> None:
@@ -962,38 +939,6 @@ class ArenaPage(QtWidgets.QWidget):
         self.recent_title.setText(f"近期表现：最近 {len(rc)} 局 · 均名 20 局 {f(st['avg20'])} / 50 局 {f(st['avg50'])} / 100 局 {f(st['avg100'])}"
                                   + (f" · 最近一局第 {rc[-1]} 名" if rc else ""))
 
-    def draw_list(self) -> None:
-        sig = [D.match_line(m) for m in self.matches]
-        if sig == self.sig_list:                           # 列表没变：只把选中的那一行对上（不动滚动位置）
-            row = next((i for i, m in enumerate(self.matches) if m["id"] == self.sel), -1)
-            if row != self.list.currentRow():
-                self.list.blockSignals(True)
-                self.list.setCurrentRow(row)
-                self.list.blockSignals(False)
-            return
-        self.sig_list = sig
-        self.list.blockSignals(True)
-        self.list.clear()
-        row = -1
-        for i, m in enumerate(self.matches):
-            it = QtWidgets.QListWidgetItem()
-            it.setData(Qt.UserRole, m["id"])
-            w = MatchRow(D.match_parts(m))
-            it.setSizeHint(QtCore.QSize(10, w.sizeHint().height() + 2))
-            self.list.addItem(it)
-            self.list.setItemWidget(it, w)
-            if m["id"] == self.sel:
-                row = i
-        if row >= 0:
-            self.list.setCurrentRow(row)
-        self.list.blockSignals(False)
-
-    def pick(self, row: int) -> None:
-        if 0 <= row < len(self.matches):
-            self._unfollow()
-            self.sel, self.turn, self.step = self.matches[row]["id"], None, None
-            self.load_match(force=True)
-
     def pick_turn(self, i: int) -> None:
         if self.data is not None and 0 <= i < len(self.view["turns"]):
             self._unfollow()
@@ -1028,6 +973,7 @@ class ArenaPage(QtWidgets.QWidget):
         self.d_sub.setText(v["sub"])
         self.d_elo.setText(v["elo"])
         self.d_elo.setVisible(bool(v["elo"]))
+        self.follow_btn.setVisible(not self.follow and bool(v["turns"]))
         has = bool(v["turns"])
         for w in (self.curve_lbl, self.curve, self.turns, self.steps, self.steps_lbl, self.zone_box):
             w.setVisible(has)
@@ -1054,6 +1000,10 @@ class ArenaPage(QtWidgets.QWidget):
         clear_layout(self.stat_box)
         for name, val in v["stats"]:
             self.stat_box.addWidget(Tile(name, val), 1)
+        clear_layout(self.trinket_box)
+        if has:
+            for t in v["trinkets"]:
+                self.trinket_box.addWidget(TrinketCard(t), 1)
         self.zones.setText("<br>".join(f"<b>{name}</b>　" + ("　·　".join(cards) if cards else "<span style='color:#8a8a8a'>（空）</span>")
                                        for name, cards in v["zones"]) or "<span style='color:#8a8a8a'>这一步没有记下场面</span>")
         clear_layout(self.final)
