@@ -65,7 +65,7 @@ class Config:
     snapshot_every: int = 50       # 每多少轮存一个快照进对手库
     profile_games: int = 16        # 测快照画像用多少局
     save_every: int = 10
-    # 训练看板（tools/board.py）：每这么多轮在后台重画 runs/<run>/dashboard.md + board/*.svg（0 = 不画）
+    # 训练看板（tools/board.py）：每这么多轮在后台重写 runs/<run>/dashboard.md（0 = 不写）
     board_every: int = 0
     eval_every: int = 50
     eval_games: int = 128          # 64 局时平均名次的误差约 ±0.3，128 局约 ±0.2

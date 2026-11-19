@@ -10,7 +10,7 @@
   cardvalue 高手怎么挑卡：每张卡的挑中倍率、关键卡、经济卡 → rl/card_value.json（tools/cardvalue.py）
   simcards  引擎实测的卡牌价值和配合：高分场面拿掉一 / 两张卡再打 → rl/sim_value.json（tools/simcards.py）
   playbook  目标阵容的配套卡：高手正在做某一套时比平时多买的卡 → rl/target_comps.json 的 support（tools/playbook.py）
-  board     训练看板：读 runs/v3/log.jsonl 画曲线 → runs/v3/dashboard.md + board/*.svg（训练时也会每 10 轮自动重画；tools/board.py）
+  board     训练看板：读 runs/v3/log.jsonl → runs/v3/dashboard.md（关键指标、表、事件；训练时每 10 轮自动重写；tools/board.py）
   goldflow  前几回合的金币流向：模型 vs 6500+ 高手（升本、买、刷新、发动、黑暗之赐各花多少；tools/goldflow.py）
   arena     竞技场：check / practice / match / loop / view（tools/arena_run.py）
   cleanup   清理旧的训练目录、旧快照、去掉的功能留下的文件（tools/cleanup.py；不加 --yes 只列出来）

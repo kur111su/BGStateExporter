@@ -885,7 +885,7 @@ class Trainer(ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
 
 
     def _redraw_board(self):
-        """后台线程重画训练看板；上一次还没画完就跳过。出错只打印一次，不影响训练。"""
+        """后台线程重写训练看板（dashboard.md）；上一次还没写完就跳过。出错只打印一次，不影响训练。"""
         import threading
         th = getattr(self, "_board_th", None)
         if th is not None and th.is_alive():

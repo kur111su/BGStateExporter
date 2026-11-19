@@ -144,8 +144,8 @@ def main() -> int:
             win.tick(sync=True)
             shot(f"{i}_{name}")
         dash = win.pages[0]
-        assert dash.rows and len(dash.plots) >= 8 and dash.kpi.count() >= 10, (len(dash.rows), len(dash.plots), dash.kpi.count())
-        dash.win_pick.setCurrentIndex(0)
+        assert dash.rows and dash.kpi.count() >= 10 and dash.tables.count() >= 2, (len(dash.rows), dash.kpi.count())
+        assert not hasattr(dash, "plots") and not hasattr(dash, "win_pick")       # 看板不画曲线
         tests = win.pages[2]
         assert set(tests.cards) == {"comptest", "comptest_seeded", "goldflow", "tavernbench"}
         tests.cards["comptest"].inputs["games"].setValue(128)

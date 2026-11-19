@@ -258,7 +258,7 @@ def check_arena_summary(tmp: Path):
 
 
 def check_data(tmp: Path):
-    """面板要显示的数据（panel/data.py）：看板的指标 / 曲线 / 表，竞技场的战绩、对局列表、单局每一步。"""
+    """面板要显示的数据（panel/data.py）：看板的指标 / 表，竞技场的战绩、对局列表、单局每一步。"""
     import gui_smoke as S
     from panel import data as D
     from rl import board as B
@@ -267,9 +267,6 @@ def check_data(tmp: Path):
     rows, _ev = B.load(tmp / "run")
     ks = D.kpis(rows)
     assert len(ks) >= 12 and ks[0][0] == "考试等效名次" and ks[0][3] is True and ks[0][2] is not None, ks[:2]
-    ch = D.charts(rows, 300)
-    assert len(ch) >= 9 and ch[0][2] and all(len(ln[1]) == len(ln[2]) == len(ln[3]) for c in ch for ln in c[3])
-    assert min(ch[2][3][0][1]) >= rows[-1]["iter"] - 300 and min(ch[0][3][0][1]) < rows[-1]["iter"] - 300      # 考试那张看全程
     tabs = D.md_tables(tmp / "run")
     cg = next(t for t in tabs if t["title"].startswith("送整套阵容"))
     assert cg["head"][0] == "阵容" and any(r[0] == "圣盾流龙族" for r in cg["rows"]) and "第 5–11 回合" in cg["text"], cg

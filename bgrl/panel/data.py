@@ -1,6 +1,6 @@
-"""面板要显示的数据（不依赖界面库，单元测试直接测）：看板的指标 / 曲线 / 表格，竞技场的战绩和单局每一步。
+"""面板要显示的数据（不依赖界面库，单元测试直接测）：看板的指标 / 表格，竞技场的战绩和单局每一步。
 
-看板读 runs/v3/log.jsonl（rl/board.py 的 load / KPIS / PANELS）和 runs/v3/dashboard.md 里现成的表；
+看板读 runs/v3/log.jsonl（rl/board.py 的 load / KPIS）和 runs/v3/dashboard.md 里现成的表；
 竞技场读 arena/viewer.py 的 summary() / match()（本机的对局结果和逐步记录），统计在这里算。
 """
 from __future__ import annotations
@@ -69,29 +69,6 @@ def kpi_groups(rows: list[dict]) -> list[tuple[str, list[tuple]]]:
     return out
 
 
-def charts(rows: list[dict], window: int) -> list[tuple]:
-    """[(标题, 说明, 是不是全程, [(图例, [轮], [原始值], [滑动平均])])]。稀疏的线（考试）原始值就是点。"""
-    from rl import board as B
-    if not rows:
-        return []
-    it1 = rows[-1]["iter"]
-    lo = max(rows[0]["iter"], it1 - window)
-    out = []
-    for _f, title, keys, note, _lower, full in B.PANELS:
-        x0 = rows[0]["iter"] if full else lo
-        lines = []
-        for k, name in keys:
-            raw = [p for p in B.series(rows, k) if p[0] >= x0]
-            if not raw:
-                continue
-            sparse = k.startswith("eval_") or k.startswith("guard")
-            sm = B.smooth(raw, 6 if sparse else 25)
-            lines.append((name, [p[0] for p in raw], [p[1] for p in raw], [p[1] for p in sm], sparse))
-        if lines:
-            out.append((title, note, full, lines))
-    return out
-
-
 def header(rows: list[dict]) -> str:
     if not rows:
         return "还没有训练日志"
@@ -105,7 +82,7 @@ def header(rows: list[dict]) -> str:
 
 
 def md_tables(run: Path) -> list[dict]:
-    """runs/v3/dashboard.md 里的表（训练时每 10 轮重画）：[{title, text（表前后的说明）, head, rows}]，不含关键指标 / 曲线 / 事件。"""
+    """runs/v3/dashboard.md 里的表（训练时每 10 轮重写）：[{title, text（表前后的说明）, head, rows}]，不含关键指标 / 事件。"""
     p = Path(run) / "dashboard.md"
     if not p.exists():
         return []
@@ -113,7 +90,7 @@ def md_tables(run: Path) -> list[dict]:
     for line in p.read_text(encoding="utf-8").splitlines():
         if line.startswith("## "):
             cur = {"title": line[3:].strip(), "text": [], "head": [], "rows": []}
-            if not cur["title"].startswith(("关键指标", "曲线", "事件")):
+            if not cur["title"].startswith(("关键指标", "事件")):
                 out.append(cur)
             continue
         if cur is None or not line.strip():

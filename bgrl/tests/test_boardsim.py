@@ -633,7 +633,7 @@ def check_place_reward():
 
 
 def check_board():
-    """训练看板（rl/board.py）：合成一段日志（含回退、守护换回、重启），画出 dashboard.md 和图。"""
+    """训练看板（rl/board.py）：合成一段日志（含回退、守护换回、重启），写出 dashboard.md（只有数字和表）。"""
     import json
     import tempfile
     from pathlib import Path
@@ -671,11 +671,8 @@ def check_board():
         assert "| 龙虾流野兽 | 10 | 2.50 | 30% | 2 | 3.00 | 0% |" in md, md
         assert "| 机械 APM | 5 | 3.20 | 20% | 0 | - | - |" in md, md
         assert "拿着成型阵容的阵容测试" in md and "3 局平均名次 2.67，吃鸡 33.3%，前四 67%" in md, md
-        svgs = sorted(x.name for x in (run / "board").glob("*.svg"))
-        assert "exam_120.svg" in svgs and "econ_120.svg" in svgs, svgs
-        render(run, 100)                                                       # 再画一次：旧图删掉，不越积越多
-        assert len(list((run / "board").glob("exam_*.svg"))) == 1
-    return len(svgs)
+        assert "## 曲线" not in md and not (run / "board").exists(), md       # 看板只有数字和表，不画图
+    return len(md)
 
 
 def check_seed_row_floor():

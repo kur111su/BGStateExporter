@@ -22,7 +22,6 @@ from PySide6.QtCore import Qt  # noqa: E402
 from panel import data as D  # noqa: E402
 from panel import jobs as J  # noqa: E402
 
-PALETTE = ["#2f6fdf", "#e0702a", "#2e9e5b", "#c23b5b", "#7a5bd6", "#8a8a8a"]
 ICON = {"queued": "🕒", "running": "▶", "done": "✔", "failed": "✘", "stopped": "■", "lost": "⚠"}
 PARAM_ZH = {"games": "局数", "ckpt": "模型", "threads": "线程数", "device": "设备", "update": "自动换新模型"}
 CKPT_ZH = {"latest": "最新（latest.pt）", "best": "考试最好的（best.pt）", "external": "外部模型（data/external/model.pt）",
@@ -440,8 +439,7 @@ class Tile(QtWidgets.QFrame):
 
 
 class DashboardPage(QtWidgets.QScrollArea):
-    """训练看板：关键指标、曲线、阵容表、事件。日志在后台线程里读，读完再画。"""
-    WINDOWS = [(500, "最近 500 轮"), (1000, "最近 1000 轮"), (3000, "最近 3000 轮"), (10000, "最近 10000 轮"), (10 ** 9, "全部")]
+    """训练看板：关键指标、阵容表、事件。日志在后台线程里读，读完再显示。"""
 
     def __init__(self, win):
         super().__init__()
@@ -456,24 +454,11 @@ class DashboardPage(QtWidgets.QScrollArea):
         top = QtWidgets.QHBoxLayout()
         self.head = label("读训练日志……", "h1")
         top.addWidget(self.head, 1)
-        self.win_pick = QtWidgets.QComboBox()
-        for v, name in self.WINDOWS:
-            self.win_pick.addItem(name, v)
-        self.win_pick.setCurrentIndex(2)
-        self.win_pick.currentIndexChanged.connect(self.draw)
-        top.addWidget(label("曲线范围", "mute"))
-        top.addWidget(self.win_pick)
         self.lay.addLayout(top)
         self.lay.addWidget(label("大数字是最近 50 轮的平均（考试指标是最近 3 次考试）；小字是和 500 轮前比，绿 = 变好，红 = 变差。", "mute"))
         self.kpi = QtWidgets.QGridLayout()
         self.kpi.setSpacing(8)
         self.lay.addLayout(self.kpi)
-        self.lay.addWidget(label("曲线", "h1"))
-        self.lay.addWidget(label("细线是每一轮的值，粗线是滑动平均。左键拖动平移，右键拖动缩放，左下角 A 复原。", "mute"))
-        self.grid = QtWidgets.QGridLayout()
-        self.grid.setSpacing(10)
-        self.lay.addLayout(self.grid)
-        self.plots: dict[str, tuple] = {}
         self.tables = QtWidgets.QVBoxLayout()
         self.lay.addLayout(self.tables)
         self.lay.addStretch(1)
@@ -531,39 +516,6 @@ class DashboardPage(QtWidgets.QScrollArea):
             row += (len(items) + 5) // 6
         for col in range(6):
             self.kpi.setColumnStretch(col, 1)
-        for i, (title, note, full, lines) in enumerate(D.charts(rows, int(self.win_pick.currentData()))):
-            if title not in self.plots:
-                box = QtWidgets.QFrame()
-                box.setObjectName("panel")
-                bl = QtWidgets.QVBoxLayout(box)
-                bl.setContentsMargins(10, 8, 10, 8)
-                bl.addWidget(label(title + ("（全程）" if full else ""), "h2"))
-                leg = label("", wrap=True)                 # 图例放在图上面（放在图里会挡住线）
-                leg.setTextFormat(Qt.RichText)
-                bl.addWidget(leg)
-                p = Plot()
-                bl.addWidget(p)
-                bl.addWidget(label(note, "mute", wrap=True))
-                self.grid.addWidget(box, len(self.plots) // 2, len(self.plots) % 2)
-                self.plots[title] = (p, leg)
-            p, leg = self.plots[title]
-            p.clear()
-            leg.setText("　".join(f"<span style='color:{PALETTE[k % len(PALETTE)]}'>━</span> {ln[0]}" for k, ln in enumerate(lines)))
-            for k, (name, xs, raw, sm, sparse) in enumerate(lines):
-                c = PALETTE[k % len(PALETTE)]
-                if sparse:
-                    p.plot(xs, sm, pen=pg.mkPen(c, width=2), symbol="o", symbolSize=4, symbolBrush=c, symbolPen=None)
-                else:
-                    qc = QtGui.QColor(c)
-                    qc.setAlpha(60)
-                    p.plot(xs, raw, pen=pg.mkPen(qc, width=1))
-                    p.plot(xs, sm, pen=pg.mkPen(c, width=2))
-            ys = [v for ln in lines for v in ln[2]]
-            if max(ys) - min(ys) < 1e-6:                   # 全是同一个数：自动范围会把刻度写成一长串小数
-                p.setYRange(min(ys) - 0.05, max(ys) + 0.05, padding=0)
-                p.enableAutoRange(axis="x")
-            else:
-                p.enableAutoRange()
         clear_layout(self.tables)
         for t in D.md_tables(self.win.run):
             self.tables.addWidget(label(t["title"], "h1"))
