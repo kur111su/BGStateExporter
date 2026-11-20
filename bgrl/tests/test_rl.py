@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import taverngym  # noqa: E402
 import taverngym._core as core  # noqa: E402
 from rl.model import build_model, n_params  # noqa: E402
-from rl.ppo import Rollout  # noqa: E402
+from rl.rollout import Rollout  # noqa: E402
 
 
 def main() -> int:
@@ -111,7 +111,7 @@ def main() -> int:
     assert ref_m.comp_proj.weight.grad.abs().sum() > 0 and ref_m.comp_head.weight.grad.abs().sum() > 0
     torch.nn.init.zeros_(ref_m.comp_proj.weight)
     # 旧检查点的优化器状态（少了 comp_proj / comp_head 这 4 个参数）也能接上
-    from rl.ppo import grow_opt_state
+    from rl.rollout import grow_opt_state
     opt_new = torch.optim.Adam(m2.parameters(), lr=1e-4)
     names = [k for k, _ in m2.named_parameters()]
     assert names[-7:] == ["comp_proj.weight", "comp_proj.bias", "comp_head.weight", "comp_head.bias",
@@ -171,7 +171,7 @@ def main() -> int:
           f"（燃料 {det[bc].get('name_zh')}、经济 {det[econ].get('name_zh')}）")
 
     # 训练数据按压缩后的半精度存：极大的数值也不会变成 inf
-    from rl.ppo import Policy
+    from rl.rollout import Policy
     pol = Policy(ref_m, torch.device("cpu"))
     huge = o["features"].copy(); huge[:, :100] = 1e7
     res = pol(huge, o["cards"], o["action_mask"], want_obs=True)

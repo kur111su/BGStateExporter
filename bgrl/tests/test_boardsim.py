@@ -591,7 +591,7 @@ def check_ent_warmup():
 
 def check_seed_cut():
     """换场面切断 GAE（Rollout.cut）：换之前最后一步用自己的价值自举、不吃换场面的价值跳变；换之前的阵容标签是 -1。"""
-    from rl.ppo import Rollout
+    from rl.rollout import Rollout
     ro = Rollout(2)
     z = lambda k: np.zeros((1, k), np.float32)  # noqa: E731
     vs = [0.1, 0.2, 0.9, 0.95]                  # 第 3 步换了场面：价值从 0.2 跳到 0.9
@@ -616,7 +616,7 @@ def check_seed_cut():
 
 def check_place_reward():
     """名次奖励表：解析、和线性奖励的换算、等效名次（线性表 = 平均名次）。"""
-    from rl.ppo import linear_place_reward, parse_place_reward, place_score_equiv
+    from rl.rollout import linear_place_reward, parse_place_reward, place_score_equiv
     assert parse_place_reward("") is None
     lin = parse_place_reward(",".join(f"{p}:{linear_place_reward(p)}" for p in range(1, 9)))
     assert abs(place_score_equiv([1, 3, 8], lin) - 4.0) < 1e-9 and place_score_equiv([1, 3, 8], None) == 4.0
@@ -678,7 +678,7 @@ def check_board():
 def check_seed_row_floor():
     """成型阵容课程按加强局分开记（ppo.seed_row）；前期强度下限从启动时的强度慢慢爬上去（boost_min_strength）。"""
     from rl.calibrate import AdaptiveStrength
-    from rl.ppo import seed_row
+    from rl.rollout import seed_row
     assert seed_row([(1, True), (3, False), (5, True), (2, False)]) == [4, 2.75, 0.25, 2, 3.0, 0.5]
     assert seed_row([(4, False)]) == [1, 4.0, 0.0, 0, 0.0, 0.0]
     from rl.ppo import Trainer

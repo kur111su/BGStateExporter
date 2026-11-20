@@ -165,11 +165,11 @@ def card_attr_checks():
     with torch.no_grad():
         assert float((bare(ft, ct, mt)[0] - a[0]).abs().max()) < 1e-5
     # 优化器状态：旧的少一个参数，能接上
-    from rl.ppo import grow_opt_state
+    from rl.rollout import grow_opt_state
     o_old = torch.optim.Adam(base.parameters(), lr=1e-3)
     o_new = torch.optim.Adam(again.parameters(), lr=1e-3)
     o_new.load_state_dict(grow_opt_state(o_new, o_old.state_dict()))
-    from rl.ppo import teacher_action_mask
+    from rl.teacher import teacher_action_mask
     assert teacher_action_mask("", 245) is None
     w = teacher_action_mask("sell, refresh", 245)
     assert w.sum() == 8 and w[16:23].all() and w[1] == 1 and w[0] == 0 and w[8] == 0
@@ -185,7 +185,7 @@ def card_attr_checks():
 def policy_copy_checks():
     """采样用副本（Mac：更新 MPS、采样 CPU）：参数变了（_ver 加 1）副本才同步；输出和原模型一样。在 CPU 上模拟。"""
     from rl.model import build_model
-    from rl.ppo import Policy
+    from rl.rollout import Policy
     from rl.device import resolve, available
     f, cc, m = sample_obs(6)
     torch.manual_seed(1)

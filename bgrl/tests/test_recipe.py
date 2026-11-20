@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import dataclasses
-import shlex
 import sys
 from pathlib import Path
 

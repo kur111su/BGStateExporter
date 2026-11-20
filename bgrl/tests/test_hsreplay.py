@@ -3,9 +3,7 @@
 并且重建成 TavernGym 局面后这些动作都合法。"""
 from __future__ import annotations
 
-import json
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np

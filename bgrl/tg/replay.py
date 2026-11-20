@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from .actions import (A_ACTIVATE, A_BUY, A_CHOOSE, A_HERO_POWER, A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL,
+from .actions import (A_BUY, A_CHOOSE, A_HERO_POWER, A_MAGNETIZE, A_MOVE, A_PLAY, A_REFRESH, A_SELL,
                       A_UPGRADE, N_BOARD, N_POS)
-from .bridge import KW, base_id, build_game, _by_pos
+from .bridge import KW, base_id, _by_pos
 from .logs import Action
 
 TRIPLE = "TB_BaconShop_Triples_01"

@@ -81,7 +81,7 @@ def check_env(R: Report) -> None:
     except ImportError:
         R.no("PyTorch 没装", "运行 ./setup.sh")
     try:
-        import taverngym
+        import taverngym  # noqa: F401 —— 只看装没装
         pin = (ROOT / "taverngym" / "PIN.txt").read_text(encoding="utf-8")
         commit = next((ln.split("=", 1)[1].strip() for ln in pin.splitlines() if ln.startswith("commit=")), "")
         stamp = (ROOT / "wheels" / ".installed")

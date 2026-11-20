@@ -380,7 +380,7 @@ class EntityTransformer(nn.Module):
 
     def _tokens_slow(self, f: torch.Tensor, c: torch.Tensor):
         B = f.shape[0]
-        L, fs, cs, d = self.L, self.fs, self.cs, self.d
+        L, fs, cs = self.L, self.fs, self.cs
         dev = f.device
         cardv = lambda name: self.embed_card(c[:, cs[name][0]:cs[name][1]])           # noqa: E731
         toks, pres, types = [], [], []

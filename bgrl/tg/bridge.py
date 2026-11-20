@@ -493,6 +493,5 @@ def compare(g, state: dict) -> list[str]:
 def observe(g, p: int = 0):
     """TavernGym 自己的观察编码：(features float32[OBS_FLOATS], cards int32[OBS_CARDS])。"""
     import numpy as np
-    import taverngym
     f, c = g.observe(p)
     return np.frombuffer(f, dtype="<f4").copy(), np.frombuffer(c, dtype="<i4").copy()

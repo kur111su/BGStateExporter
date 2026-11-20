@@ -67,7 +67,7 @@ def check_bought_in():
     import json as _json
     from rl.demos import KINDS
     from rl.ppo import Trainer
-    from tg.catalog import card_id, catalog, n_cards
+    from tg.catalog import card_id, n_cards
     key = _json.loads((Path(__file__).resolve().parent.parent / "rl" / "card_value.json").read_text(encoding="utf-8"))["key"]
     k_idx = next(i for i in range(1, n_cards()) if card_id(i) == key[0])
     other = next(i for i in range(1, n_cards()) if card_id(i) not in set(key) and card_id(i).startswith("BG"))

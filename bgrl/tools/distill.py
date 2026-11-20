@@ -141,7 +141,7 @@ def collect(tr, a, rnd, beta, rng):
     import numpy as np
     from taverngym import BatchEnv
 
-    from rl.ppo import is_panic
+    from tg.actions import is_panic
     seed = a.seed * 1000 + rnd
     env = BatchEnv(a.games, seed=seed, controlled=(0,), threads=tr.cfg.threads, config=tr.cfg.rules())
     booster = tr._make_booster(1.0, seed)
