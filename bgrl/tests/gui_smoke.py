@@ -35,13 +35,12 @@ def fake_run(run: Path) -> None:
                  "place_bot": 3.5 - i / 3000 + rnd.uniform(-.3, .3), "place_boost": 4.1 + rnd.uniform(-.3, .3), "boost_strength": 0.7,
                  "boost_floor": 0.7, "cs_wr": 0.5 + rnd.uniform(-.05, .05), "cs_late": 0.58 + rnd.uniform(-.05, .05),
                  "grow": 0.08 + rnd.uniform(-.02, .02), "unspent": 0.3 + rnd.uniform(-.05, .05), "up_turn": 0.4, "buy_turn": 1.6,
-                 "ref_turn": 0.8, "comp_q": 0.5, "tgt_q": 0.07 + i / 30000, "eng_q": 0.05, "comp_acc": 0.6, "teacher_agree": 0.5,
+                 "ref_turn": 0.8, "comp_acc": 0.6, "teacher_agree": 0.5,
                  "pro_bc": 1.1, "dps": 4000 + rnd.uniform(-200, 200), "place_gift": 3.1 + rnd.uniform(-.3, .3),
-                 "place_cgift": 3.2 + rnd.uniform(-.3, .3), "cgift_formed": 0.15 + rnd.uniform(-.05, .05), "place_league": 3.9}
+                 "place_league": 3.9}
             if it % 50 == 0:
                 r.update(eval_boost_place=4.4 + rnd.uniform(-.2, .2), eval_boost_score=4.6 + rnd.uniform(-.2, .2),
                          eval_boost_top1=0.03, eval_boost_top4=0.55, guard_avg=4.65, guard_best=4.55, pro_top1=0.45,
-                         cgift_by_comp={"圣盾流龙族": [40, 2.1, 0.41, 0.86], "喝茶流": [80, 3.3, 0.23, 0.03]},
                          seeded_by_comp={"喝茶流": [90, 2.5, 0.3, 50, 3.1, 0.09]})
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     (run / "comptest.json").write_text(json.dumps({"created": "2026-11-10 11:46:09", "iter": 21850, "games": 256,

@@ -145,7 +145,7 @@ def bought_in(d, which: str, root: Path | None = None):
     if "c" not in d:
         return None
     if which == "lobnew":                               # 本局野猪人 / 恶魔 / 元素都没开：高手在这种酒馆里怎么打
-        from .curricula import STRONG, lobby_has_any
+        from .comp import STRONG, lobby_has_any
         return ~lobby_has_any(d["f"], list(STRONG)) if "f" in d else None
     if which == "spelltgt":
         from tg.actions import A_CHOOSE
@@ -183,7 +183,7 @@ def bought_in(d, which: str, root: Path | None = None):
         return sel
     if which == "tgtnew":                               # 买的是新种族 S / A 阵容（老师不会的种族）的核心卡
         from .comp import load_target_comps
-        from .curricula import new_comps
+        from .comp import new_comps
         want = set().union(*(c["core"] for c in new_comps(load_target_comps(root)))) if load_target_comps(root) else set()
         idx = [i for i, b in base.items() if b in want]
         sel[buy[np.isin(cards, idx)]] = True

@@ -43,8 +43,8 @@ jobs:
             run() { name=$1; shift; rm -rf runs/_smoke; python -X utf8 bg.py train --smoke --threads 1 --seed 7 "$@" > "$out/$name.txt" 2>&1 || { tail -30 "$out/$name.txt"; exit 1; }; cp runs/_smoke/log.jsonl "$out/$name.jsonl"; }
             run recipe --iters 6 --recipe configs/v3.json
             run plain --iters 6
-            run curricula --iters 6 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --cgift-frac 0.4 --cgift-turns 2,3,4 --cgift-p 1.0 --target-bonus 0.5 --engine-bonus 0.4 --engine-from-turn 2 --keep-penalty 0.05 --econ-bonus 0.01 --comp-bonus 0.03 --shape-repay 1 --shape-repay-ramp 2
-            run teacher --iters 6 --teacher runs/_ext_repro.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-from-turn 1 --teacher-conf 0.05 --teacher-frac 0.5 --tribe-frac 1.0 --tribe-full true --tribe-start-p 1.0 --tribe-start-turn 2 --tribe-start-cards 2 --tribe-comps 圣盾流龙族,喝茶流 --tribe-teacher-off true --boost-frac 1.0 --boost-kind pro --boost-from-turn 3
+            run curricula --iters 6 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --keep-penalty 0.05 --econ-bonus 0.01 --shape-repay 1 --shape-repay-ramp 2
+            run teacher --iters 6 --teacher runs/_ext_repro.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-from-turn 1 --teacher-conf 0.05 --teacher-frac 0.5 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3
             run guard --iters 7 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --guard true --guard-window 1 --guard-patience 1 --guard-margin 0 --ent-target 1.0 --warmup-iters 2 --place-reward 1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1
             cd - > /dev/null
           done

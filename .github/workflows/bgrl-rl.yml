@@ -41,7 +41,7 @@ jobs:
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tempo-curve pro --tempo-bonus 0.03 --tempo-deficit 0.01
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0 --cgift-frac 0.4 --cgift-turns 2,3,4 --cgift-p 1.0 --target-bonus 0.5
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --seed-comp-frac 1.0 --seed-comp-turns 3,4 --boost-min-strength 0.5 --boost-min-step 0.1 --combat-bonus 0.3 --grow-bonus 0.3 --grow-from-turn 3 --grow-frac 1.0 --gift-frac 0.5 --gift-turns 2,3 --gift-p 1.0
       - name: External model loader (random weights in the same file format) + tiny PPO run with it as teacher + goldflow with it
         run: |
           python -X utf8 bgrl/tests/test_extnet.py
@@ -50,10 +50,10 @@ jobs:
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2
-          python -X utf8 bgrl/tests/test_tribes.py
+          python -X utf8 bgrl/tests/test_lobby.py
           python -X utf8 bgrl/bg.py bench-model --smoke --threads 2 --device cpu
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --profile-update true --aux-comp-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 1 --verbose
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 6 --tribe-frac 1.0 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-need-tribes QUILBOAR,DEMON
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 6 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2
           python -X utf8 bgrl/arena/export.py --ckpt bgrl/runs/_ext_ci.pt --out bgrl/runs/_ext_bundle_ci && exit 1 || test ! -e bgrl/runs/_ext_bundle_ci/model.pt
       - name: 6500+ replay converter on a synthetic replay + tiny PPO run imitating it
         run: |
@@ -62,12 +62,12 @@ jobs:
           python -X utf8 bgrl/tests/test_review_pack.py bgrl/runs/_packs_ci
           python -X utf8 bgrl/bg.py prodemos bgrl/runs/_packs_ci --workers 1 --val-every 3 --out bgrl/runs/_pack_demos_ci
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,end:2"
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 8 --pro-coef 0.05 --pro-weights "upgrade:3,tgtnew:3,lobnew:2" --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --tribe-frac 1.0 --tribe-full true --tribe-start-p 1.0 --tribe-start-turn 2 --tribe-start-cards 2 --tribe-comps 圣盾流龙族,喝茶流 --tribe-teacher-off true --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 2
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,simkey:2,simsyn:2,engine:3,tgtS:2,tgtfit:2" --target-bonus 0.15 --demo-shop-shuffle true --combat-bonus 0.3 --combat-from-turn 2 --econ-bonus 0.01 --comp-bonus 0.03 --comp-weights "1,0,0"
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 8 --pro-coef 0.05 --pro-weights "upgrade:3,tgtnew:3,lobnew:2" --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 2
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --pro-weights "upgrade:3,simkey:2,simsyn:2,engine:3,tgtS:2,tgtfit:2" --demo-shop-shuffle true --combat-bonus 0.3 --combat-from-turn 2 --econ-bonus 0.01
           python -X utf8 bgrl/bg.py simcards --per-turn 3 --out bgrl/runs/_sim_value_ci.json
           python -X utf8 bgrl/bg.py playbook --pro-data bgrl/runs/pro_demos --out bgrl/runs/_target_comps_ci.json
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-core-mult 3 --aux-comp-coef 0.05 --target-bonus 0.3 --target-from-turn 2 --keep-penalty 0.05 --engine-bonus 0.4 --engine-from-turn 2
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 7 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --pro-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --target-bonus 0.3 --target-from-turn 2 --engine-bonus 0.4 --engine-from-turn 2 --combat-bonus 0.3 --combat-from-turn 2 --shape-repay 1 --shape-repay-ramp 2 --guard true --guard-window 1 --guard-patience 1 --guard-margin 0 --ent-target 1.0 --warmup-iters 2 --place-reward 1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --pro-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-core-mult 3 --aux-comp-coef 0.05 --keep-penalty 0.05
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 7 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3 --pro-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --combat-bonus 0.3 --combat-from-turn 2 --shape-repay 1 --shape-repay-ramp 2 --guard true --guard-window 1 --guard-patience 1 --guard-margin 0 --ent-target 1.0 --warmup-iters 2 --place-reward 1:1,2:0.55,3:0.25,4:0.05,5:-0.15,6:-0.4,7:-0.7,8:-1
           test -f bgrl/runs/_smoke/best.pt
           python -X utf8 bgrl/bg.py board --run bgrl/runs/_smoke
           test -f bgrl/runs/_smoke/dashboard.md

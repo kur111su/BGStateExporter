@@ -666,7 +666,7 @@ def show_engines(finals: list[dict]) -> dict | None:
         parts.append(f"{zh} 上场 {len(with_e) / len(fb):.0%}（万三 {ref:.0%}）" +
                      (f"，这些局场上{eff}随从平均 {np.mean(n_amp):.1f} 个" if n_amp else ""))
     print("  引擎卡：" + "；".join(parts))
-    # 所有引擎（rl/comp.ENGINE_RULES，训练的 engine_bonus 同一张表）：上场比例、上场时配了几张燃料（最终场上）
+    # 所有引擎（rl/comp.ENGINE_RULES，老师加权用的同一张表）：上场比例、上场时配了几张燃料（最终场上）
     from rl.comp import ENGINE_FUEL_FULL, engine_tables
     ids = sorted({c for x in fb for c in x["board"]})
     tab = engine_tables(ids)

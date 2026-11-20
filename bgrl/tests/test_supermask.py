@@ -78,39 +78,12 @@ def check_bought_in():
     assert Trainer._bought_in(dd, "key").tolist() == [True, False, False]
 
 
-def check_comp_shape():
-    """阵容成型奖励（Trainer._comp_shape）：同种族 6 个随从的场面 > 6 个不同种族的场面。"""
-    from collections import defaultdict
-    from types import SimpleNamespace
-    from rl.ppo import Trainer
-    from tg.actions import A_END
-    from tg.catalog import card_id, catalog, n_cards
-    det = catalog()
-    by_race = defaultdict(list)
-    for i in range(1, n_cards()):
-        x = det.get(card_id(i)) or {}
-        rs = x.get("races", [])
-        if x.get("kind") == "minion" and len(rs) == 1 and rs[0] != "ALL":
-            by_race[rs[0]].append(i)
-    big = max(by_race, key=lambda r: len(by_race[r]))
-    mixed = [v[0] for v in list(by_race.values())[:6]]
-    cc = np.zeros((2, 124), np.int64)
-    cc[0, 19:25], cc[1, 19:25] = by_race[big][:6], mixed
-    ff = np.zeros((2, 16), np.float32)
-    ff[:, 0] = 9 / 20
-    tt = SimpleNamespace(cfg=SimpleNamespace(comp_bonus=0.02, comp_from_turn=6), mix=defaultdict(float))
-    tt._comp_tables = lambda: Trainer._comp_tables(tt)
-    rr = Trainer._comp_shape(tt, ff, cc, np.array([A_END, A_END]), np.zeros(2))
-    assert rr[0] >= 0.01 and rr[1] < 0.005, rr
-
-
 def main(rounds: int = 600) -> int:
     rng = np.random.default_rng(1)
     F, C, M = random_positions(rounds, rng)
     check_supermask(F, C, M)
     kinds = check_native_demos(F, C, M, rng)
     check_bought_in()
-    check_comp_shape()
     print("nativedemos OK", kinds)
     return 0
 

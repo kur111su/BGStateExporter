@@ -63,14 +63,6 @@ class CollectMixin:
             self.seeder.plan.clear()
         if name == "bot" and self.gifts is not None:
             self.gifts.plan.clear()
-        if name == "bot" and self.cgifts is not None:
-            self.cgifts.plan.clear()
-        if name == "bot" and self.tribes is not None:
-            self.tribes.clear()
-            if self.tribe_start is not None:
-                self.tribe_start.clear()
-            if getattr(self.booster, "full", None) is not None:
-                self.booster.full.clear()
         self.obs[name] = new.observe()
 
     def _assign(self, name, env, off, g):
@@ -199,33 +191,7 @@ class CollectMixin:
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
                             gifted = name == "bot" and self.gifts is not None and self.gifts.finish(int(i))
-                            cg = self.cgifts.finish(int(i)) if name == "bot" and self.cgifts is not None else ""
-                            if cg and not seeded:          # 送整套阵容的局：单独记名次、最后做成这套没有
-                                row = (int(info["placement"][i]), self._comp_name(fcomp) == cg)
-                                self.cgift_by.setdefault(cg, []).append(row)
-                                self.cgift_iter.append(row)
-                                if self.booster is not None:
-                                    self.booster.finish(int(i))
-                                seeded = True              # 不算进 place_bot / 加强强度
-                            tribal = self.tribes.finish(int(i)) if name == "bot" and self.tribes is not None else None
-                            if tribal is not None and not seeded and not cg:
-                                pl_t = int(info["placement"][i])
-                                cn = self._comp_name(fcomp) if fcomp is not None else ""
-                                ct = self._comp_tribes().get(cn, frozenset())
-                                new = (cn in self.tribe_focus) if self.tribe_focus else (bool(ct) and not (ct & self._strong_tribes()))
-                                self.tribe_places.append(pl_t)
-                                self.tribe_new_comp.append(new)
-                                st = self.tribe_start.finish(int(i)) if self.tribe_start is not None else None
-                                (self.tribe_new_free if st is None else self.tribe_new_start).append(new)
-                                self.tribe_comps[cn or "没成型"] = self.tribe_comps.get(cn or "没成型", 0) + 1
-                                for t in tribal:                # (名次, 成了用到这个种族的阵容)
-                                    self.tribe_by.setdefault(t, []).append((pl_t, t in ct))
-                                if self.booster is not None:
-                                    self.booster.finish(int(i))
-                                if gifted and self.gifts is not None:
-                                    self.gift_places.append(pl_t)
-                                seeded = True              # 不算进 place_bot / 加强强度
-                            elif gifted and not seeded:    # 送牌局：单独记名次
+                            if gifted and not seeded:      # 送牌局：单独记名次
                                 self.gift_places.append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
@@ -258,27 +224,9 @@ class CollectMixin:
                         continue
                     self.t_boost += time.time() - tc
                 broke = False
-                if name == "bot" and self.cgifts is not None:     # 送整套阵容：往手里放一张核心卡（场面不动，不切 GAE）
-                    try:
-                        if self.cgifts.apply(env, self.obs[name]["features"]):
-                            self.obs[name] = env.observe()
-                    except BaseException as ex:            # noqa: BLE001
-                        if not is_panic(ex):
-                            raise
-                        self._rebuild_env(ei, ex)
-                        continue
-                if name == "bot" and self.tribe_start is not None:  # 种族课程起步牌：往手里放新种族的核心卡（不切 GAE）
-                    try:
-                        if self.tribe_start.apply(env, self.obs[name]["features"]):
-                            self.obs[name] = env.observe()
-                    except BaseException as ex:            # noqa: BLE001
-                        if not is_panic(ex):
-                            raise
-                        self._rebuild_env(ei, ex)
-                        continue
                 if name == "bot" and self.gifts is not None:      # 送牌课程：往手里放一张（场面不动，不切 GAE）
                     try:
-                        if self.gifts.apply(env, self.obs[name]["features"], skip=self.cgifts.active() if self.cgifts else None):
+                        if self.gifts.apply(env, self.obs[name]["features"]):
                             self.obs[name] = env.observe()
                     except BaseException as ex:            # noqa: BLE001
                         if not is_panic(ex):
@@ -287,24 +235,17 @@ class CollectMixin:
                         continue
                 skip = None
                 if name == "bot":
-                    skip = (self.gifts.active() if self.gifts is not None else set()) | \
-                           (self.cgifts.active() if self.cgifts is not None else set())
-                    if self.tribe_start is not None:
-                        skip |= self.tribe_start.active()      # 起步牌局自己往下做，不换成型场面
+                    skip = self.gifts.active() if self.gifts is not None else set()
                 for sd in ((self.seeder,) if name == "bot" else ()):
                     if sd is None:                         # 成型阵容课程（换整个场面）
                         continue
                     try:
-                        focus = ({g: self.tribe_focus for g in self.tribes.active}
-                                 if self.tribe_focus and self.tribes is not None else None)
-                        if sd.seed(env, self.obs[name]["features"], skip=skip, focus=focus):
+                        if sd.seed(env, self.obs[name]["features"], skip=skip):
                             self.obs[name] = env.observe()
                             for g in sd.seeded_slots:
                                 self.rollout.cut(off + g)        # GAE 在换场面处切断（见 Rollout.cut）
-                                self.cs_ep[off + g] = -1         # 阵容强度、目标阵容从新场面重新起算
+                                self.cs_ep[off + g] = -1         # 阵容强度从新场面重新起算
                                 self.gr_turn[off + g] = -1       # 养场面：这回合的“开始”在新场面上重新量
-                                self.tg_rebase.add(off + g)
-                                self.eg_rebase.add(off + g)
                     except BaseException as ex:            # noqa: BLE001
                         if not is_panic(ex):
                             raise
@@ -315,28 +256,11 @@ class CollectMixin:
                     continue
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
-                    swapped = False
                     for g in np.unique(np.flatnonzero(dones) // k):
                         e = env.episode_index(int(g))
                         if e != self.episode[name][g]:
-                            if name == "bot" and self.tribes is not None:
-                                full = getattr(self.booster, "full", None)
-                                if full is not None:
-                                    full.discard(int(g))
-                                if self.tribe_start is not None:
-                                    self.tribe_start.plan.pop(int(g), None)
-                                if self.tribes.apply(env, int(g)):
-                                    swapped = True         # 种族课程：换成指定种族的一局（episode 编号不变）
-                                    if self.tribe_start is not None:
-                                        self.tribe_start.begin(int(g), self.tribes.active.get(int(g), ()))
-                                    if cfg.tribe_teacher_off:
-                                        self.tribe_no_teacher.add((off + int(g), int(self.rollout.ep[off + int(g)])))
-                                    if cfg.tribe_full and full is not None:
-                                        full.add(int(g))   # 对手全强度（和考试一样）
                             self.episode[name][g] = env.episode_index(int(g))
                             self._assign(name, env, off, int(g))
-                    if swapped:
-                        self.obs[name] = env.observe()
             t_net += tb - ta
             t_env += time.time() - tb
         # 没打完的：用当前局面的价值自举
@@ -350,10 +274,6 @@ class CollectMixin:
                 _, _, v = self.learner(obs["features"][live], obs["cards"][live], m)
                 last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
-        if batch is not None and self.tribe_no_teacher:    # 打完、已经交给这一轮训练的局下一轮用不到了
-            batch["no_teacher"] = np.isin(batch["slot"] * 1_000_000 + batch["ep"],
-                                          np.fromiter((sl * 1_000_000 + e for sl, e in self.tribe_no_teacher), dtype=np.int64))
-            self.tribe_no_teacher = {(sl, e) for sl, e in self.tribe_no_teacher if e >= int(self.rollout.ep[sl])}
         return batch, n_dec, time.time() - t0, t_env, t_net
 
     def _make_booster(self, frac: float, seed: int):
@@ -432,18 +352,6 @@ class CollectMixin:
             from .comp import load_target_comps
             self._comp_names = [c["name"] for c in load_target_comps()]
         return self._comp_names[int(k)] if k is not None and 0 <= int(k) < len(self._comp_names) else ""
-
-    def _comp_tribes(self) -> dict:
-        """阵容名字 → 它的核心卡用到的种族（rl/target_comps.json）。"""
-        if getattr(self, "_comp_tribe_map", None) is None:
-            from .comp import load_target_comps
-            self._comp_tribe_map = {c["name"]: frozenset(c.get("tribes") or ()) for c in load_target_comps()}
-        return self._comp_tribe_map
-
-    @staticmethod
-    def _strong_tribes() -> frozenset:
-        from .curricula import STRONG
-        return frozenset(STRONG)
 
     def _final_comp(self, s: int) -> int:
         """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""

@@ -235,11 +235,10 @@ def check_drift():
 
 
 def check_targets():
-    """目标阵容（rl/target_comps.json）：核心卡识别、最像哪一套、势能差奖励、模仿时按 S / A / B 挑示范。"""
+    """目标阵容（rl/target_comps.json）：核心卡识别、最像哪一套、模仿时按 S / A / B 挑示范。"""
     from rl.comp import load_target_comps, nearest_comp, target_score
     from rl.demos import KINDS, bought_in
-    from rl.ppo import Trainer
-    from tg.actions import A_BUY, A_END
+    from tg.actions import A_BUY
     from tg.catalog import card_id, n_cards
     comps = load_target_comps()
     assert len(comps) == 32 and {c["tier"] for c in comps} == {"S", "A", "B"}
@@ -256,19 +255,6 @@ def check_targets():
     assert abs(target_score(list(tea["core"]) + ["BG26_135"] * 3 + [ks], comps)[0] - 0.8) < 1e-9
 
     idx = {card_id(i): i for i in range(1, n_cards())}
-    t = SimpleNamespace(cfg=SimpleNamespace(target_bonus=0.15, target_from_turn=5), mix=defaultdict(float), _tgt=None,
-                        rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)),
-                        tg_ep=np.full(1, -1, dtype=np.int64), tg_prev=np.zeros(1))
-    f = np.zeros((1, 64), np.float32)                                   # 本局种族全没开：只剩喝茶流（中立 + 全种族）凑得成
-    c = np.zeros((1, 124), np.int64)
-    got = []
-    for turn, board in ((4, ["BG_LOE_077"]), (6, ["BG_LOE_077"]), (7, list(tea["core"])), (8, ["BG26_135"])):
-        f[0, 0] = turn / 20
-        c[0, 19:26] = 0
-        c[0, 19:19 + len(board)] = [idx[x] for x in board]
-        got.append(round(float(Trainer._target_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.009333, 0.043167, -0.0525], got                  # 第 4 回合不算；整局和 = 0.15 × 最后的 0
-
     cc = np.zeros((2, 124), np.int32)
     cc[:, 36] = idx["BG_LOE_077"]
     cc[1, 19] = idx[sorted(tea["core"] - {"BG_LOE_077"})[0]]             # 第 2 局场上已有喝茶流的另一张核心卡
@@ -295,7 +281,7 @@ def check_targets():
     assert nearest_comp(["BG25_354", "BG26_135"], comps, strict=True)[0] is None
     w = load_target_comps(weights="S:1,A:0.85,B:0.4")
     assert {c["tier"]: c["w"] for c in w} == {"S": 1.0, "A": 0.85, "B": 0.4}
-    return got
+    return len(comps)
 
 
 def check_lobby():
@@ -448,11 +434,9 @@ def check_seeder():
 
 
 def check_engine():
-    """引擎联动（engine_bonus）：布莱恩·铜须 + 战吼随从（南海卖艺者）；燃料 3 张配齐；老师在“酒馆里有引擎、手里已有燃料”时加权。"""
+    """引擎联动表（rl/comp.ENGINE_RULES）：布莱恩·铜须 + 战吼随从（南海卖艺者）；燃料 3 张配齐；老师在“酒馆里有引擎、手里已有燃料”时加权。"""
     from rl.comp import engine_score, engine_tables
     from rl.ppo import Trainer
-    from rl.shaping import ShapingMixin
-    from tg.actions import A_END
     from tg.catalog import base_of_index, card_id, n_cards
     ids = [base_of_index(i) if i else "" for i in range(n_cards())]
     tab = engine_tables(ids)
@@ -463,17 +447,7 @@ def check_engine():
     assert engine_score([brann, busk], [brann, busk], tab)[0] == 1 / 3
     assert engine_score([busk, busk], [busk, busk], tab)[0] == 0.0                    # 没有引擎：燃料不算
     assert engine_score([brann, busk], [brann, busk, busk, busk, busk], tab)[0] == 1.0   # 最多算配齐
-    t = SimpleNamespace(cfg=SimpleNamespace(engine_bonus=0.3, engine_from_turn=5), mix=defaultdict(float), _eng_tab=tab,
-                        rollout=SimpleNamespace(ep=np.zeros(1, dtype=np.int64)), eg_ep=np.full(1, -1, dtype=np.int64),
-                        eg_prev=np.zeros(1))
-    f = np.zeros((1, 64), np.float32)
-    got = []
-    for turn, board in ((4, [brann, busk]), (6, [brann, busk]), (7, [brann, busk, busk, busk]), (8, [busk])):
-        c = np.zeros((1, 124), np.int64)
-        c[0, 19:19 + len(board)] = board
-        f[0, 0] = turn / 20
-        got.append(round(float(ShapingMixin._engine_shape(t, np.array([0]), f, c, np.array([A_END]), np.zeros(1))[0]), 6))
-    assert got == [0.0, 0.1, 0.2, -0.3], got                                        # 第 4 回合不算；卖掉布莱恩扣回来
+    got = engine_score([brann, busk], [brann, busk, busk], tab)[0]
     c = np.zeros((2, 124), np.int64)
     c[:, 36] = brann                                                                  # 酒馆里有布莱恩
     c[0, 26:28] = busk                                                                # 第 1 行手里已有 2 张战吼随从
@@ -489,25 +463,23 @@ def check_engine():
 
 
 def check_repay():
-    """局末扣回势能（shape_repay）：三项最后的 Φ 按爬坡比例扣回；不是这一局的 Φ 不扣；系数为 0 的项不算。"""
+    """局末扣回势能（shape_repay）：阵容强度最后的 Φ 按爬坡比例扣回；不是这一局的 Φ 不扣；系数为 0 不算。"""
     from rl.shaping import ShapingMixin
-    cfg = SimpleNamespace(shape_repay=1.0, shape_repay_ramp=4, target_bonus=0.6, engine_bonus=0.4, combat_bonus=0.3)
+    cfg = SimpleNamespace(shape_repay=1.0, shape_repay_ramp=4, combat_bonus=0.3)
     t = SimpleNamespace(cfg=cfg, iter=100, repay_t0=None, mix=defaultdict(int), rollout=SimpleNamespace(ep=np.array([3, 3])),
-                        tg_ep=np.array([3, 2]), tg_prev=np.array([0.5, 0.9]), eg_ep=np.array([3, 3]), eg_prev=np.array([1.0, 2.0]),
                         cs_ep=np.array([3, -1]), cs_prev=np.array([1.2, 0.7]))
-    full = 0.6 * 0.5 + 0.4 * 1.0 + 0.3 * 1.2
+    full = 0.3 * 1.2
     assert abs(ShapingMixin._shape_close(t, 0) + 0.25 * full) < 1e-9          # 爬坡第 1 / 4 轮
     t.iter = 103
     assert abs(ShapingMixin._shape_close(t, 0) + full) < 1e-9
-    assert abs(ShapingMixin._shape_close(t, 1) + 0.4 * 2.0) < 1e-9             # 1 号座位：目标阵容 / 阵容强度不是这一局的
-    cfg.shape_repay_keys = "target,engine"                                     # 阵容强度不扣
-    assert abs(ShapingMixin._shape_close(t, 0) + (0.6 * 0.5 + 0.4 * 1.0)) < 1e-9
-    cfg.shape_repay_keys = "target,engine,combat"
+    assert ShapingMixin._shape_close(t, 1) == 0.0                               # 1 号座位：阵容强度不是这一局的
     t.iter = 50                                                                 # 退回到爬坡开始之前：不扣，不是反着加
     assert ShapingMixin._shape_close(t, 0) == 0.0
     cfg.shape_repay = 0.0
     t.iter = 200
-    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 6     # 不扣时照样记局末还挂着多少
+    assert ShapingMixin._shape_close(t, 0) == 0.0 and t.mix["fin_n"] == 5     # 不扣时照样记局末还挂着多少
+    cfg.combat_bonus = 0.0
+    assert ShapingMixin._shape_close(t, 0) == 0.0
     return round(full, 3)
 
 
@@ -791,49 +763,6 @@ def check_comptest_seeded():
     return len(sd["seeded"])
 
 
-def check_comp_gifts():
-    """送整套阵容（CompGifts）：开局定一套本局凑得成的阵容，给的回合往手里放一张这套还没有的核心卡（先送等级低的、
-    酒馆等级 + 2 以内），场面不动；finish 返回这套的名字；skip 里的对局不送；送牌课程跳过这些局。"""
-    import json as _json
-    from taverngym import BatchEnv
-    from rl.curricula import CardGifts, CompGifts
-    from rl.comp import load_target_comps
-    comps = load_target_comps()
-    cg = CompGifts(frac=1.0, turns=(2, 3, 4, 5, 6), p=1.0, seed=2)
-    tea = next(c for c in comps if c["name"] == "喝茶流")
-    assert cg.next_card(tea, set(), 1) is None                                   # 核心卡 5 / 6 本：1 本时不送
-    assert cg.next_card(tea, set(), 3) == "BG_LOE_077"                           # 3 本：先送等级最低的布莱恩（5 本）
-    assert cg.next_card(tea, {"BG_LOE_077"}, 4) in tea["core"] - {"BG_LOE_077"}
-    env = BatchEnv(4, seed=8, controlled=(0,), threads=1)
-    rng = np.random.default_rng(1)
-    given = 0
-    for _ in range(6000):
-        obs = env.observe()
-        before = {g: _json.loads(env.save(g))["game"]["players"][0] for g in range(4)}
-        if cg.apply(env, obs["features"], skip={3}):
-            obs = env.observe()
-            for g in range(4):
-                me = _json.loads(env.save(g))["game"]["players"][0]
-                if len(me["hand"]) == len(before[g]["hand"]) + 1:
-                    given += 1
-                    assert g != 3 and [m["card"] for m in me["board"]] == [m["card"] for m in before[g]["board"]]
-                    comp = cg.plan[g][3]
-                    new = cg._owned(me) - cg._owned(before[g])
-                    assert new and new <= (comp["core"] | comp["support"]), (comp["name"], new)
-        if min(int(round(f * 20)) for f in obs["features"][:, 0]) > 6:
-            break
-        env.step(np.array([rng.choice(np.flatnonzero(m)) for m in obs["action_mask"]]))
-    assert given >= 2, given
-    assert 3 not in cg.active() and cg.finish(3) == ""
-    g0 = next(iter(cg.active()))
-    gf = CardGifts(frac=1.0, turns=(2, 3), p=1.0, seed=3, cards=["BG26_135"])
-    gf.apply(env, env.observe()["features"], skip=cg.active())
-    assert not (gf.active() & cg.active())                                       # 送整套的局不再送零散的牌
-    name = cg.plan[g0][3]["name"]
-    assert cg.finish(g0) == name and g0 not in cg.active()
-    return given
-
-
 def check_league_prune():
     """清理过 snapshots 目录：文件不在的快照从对手库里去掉，机器人和还在的留着。"""
     import tempfile
@@ -893,7 +822,6 @@ def main() -> int:
     check_grow()
     check_gifts()
     check_comptest_seeded()
-    check_comp_gifts()
     check_league_prune()
     check_rollback_rebase()
     print(f"boardsim OK：打乱酒馆 {n} 个局面和引擎一致；强 / 弱 / 空场面 {j[0]:.2f} / {j[1]:.2f} / {j[2]:.2f}；势能差 {tot}；"

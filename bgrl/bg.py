@@ -59,7 +59,7 @@ def _run_tool(name: str, args: list[str]) -> int:
 def _test() -> int:
     rc = 0
     for t in ("test_calibrate.py", "test_rl.py", "test_arena.py", "test_shaping.py", "test_hsreplay.py", "test_supermask.py",
-              "test_layout.py", "test_recipe.py", "test_boardsim.py", "test_panel.py", "test_tribes.py"):
+              "test_layout.py", "test_recipe.py", "test_boardsim.py", "test_panel.py", "test_lobby.py"):
         print(f"=== {t} ===", flush=True)
         try:
             runpy.run_path(str(ROOT / "tests" / t), run_name="__main__")

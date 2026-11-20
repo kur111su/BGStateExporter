@@ -457,7 +457,7 @@ def is_econ(d: dict) -> bool:
     return d.get("kind") in ("minion", "spell") and bool(_ECON.search(str(d.get("text") or "")))
 
 
-# ---------------- 引擎联动（engine_bonus）：引擎卡 + 它放大的“燃料”随从 ----------------
+# ---------------- 引擎联动：引擎卡 + 它放大的“燃料”随从（老师加权、goldflow 统计、高手示范的 engfuel 标签用） ----------------
 # 引擎卡 → 它放大哪些随从（按卡牌英文说明里的关键词 / 种族判断；金色并到普通）。只列这个版本的强力引擎。
 ENGINE_RULES = {
     "BG_LOE_077": ("布莱恩·铜须", {"text": ("Battlecry",)}),                       # 战吼触发两次
@@ -513,3 +513,22 @@ def engine_score(board_idx, own_idx, tab: dict, cap: float = 2.0) -> tuple[float
     parts = [(tab["names"][j], int(nf[j])) for j in np.flatnonzero(on)]
     phi = float(sum(min(1.0, nf[j] / ENGINE_FUEL_FULL) for j in np.flatnonzero(on)))
     return min(cap, phi), parts
+
+
+# ---------------- 种族：老师（外部模型）会的三族、本局开了哪些种族（高手示范的 tgtnew / lobnew 标签用） ----------------
+STRONG = ("QUILBOAR", "DEMON", "ELEMENTAL")     # 老师（外部模型）会的三族
+WEAK = ("BEAST", "DRAGON", "MECHANICAL", "MURLOC", "PIRATE", "UNDEAD", "ABERRATION")
+
+
+def lobby_has_any(f, types) -> np.ndarray:
+    """[行]：本局开放的种族里有没有 types 里的任何一个（f 原始或压缩过的都行）。types 空 → 全是 True。"""
+    from tg.obs import F_LOBBY, lobby_bits
+    names = list(F_LOBBY)
+    want = sum(1 << names.index(t) for t in types)
+    bits = lobby_bits(f)
+    return np.ones(len(bits), dtype=bool) if not want else (bits & want) > 0
+
+
+def new_comps(comps: list[dict]) -> list[dict]:
+    """老师不会的种族的 S / A 阵容：核心卡有种族、而且一个都不是野猪人 / 恶魔 / 元素。"""
+    return [c for c in comps if c["tier"] in "SA" and c.get("tribes") and not (set(c["tribes"]) & set(STRONG))]

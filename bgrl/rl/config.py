@@ -162,9 +162,6 @@ class Config:
     starve_gift_weight: float = 1.0
     # 回合末没花掉的钱：每剩 1 块扣这么多（第 2 回合起；高手几乎不剩，模型每回合剩 0.2–0.8 块）
     unspent_gold_penalty: float = 0.0
-    # 阵容成型奖励（见 _comp_shape）：每次结束回合按场面配合程度加 comp_bonus × q（q 在 0–1）。0 = 不用
-    comp_bonus: float = 0.0
-    comp_from_turn: int = 6
     # 防止背下高分示范：每次考试比较训练示范和留出局的命中率，差距大于 pro_gap_cap 就把模仿高手的强度减半，
     # 差距小于 pro_gap_cap - 0.04 再加回来（最多到 pro_coef）。0 = 不控制。
     # 第 4351–5054 轮（pro_coef 0.1）：训练示范命中率 0.44 → 0.70，留出局 0.45 → 0.41，交叉熵 2.0 → 2.33——在背题
@@ -195,9 +192,6 @@ class Config:
     aux_comp_coef: float = 0.0
     # 别卖正在做的阵容里该留的牌（见 _keep_shape，rl/target_comps.json 的 playbook.keep）：每卖一张扣这么多。0 = 不扣
     keep_penalty: float = 0.0
-    # 引擎联动（见 _engine_shape，rl/comp.ENGINE_RULES）：场上引擎卡配上燃料随从的程度涨多少加 engine_bonus × 涨的。0 = 不用
-    engine_bonus: float = 0.0
-    engine_from_turn: int = 5
     # “成型以后怎么玩”的课程（rl/curricula/seed_comps.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
     # 招募开始时，场面换成同一回合高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打。0 = 不用。
     # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
@@ -212,12 +206,6 @@ class Config:
     teacher_frac: float = 1.0
     teacher_actions: str = ""
     teacher_from_turn: int = 0
-    # 目标阵容各等级的权重（target_bonus 的 Φ），例如 "S:1,A:0.85,B:0.4"；空 = target_comps.json 里的 S 1 / A 0.8 / B 0.6
-    target_weights: str = ""
-    # 阵容成型奖励 q 里三项的权重：主种族纯度、万三常见搭配、关键卡（加起来是 1 就是满分 1）。
-    # 阵容测试（第 11600 轮）：模型玩龙 / 海盗，万三那些搭配一对都用不上（0.02 对）；关键卡前四名的局 0.50 张、
-    # 后四名 0.70 张，和名次反着走；纯度前四 0.66、后四 0.57 是对的方向
-    comp_weights: str = "0.6,0.2,0.2"
     # 阵容强度奖励（rl/boardsim.py，见 _combat_shape）：结束回合时让引擎拿当前场面打 combat_boards 个同期高分阵容
     # （第 t … t-3 回合的，每个 combat_fights 场），胜率比这局上次量的时候涨了多少，就加 combat_bonus × 涨的。0 = 不用。
     # combat_frac：每次结束回合按这个概率量一次（一次约 2.5 毫秒，全量会让每轮多 9 秒左右）
@@ -242,14 +230,10 @@ class Config:
     # 下回合钱到手 / 牌打出去时扣回来，一局结束时扣回最后的存款（纯势能差）。布莱恩·铜须让南海卖艺者、
     # 剃刀沼泽地卜师（鲜血宝石）、竞技表演者（发现法术）之类的战吼翻倍，“刷战吼牌倒转经济”在这里拿到当场的功劳
     econ_bonus: float = 0.0
-    # 目标阵容奖励（见 _target_shape，rl/target_comps.json = bgbuddy.gg 的 S / A / B 级终局阵容核心卡）：
-    # 结束回合时场面离目标阵容多近（等级权重 × 核心卡占比），涨多少加 target_bonus × 涨的，整局 = 最后的接近程度
-    target_bonus: float = 0.0
-    target_from_turn: int = 5
     # 模仿时把酒馆里随从的顺序随机打乱（买的那格跟着换）：酒馆顺序本来就不影响什么，背题的时候却会记住
     # “第几格买”——第 8000–11600 轮训练示范命中率 0.72 → 0.85，留出局一直 0.37
     demo_shop_shuffle: bool = False
-    # 局末把势能型塑形（目标阵容 target_bonus、引擎联动 engine_bonus、阵容强度 combat_bonus）最后的 Φ 扣回来多少（0–1）。
+    # 局末把阵容强度（combat_bonus）最后的 Φ 扣回来多少（0–1；第 33328 轮以前还有目标阵容、引擎联动两项）。
     # 0 = 不扣（原来）：整局加起来 = 系数 × 最后的 Φ，等于在名次以外又多了一个“最后场面像不像阵容”的目标。
     # 第 16420–16850 轮这三项局末合计估计平均 0.7、最多 2.0（名次 1 → 8 一共也是 2.0）：tgt_q 0.07 → 0.14、eng_q 0 → 0.40，
     # 考试 4.44 → 4.75、加强局承受的对手强度 0.69 → 0.55——模型在拿“像阵容”的分，不是拿名次。
@@ -270,37 +254,6 @@ class Config:
     gift_turns: str = "4,5,6,7,8,9,10,11,12"
     gift_p: float = 0.6
     gift_min_lift: float = 2.0
-    # 送整套阵容（rl/curricula/gifts.CompGifts，第 21800 轮起）：cgift_frac 的机器人局里，开局定一套本局凑得成的目标阵容，
-    # cgift_turns 每回合招募开始时按 cgift_p 的机会把这套还没有的核心卡送一张到手里（齐了送配套卡）。
-    # 这些局不再送零散的牌、不换成型场面，名次和“最后做成这套没有”单独记（place_cgift / cgift_formed）。0 = 不用
-    cgift_frac: float = 0.0
-    cgift_turns: str = "5,6,7,8,9,10,11"
-    cgift_p: float = 0.7
-    # 种族课程（rl/curricula/tribes.py，第 27116 轮起）：tribe_frac 的机器人局开局时强制本局出现 tribe_force 个 tribe_pool 里的种族
-    # （模型还不会的），剩下的种族随机。这些局名次单独记（place_tribe、tribe_by：每个种族的局数 / 平均名次 / 吃鸡率），
-    # 不算进 place_bot / 加强强度。0 = 不用
-    tribe_frac: float = 0.0
-    tribe_force: int = 3
-    tribe_pool: str = "BEAST,DRAGON,MECHANICAL,MURLOC,PIRATE,UNDEAD,ABERRATION"
-    # 种族课程局从加强开始的回合起机器人全换成高分阵容（全强度，和考试一样）。第 27450 轮前没有：这些局平均 3.2–3.4 名，
-    # 和普通机器人局一样，不成型也能赢，256 局阵容测试里野兽 / 亡灵 / 机械……成型还是 0%
-    tribe_full: bool = False
-    # 起步牌（rl/curricula/tribes.py 的 TribeStarter，反向课程）：tribe_start_p 的种族课程局在第 tribe_start_turn 回合往手里放
-    # tribe_start_cards 张一套新种族阵容（老师不会的种族）的核心卡；这些局不换成型场面。0 = 不用
-    tribe_start_p: float = 0.0
-    tribe_start_turn: int = 4
-    tribe_start_cards: int = 2
-    # 只练这几套（阵容名字，逗号分隔；rl/target_comps.json 里的 name）：起步牌只给这几套、种族课程局里成型阵容课程只换这几套的场面、
-    # “成新阵容”只算这几套。中立阵容（喝茶流）不要求用到强制的种族。空 = 老师不会的种族的全部 S / A
-    tribe_comps: str = ""
-    # 种族课程局里老师不教（按局算：这些局的所有局面；teacher_need_tribes 是按酒馆种族算）
-    tribe_teacher_off: bool = False
-    # 老师只在本局开了这几个种族之一的局面上教（老师只会野猪人 / 恶魔 / 元素，别的局里它会把模型往回拉）。空 = 都教
-    teacher_need_tribes: str = ""
-    # 扣回哪几项（target 目标阵容、engine 引擎联动、combat 阵容强度）。第 16045 轮起阵容强度不扣：它就是“结束回合时的场面打同期
-    # 高分阵容的胜率”，和名次是一回事（comptest 前四名的局每回合都比后四名高）；扣掉以后后期养场面那几步几乎拿不到功劳
-    # （离局末近，扣回那一下只打了 λ^k ≈ 0.8 的折扣），第 16040 轮第 12 / 13 / 14 回合阵容强度 0.52 / 0.38 / 0.28（高手 0.67 / 0.60 / 0.68）
-    shape_repay_keys: str = "target,engine,combat"
     # 考试守护（三天无人看着跑用）：每次加强局考试（eval_every 轮一次、eval_games 局、全强度高分阵容）记下名次，
     # 最近 guard_window 次的平均比历史最好低（名次数字大）guard_margin 以上、连续 guard_patience 次 →
     # 换回最好的那一版参数（runs/<run>/best.pt，优化器重新开始），guard_keys 里的模仿 / 老师系数 × guard_decay。

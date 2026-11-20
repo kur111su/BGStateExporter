@@ -268,8 +268,9 @@ def check_data(tmp: Path):
     ks = D.kpis(rows)
     assert len(ks) >= 12 and ks[0][0] == "考试等效名次" and ks[0][3] is True and ks[0][2] is not None, ks[:2]
     tabs = D.md_tables(tmp / "run")
-    cg = next(t for t in tabs if t["title"].startswith("送整套阵容"))
-    assert cg["head"][0] == "阵容" and any(r[0] == "圣盾流龙族" for r in cg["rows"]) and "第 5–11 回合" in cg["text"], cg
+    sd = next(t for t in tabs if t["title"].startswith("拿着成型阵容打"))
+    assert sd["head"][0] == "阵容" and any(r[0] == "喝茶流" for r in sd["rows"]), sd
+    assert not any(t["title"].startswith("送整套阵容") for t in tabs)                     # 第 33328 轮删掉的课程
     assert "第 22200 轮" in D.header(rows) and D.header([]) == "还没有训练日志"
     V = D.load_viewer(tmp / "arena2")
     s = V.summary()

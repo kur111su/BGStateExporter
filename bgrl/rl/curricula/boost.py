@@ -221,24 +221,9 @@ class ProBoardBooster(BotBooster):
         self.injected = 0
         self.failed = 0
         self.late_from, self.late_strength = 0, 0.0   # 第 late_from 回合起换阵容的概率至少 late_strength（0 = 不分前后期）
-        self.full: set[int] = set()                    # 这几局一定加强、而且全强度（种族课程，和考试一样）；局打完 finish 时清掉
-
-    def _seat_plan(self, g: int, episode: int):
-        us = super()._seat_plan(g, episode)
-        if us is None and g in self.full:
-            us = [0.5] * 8
-            self.plan[g] = (episode, us)
-        return us
-
-    def finish(self, g: int):
-        self.full.discard(g)
-        return super().finish(g)
 
     def strength_at(self, t: int, g: int | None = None) -> float:
-        """第 t 回合每个机器人座位被换成高分阵容的概率：前期按自适应的 strength，后期（late_from 起）至少 late_strength；
-        full 里的局一直是 1。"""
-        if g is not None and g in self.full:
-            return 1.0
+        """第 t 回合每个机器人座位被换成高分阵容的概率：前期按自适应的 strength，后期（late_from 起）至少 late_strength。"""
         if self.late_from and t >= self.late_from:
             return max(self.strength, self.late_strength)
         return self.strength
@@ -249,8 +234,7 @@ class ProBoardBooster(BotBooster):
         return self.rng.choice(self.lib[tt])
 
     def boost(self, env, features: np.ndarray, episodes=None) -> bool:
-        if (self.frac <= 0 or not self.lib or max(self.strength, self.late_strength if self.late_from else 0) <= 0) \
-                and not self.full:
+        if self.frac <= 0 or not self.lib or max(self.strength, self.late_strength if self.late_from else 0) <= 0:
             return False
         from taverngym import _core
         turns = np.rint(features[:, 0] * 20).astype(int)

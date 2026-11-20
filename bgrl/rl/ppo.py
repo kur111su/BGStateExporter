@@ -129,44 +129,6 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
                   f"高手抢着买、模型不买的牌（{len(self.gifts.pool)} 种）", flush=True)
         self.gift_places: list[int] = []
-        self.cgifts = None
-        if cfg.cgift_frac > 0 and cfg.games_bot:
-            from .curricula import CompGifts
-            cg_turns = [int(x) for x in str(cfg.cgift_turns).split(",") if x.strip()]
-            self.cgifts = CompGifts(cfg.cgift_frac, cg_turns, p=cfg.cgift_p, seed=cfg.seed)
-            print(f"送整套阵容：{cfg.cgift_frac:.0%} 的机器人局开局定一套本局凑得成的目标阵容（{len(self.cgifts.comps)} 套），"
-                  f"第 {cfg.cgift_turns} 回合每回合 {cfg.cgift_p:.0%} 的机会送一张这套还没有的核心卡", flush=True)
-        self.tribes = None
-        if cfg.tribe_frac > 0 and cfg.games_bot:
-            from .curricula import TribeLobbies, parse_types
-            pool = parse_types(cfg.tribe_pool)
-            self.tribes = TribeLobbies(cfg.tribe_frac, pool, cfg.tribe_force, cfg.rules(), seed=cfg.seed)
-            print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
-                  + (f"；老师只在开了 {cfg.teacher_need_tribes} 之一的局面上教" if cfg.teacher_need_tribes else ""), flush=True)
-        self.tribe_focus: set[str] = set()
-        self.tribe_no_teacher: set[tuple[int, int]] = set()   # 种族课程局 (槽位, 第几局)：老师不教（tribe_teacher_off）
-        if self.tribes is not None and cfg.tribe_comps:
-            from .curricula import parse_comps
-            self.tribe_focus = set(parse_comps(cfg.tribe_comps))
-            print(f"种族课程只练：{'、'.join(sorted(self.tribe_focus))}" + ("；这些局老师不教" if cfg.tribe_teacher_off else ""),
-                  flush=True)
-        self.tribe_start = None
-        if self.tribes is not None and cfg.tribe_start_p > 0:
-            from .curricula import TribeStarter
-            self.tribe_start = TribeStarter(cfg.tribe_start_p, cfg.tribe_start_turn, cfg.tribe_start_cards, seed=cfg.seed,
-                                            focus=self.tribe_focus or None)
-            print(f"起步牌：{cfg.tribe_start_p:.0%} 的种族课程局在第 {cfg.tribe_start_turn} 回合往手里放 {cfg.tribe_start_cards} 张"
-                  f"新种族阵容的核心卡（{len(self.tribe_start.comps)} 套可选）", flush=True)
-        self.tribe_new_start: list[bool] = []          # 给过起步牌的种族课程局：成了新种族阵容
-        self.tribe_new_free: list[bool] = []           # 没给的：成了新种族阵容（真正要看的——自己从零做出来）
-        self.tribe_places: list[int] = []
-        self.tribe_new_comp: list[bool] = []           # 种族课程局：最后成了老师不会的种族的阵容（这一轮）
-        self.tribe_comps: dict[str, int] = {}          # 种族课程局最后成了哪套（上次考试以来）
-        self.tribe_by: dict[str, list] = {}            # 种族课程：种族 → [(名次)]（上次考试以来）
-        self.cgift_by: dict[str, list] = {}            # 送整套阵容：阵容 → [(名次, 最后做成这套没有)]（上次考试以来）
-        self.cgift_iter: list = []                     # 同上，这一轮的
-        self.tg_rebase: set[int] = set()               # 换过场面的槽位：下次量目标阵容时从新场面起算
-        self.eg_rebase: set[int] = set()               # 同上，引擎联动
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -434,8 +396,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                        tier_gap=round(mx["gap_sum"] / max(1, mx["gap_n"]), 3),
                        up_afford=round(mx["aff_up"] / max(1, mx["aff_n"]), 3), up_t2=round(mx["t2_up"] / max(1, mx["t2_n"]), 3),
                        starve_turn=round(mx["starve"] / ends, 3), end_rich=round(mx["end_rich"] / ends, 3),
-                       unspent=round(mx["unspent"] / ends, 3),
-                       comp_q=round(mx["comp_q_sum"] / max(1, mx["comp_q_n"]), 3) if mx.get("comp_q_n") else None)
+                       unspent=round(mx["unspent"] / ends, 3))
             if mx.get("grow_n"):                       # 养场面：第 grow_from_turn 回合起每回合结束 - 开始的场面强度
                 rec["grow"] = round(mx["grow_sum"] / mx["grow_n"], 4)
                 rec["grow_n"] = int(mx["grow_n"])
@@ -443,10 +404,6 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
             if mx.get("cs_n"):                         # 阵容强度：对同期高分阵容的平均胜率（全部 / 第 9 回合起）
                 rec.update(cs_wr=round(mx["cs_sum"] / mx["cs_n"], 3), cs_n=int(mx["cs_n"]), t_combat=round(mx["t_combat"], 1),
                            cs_late=round(mx["cs_late_sum"] / mx["cs_late_n"], 3) if mx.get("cs_late_n") else None)
-            if mx.get("tgt_n"):                        # 结束回合时离目标阵容多近（S 级凑齐 = 1）
-                rec["tgt_q"] = round(mx["tgt_sum"] / mx["tgt_n"], 3)
-            if mx.get("eng_n"):                        # 结束回合时引擎联动的程度（一个引擎配齐 3 张燃料 = 1）
-                rec["eng_q"] = round(mx["eng_sum"] / mx["eng_n"], 3)
             if mx.get("sells"):
                 rec["keep_sold"] = round(mx.get("keep_sold", 0) / mx["sells"], 4)   # 卖牌里卖掉“该留的牌”的比例（高手 5.2%）
             if mx.get("econ_n"):                       # 结束回合时平均存下的钱（下回合额外金币 + 2 × 金币上限加成）
@@ -477,31 +434,12 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                     rec["boost_place_avg"] = self.adapt.mean()
                     self._apply_boost_floor(rec)
                 self.t_boost = 0.0
-            if self.cgifts is not None:
-                rec.update(self.cgifts.take_stats())
-                cur, self.cgift_iter = self.cgift_iter, []
-                if cur:
-                    rec["place_cgift"] = round(float(np.mean([p for p, _ in cur])), 3)
-                    rec["cgift_games"] = len(cur)
-                    rec["cgift_formed"] = round(float(np.mean([f for _, f in cur])), 3)
             if self.gifts is not None:
                 rec.update(self.gifts.take_stats())
                 if self.gift_places:
                     rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
                     rec["gift_games"] = len(self.gift_places)
                 self.gift_places = []
-            if self.tribes is not None:
-                rec.update(self.tribes.take_stats())
-                if self.tribe_places:
-                    rec["place_tribe"] = round(float(np.mean(self.tribe_places)), 3)
-                    rec["tribe_games"] = len(self.tribe_places)
-                    rec["tribe_newcomp"] = round(float(np.mean(self.tribe_new_comp)), 3)
-                for k, v in (("tribe_newcomp_free", self.tribe_new_free), ("tribe_newcomp_start", self.tribe_new_start)):
-                    if v:
-                        rec[k] = round(float(np.mean(v)), 3)
-                if self.tribe_start is not None:
-                    rec.update(self.tribe_start.take_stats())
-                self.tribe_places, self.tribe_new_comp, self.tribe_new_free, self.tribe_new_start = [], [], [], []
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
@@ -518,24 +456,9 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 rec["eval_place"], rec["eval_top1"] = self.evaluate()
                 if cfg.boost_frac > 0:
                     rec["eval_boost_place"], rec["eval_boost_top1"] = self.evaluate(seed=1999, boosted=True)
-                    if self.cgift_by:                      # 送整套阵容：每套 [局数, 平均名次, 吃鸡率, 做成这套的比例]
-                        rec["cgift_by_comp"] = {k: [len(v), round(float(np.mean([p for p, _ in v])), 2),
-                                                    round(float(np.mean([p == 1 for p, _ in v])), 3),
-                                                    round(float(np.mean([f for _, f in v])), 3)]
-                                                for k, v in sorted(self.cgift_by.items())}
-                        self.cgift_by = {}
-                    if self.tribe_by:                      # 种族课程：每个强制的种族 [局数, 平均名次, 吃鸡率, 成了用这个种族的阵容的比例]
-                        rec["tribe_by"] = {k: [len(v), round(float(np.mean([p for p, _ in v])), 2),
-                                               round(float(np.mean([p == 1 for p, _ in v])), 3),
-                                               round(float(np.mean([f for _, f in v])), 3)]
-                                           for k, v in sorted(self.tribe_by.items())}
-                        self.tribe_by = {}
                     mid = self.audit.take_mid()            # 塑形审计：第 6–8 回合每种动作每做一次从各项拿多少分
                     if mid:
                         rec["shape_mid"] = mid
-                    if self.tribe_comps:                   # 种族课程局最后成了哪套（局数，多的在前）
-                        rec["tribe_comps"] = dict(sorted(self.tribe_comps.items(), key=lambda kv: -kv[1]))
-                        self.tribe_comps = {}
                     if self.seed_by:                       # 成型阵容课程：各套阵容拿到手以后打第几（上次考试以来）
                         rec["seeded_by_comp"] = {k: seed_row(v) for k, v in sorted(self.seed_by.items())}
                         self.seed_by = {}
