@@ -66,7 +66,7 @@
 
 ## 训练配方
 
-`configs/v3.json` 是训练（面板的“训练”）的全部设置：`run`（训练目录）、`config`（`rl/config.py` 的 `Config` 字段和值）、`notes`（每组设置是干什么的）。优先级：`Config` 默认值 < 配方 < 命令行。要试别的设置，复制一份改名（例如 `configs/v4.json`，把 `run` 改成 `runs\v4`），然后 `bg.py train --recipe configs/v4.json --resume`。`tests/test_recipe.py` 检查配方里的字段都存在，并且 `train.bat` 得到的设置和改用配方之前那串命令行参数完全一样。
+`configs/v3.json` 是训练（面板的“训练”）的全部设置：`run`（训练目录）、`config`（`rl/config.py` 的 `Config` 字段和值）。每组设置为什么这样设、试过什么、结果如何记在 `docs/recipe_history.md`（原来的 `notes`）。优先级：`Config` 默认值 < 配方 < 命令行。做实验时在 `configs/exp/` 放一个只写改动的配方（`"base": "v3"` 继承，见 `configs/exp/README.md`），`bg.py train --recipe configs/exp/xxx.json --resume`；留下的改动写回 `configs/v3.json`。`tests/test_recipe.py` 检查配方里的字段都存在，并且 `train.bat` 得到的设置和改用配方之前那串命令行参数完全一样。
 
 ## 模块和依赖方向
 
@@ -74,7 +74,8 @@
 
 ```
 paths.py          路径（runs/、reports/、默认训练目录 runs/v3）
-configs/v3.json   训练配方
+configs/v3.json   训练配方；configs/exp/ 实验配方（继承 v3，只写改动）
+docs/             recipe_history.md：配方每一项的实验记录
 
 tg/               TavernGym 桥接（不需要 torch）
   actions.py      245 个动作的编号、动作类别 action_family、引擎出错判断 is_panic
