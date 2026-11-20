@@ -71,7 +71,7 @@ class ShapingMixin:
         lib = getattr(self, "_pro_lib", None)
         if not lib:
             from paths import RUNS
-            from .calibrate import merge_pro_boards
+            from .curricula import merge_pro_boards
             paths = [Path(p) for p in str(self.cfg.pro_boards).split(";") if p.strip()] or [RUNS / "pro_boards.json"]
             lib = merge_pro_boards(p for p in paths if p.exists())
         if not lib:

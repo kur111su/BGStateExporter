@@ -29,7 +29,7 @@ from tg.actions import (
 from tg.obs import C_BOARD
 
 from .audit import ShapeAudit
-from .calibrate import (
+from .curricula import (
     AdaptiveStrength,
     ramp,
 )
@@ -123,7 +123,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.boost_floor: float | None = None          # 前期强度下限（boost_min_strength），从启动时的强度慢慢爬上去
         self.gifts = None
         if cfg.gift_frac > 0 and cfg.games_bot:
-            from .calibrate import CardGifts
+            from .curricula import CardGifts
             g_turns = [int(x) for x in str(cfg.gift_turns).split(",") if x.strip()]
             self.gifts = CardGifts(cfg.gift_frac, g_turns, p=cfg.gift_p, min_lift=cfg.gift_min_lift, seed=cfg.seed)
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
@@ -131,14 +131,14 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.gift_places: list[int] = []
         self.cgifts = None
         if cfg.cgift_frac > 0 and cfg.games_bot:
-            from .calibrate import CompGifts
+            from .curricula import CompGifts
             cg_turns = [int(x) for x in str(cfg.cgift_turns).split(",") if x.strip()]
             self.cgifts = CompGifts(cfg.cgift_frac, cg_turns, p=cfg.cgift_p, seed=cfg.seed)
             print(f"送整套阵容：{cfg.cgift_frac:.0%} 的机器人局开局定一套本局凑得成的目标阵容（{len(self.cgifts.comps)} 套），"
                   f"第 {cfg.cgift_turns} 回合每回合 {cfg.cgift_p:.0%} 的机会送一张这套还没有的核心卡", flush=True)
         self.tribes = None
         if cfg.tribe_frac > 0 and cfg.games_bot:
-            from .tribes import TribeLobbies, parse_types
+            from .curricula import TribeLobbies, parse_types
             pool = parse_types(cfg.tribe_pool)
             self.tribes = TribeLobbies(cfg.tribe_frac, pool, cfg.tribe_force, cfg.rules(), seed=cfg.seed)
             print(f"种族课程：{cfg.tribe_frac:.0%} 的机器人局强制本局出现 {cfg.tribe_force} 个这些种族：{', '.join(pool)}"
@@ -146,13 +146,13 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.tribe_focus: set[str] = set()
         self.tribe_no_teacher: set[tuple[int, int]] = set()   # 种族课程局 (槽位, 第几局)：老师不教（tribe_teacher_off）
         if self.tribes is not None and cfg.tribe_comps:
-            from .tribes import parse_comps
+            from .curricula import parse_comps
             self.tribe_focus = set(parse_comps(cfg.tribe_comps))
             print(f"种族课程只练：{'、'.join(sorted(self.tribe_focus))}" + ("；这些局老师不教" if cfg.tribe_teacher_off else ""),
                   flush=True)
         self.tribe_start = None
         if self.tribes is not None and cfg.tribe_start_p > 0:
-            from .tribes import TribeStarter
+            from .curricula import TribeStarter
             self.tribe_start = TribeStarter(cfg.tribe_start_p, cfg.tribe_start_turn, cfg.tribe_start_cards, seed=cfg.seed,
                                             focus=self.tribe_focus or None)
             print(f"起步牌：{cfg.tribe_start_p:.0%} 的种族课程局在第 {cfg.tribe_start_turn} 回合往手里放 {cfg.tribe_start_cards} 张"

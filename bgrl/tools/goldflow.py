@@ -132,7 +132,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
-    （rl/calibrate.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。
+    （rl/curricula/seed_comps.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。
     late：(act, info)，第 late_from 回合起换它来打（例如老师模型），看后期换个打法场面能不能养起来。
     judge_lib：测试用，代替高分阵容库。"""
     import time as _t
@@ -145,7 +145,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads, config=train_rules(ckpt))
     booster = None
     if boosted:
-        from rl.calibrate import ProBoardBooster, merge_pro_boards
+        from rl.curricula import ProBoardBooster, merge_pro_boards
         lib = merge_pro_boards(p for p in (RUNS / "pro_boards.json", RUNS / "h13_boards.json") if p.exists())
         if lib:
             booster = ProBoardBooster(lib, frac=1.0, start_turn=5, seed=seed, every=2)
@@ -155,7 +155,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             print("没有 runs/pro_boards.json / runs/h13_boards.json，对手是普通脚本机器人", flush=True)
     # 阵容强度（rl/boardsim.py，和训练的 combat_bonus 同一把尺子）：模型每次结束回合时的场面打同期高分阵容的胜率
     judge, lib = None, None
-    from rl.calibrate import merge_pro_boards as _merge
+    from rl.curricula import merge_pro_boards as _merge
     lib = judge_lib if judge_lib is not None else _merge(p for p in (RUNS / "pro_boards.json", RUNS / "h13_boards.json")
                                                        if p.exists())
     if lib:
@@ -163,7 +163,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         judge = BoardJudge(lib, k=12, n=3, seed=0)
     seeder, seeded_comp = None, {}                     # 拿着成型阵容打：槽位 → 换成的那套阵容（空 = 没换成）
     if seed_comps:
-        from rl.calibrate import CompSeeder
+        from rl.curricula import CompSeeder
         ts = tuple(int(x) for x in str(seed_comps).split(",") if x.strip())
         slib = seed_lib if seed_lib is not None else lib
         if ts and slib:

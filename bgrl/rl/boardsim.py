@@ -9,7 +9,7 @@
   strength(game, a, b, n)         a 打 b 的胜率
 
 高分阵容来自 runs/pro_boards.json（6500+）和 runs/h13_boards.json（万三），格式 {回合: [{"tier", "board": [[卡牌ID, 攻, 血], …]}]}；
-只有卡牌、攻 / 血、金色（附魔没有），和训练里给机器人换阵容（rl/calibrate.ProBoardBooster）是同一份。
+只有卡牌、攻 / 血、金色（附魔没有），和训练里给机器人换阵容（rl/curricula/boost.ProBoardBooster）是同一份。
 每回合固定抽 k 个当“考官”（同一个尺子，前后回合的分数才能比），每个打 n 场。不需要 torch。
 """
 from __future__ import annotations

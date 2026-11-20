@@ -411,9 +411,9 @@ def check_teacher():
 
 
 def check_seeder():
-    """成型阵容课程（rl/calibrate.CompSeeder）：学习者到了那一回合，场面换成库里成型的 S / A 阵容（喝茶流：布莱恩、巴琳达、守门融合怪）。"""
+    """成型阵容课程（rl/curricula/seed_comps.CompSeeder）：学习者到了那一回合，场面换成库里成型的 S / A 阵容（喝茶流：布莱恩、巴琳达、守门融合怪）。"""
     from taverngym import BatchEnv
-    from rl.calibrate import CompSeeder
+    from rl.curricula import CompSeeder
     from rl.comp import formed, load_target_comps
     from tg.catalog import base_id, card_id
     from tg.obs import C_BOARD, N_BOARD
@@ -677,7 +677,7 @@ def check_board():
 
 def check_seed_row_floor():
     """成型阵容课程按加强局分开记（ppo.seed_row）；前期强度下限从启动时的强度慢慢爬上去（boost_min_strength）。"""
-    from rl.calibrate import AdaptiveStrength
+    from rl.curricula import AdaptiveStrength
     from rl.rollout import seed_row
     assert seed_row([(1, True), (3, False), (5, True), (2, False)]) == [4, 2.75, 0.25, 2, 3.0, 0.5]
     assert seed_row([(4, False)]) == [1, 4.0, 0.0, 0, 0.0, 0.0]
@@ -734,7 +734,7 @@ def check_gifts():
     纯加金币的法术不进池子；finish 返回是不是送牌局；成型阵容课程跳过这些局。"""
     import json as _json
     from taverngym import BatchEnv
-    from rl.calibrate import CardGifts
+    from rl.curricula import CardGifts
     full = CardGifts(frac=1.0, seed=0)
     assert full.pool and all(k != "BG28_810" for k, *_ in full.pool)          # 酒馆币（加 1 金币）不送
     assert any(k == "BG30_123" for k, *_ in full.pool)                        # 无畏的食客在池子里
@@ -796,7 +796,7 @@ def check_comp_gifts():
     酒馆等级 + 2 以内），场面不动；finish 返回这套的名字；skip 里的对局不送；送牌课程跳过这些局。"""
     import json as _json
     from taverngym import BatchEnv
-    from rl.calibrate import CardGifts, CompGifts
+    from rl.curricula import CardGifts, CompGifts
     from rl.comp import load_target_comps
     comps = load_target_comps()
     cg = CompGifts(frac=1.0, turns=(2, 3, 4, 5, 6), p=1.0, seed=2)

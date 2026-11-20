@@ -15,7 +15,7 @@ from tg.actions import (
     is_panic,
 )
 
-from .calibrate import (
+from .curricula import (
     BotBooster,
     ProBoardBooster,
     merge_pro_boards,
@@ -244,7 +244,7 @@ class CollectMixin:
                                 if self.adapt is not None:
                                     self.adapt.add(int(info["placement"][i]))
                 self.obs[name] = env.observe()
-                if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/calibrate.py）
+                if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/curricula/boost.py）
                     tc = time.time()
                     if self.adapt is None:
                         self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
@@ -408,7 +408,7 @@ class CollectMixin:
 
     def _make_seeder(self):
         """成型阵容课程（seed_comp_frac）：用和加强局同一个高分阵容库。"""
-        from .calibrate import CompSeeder
+        from .curricula import CompSeeder
         cfg = self.cfg
         lib = getattr(self, "_pro_lib", None)
         if not lib:
@@ -442,7 +442,7 @@ class CollectMixin:
 
     @staticmethod
     def _strong_tribes() -> frozenset:
-        from .tribes import STRONG
+        from .curricula import STRONG
         return frozenset(STRONG)
 
     def _final_comp(self, s: int) -> int:

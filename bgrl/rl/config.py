@@ -88,13 +88,13 @@ class Config:
     # 按真实回合时长（约 45–90 秒）和每个操作 2–3 秒估。
     turn_caps: str = "14,18,22,26,30,34,38,42,45"
     active_snapshots: int = 1      # 同一时间最多用几个快照当对手（每多一个，每步要多算一次网络；3 个时采样慢一倍）
-    # 第二阶段：按真人对局校准机器人强度（rl/calibrate.py）。v2 的模型学会了一直待在 1–2 本，对弱机器人有效、
+    # 第二阶段：按真人对局校准机器人强度（rl/curricula/boost.py）。v2 的模型学会了一直待在 1–2 本，对弱机器人有效、
     # 对真人后期无效；机器人局里把机器人场面按真人画像放大，逼模型学会升本、做后期。0 = 关闭
     boost_frac: float = 0.0        # 多少比例的机器人局加强
     boost_from_turn: int = 7       # 从第几回合开始（前 6 回合机器人和真人差不多）
     boost_every: int = 2           # 每几回合加强一次（每次要整局存档读档，约 7 毫秒）
     boost_ramp_iters: int = 200    # 不自适应时：加强幅度从 30% 爬到 100% 用多少轮
-    # 自适应（默认）：按学习者在加强局的平均名次调幅度，见 rl/calibrate.py 的 AdaptiveStrength
+    # 自适应（默认）：按学习者在加强局的平均名次调幅度，见 rl/curricula/boost.py 的 AdaptiveStrength
     boost_adapt: bool = True
     boost_start: float = 0.4       # 自适应的起点（接着旧检查点练、检查点里没有记录时也用它）
     boost_target_place: float = 3.75   # 加强局的目标平均名次（8 人局随便打 = 4.5）
@@ -198,7 +198,7 @@ class Config:
     # 引擎联动（见 _engine_shape，rl/comp.ENGINE_RULES）：场上引擎卡配上燃料随从的程度涨多少加 engine_bonus × 涨的。0 = 不用
     engine_bonus: float = 0.0
     engine_from_turn: int = 5
-    # “成型以后怎么玩”的课程（rl/calibrate.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
+    # “成型以后怎么玩”的课程（rl/curricula/seed_comps.CompSeeder）：这么多比例的机器人局里，学习者在 seed_comp_turns 里随机一个回合
     # 招募开始时，场面换成同一回合高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打。0 = 不用。
     # 这些局不算进加强局的名次（不影响 boost_strength）和 place_bot，单独记 place_seeded
     seed_comp_frac: float = 0.0
@@ -263,20 +263,20 @@ class Config:
     # 第 12–14 回合场面 0.52 / 0.39 / 0.26（高手 0.67 / 0.60 / 0.68）。要吃鸡就得后期场面压过所有人，
     # 这一段线性奖励几乎不给额外的分。表换掉的只是局末那一下（引擎给的线性部分扣掉、换成表里的值），违规扣分照旧
     place_reward: str = ""
-    # 送牌课程（rl/calibrate.CardGifts，第 20800 轮起）：gift_frac 的机器人局里，gift_turns 每回合招募开始时按 gift_p 的机会
+    # 送牌课程（rl/curricula/gifts.CardGifts，第 20800 轮起）：gift_frac 的机器人局里，gift_turns 每回合招募开始时按 gift_p 的机会
     # 往学习者手里放一张“高手抢着买（rl/card_value.json 挑中倍率 ≥ gift_min_lift）、模型从来不买”的牌；纯加金币的法术不送。
     # 这些局不再换成型场面，名次单独记（place_gift），不算进 place_bot / 加强强度。0 = 不用
     gift_frac: float = 0.0
     gift_turns: str = "4,5,6,7,8,9,10,11,12"
     gift_p: float = 0.6
     gift_min_lift: float = 2.0
-    # 送整套阵容（rl/calibrate.CompGifts，第 21800 轮起）：cgift_frac 的机器人局里，开局定一套本局凑得成的目标阵容，
+    # 送整套阵容（rl/curricula/gifts.CompGifts，第 21800 轮起）：cgift_frac 的机器人局里，开局定一套本局凑得成的目标阵容，
     # cgift_turns 每回合招募开始时按 cgift_p 的机会把这套还没有的核心卡送一张到手里（齐了送配套卡）。
     # 这些局不再送零散的牌、不换成型场面，名次和“最后做成这套没有”单独记（place_cgift / cgift_formed）。0 = 不用
     cgift_frac: float = 0.0
     cgift_turns: str = "5,6,7,8,9,10,11"
     cgift_p: float = 0.7
-    # 种族课程（rl/tribes.py，第 27116 轮起）：tribe_frac 的机器人局开局时强制本局出现 tribe_force 个 tribe_pool 里的种族
+    # 种族课程（rl/curricula/tribes.py，第 27116 轮起）：tribe_frac 的机器人局开局时强制本局出现 tribe_force 个 tribe_pool 里的种族
     # （模型还不会的），剩下的种族随机。这些局名次单独记（place_tribe、tribe_by：每个种族的局数 / 平均名次 / 吃鸡率），
     # 不算进 place_bot / 加强强度。0 = 不用
     tribe_frac: float = 0.0
@@ -285,7 +285,7 @@ class Config:
     # 种族课程局从加强开始的回合起机器人全换成高分阵容（全强度，和考试一样）。第 27450 轮前没有：这些局平均 3.2–3.4 名，
     # 和普通机器人局一样，不成型也能赢，256 局阵容测试里野兽 / 亡灵 / 机械……成型还是 0%
     tribe_full: bool = False
-    # 起步牌（rl/tribes.py 的 TribeStarter，反向课程）：tribe_start_p 的种族课程局在第 tribe_start_turn 回合往手里放
+    # 起步牌（rl/curricula/tribes.py 的 TribeStarter，反向课程）：tribe_start_p 的种族课程局在第 tribe_start_turn 回合往手里放
     # tribe_start_cards 张一套新种族阵容（老师不会的种族）的核心卡；这些局不换成型场面。0 = 不用
     tribe_start_p: float = 0.0
     tribe_start_turn: int = 4

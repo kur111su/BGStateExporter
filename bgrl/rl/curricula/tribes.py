@@ -1,4 +1,4 @@
-"""种族课程（rl/ppo.py 用；配方 tribe_*）：一部分机器人局开局时强制本局出现几个模型还不会的种族。
+"""种族课程（课程之一，原 rl/tribes.py；配方 tribe_*）：一部分机器人局开局时强制本局出现几个模型还不会的种族。
 
 为什么：集中学老师以后（第 27116 轮），256 局阵容测试里模型的主种族是野猪人 48%、恶魔 23%、元素 11%，
 野兽 / 亡灵 / 机械 / 鱼人 / 龙的阵容成型全是 0%；这三族都没开的局只能打“混合”，平均 5.25 名、吃鸡 0%。
@@ -83,7 +83,7 @@ class TribeLobbies:
 
 def parse_comps(spec: str) -> list[str]:
     """“圣盾流龙族,喝茶流” → 名字列表；不认识的名字报错。"""
-    from .comp import load_target_comps
+    from ..comp import load_target_comps
     names = [x.strip() for x in str(spec or "").split(",") if x.strip()]
     known = {c["name"] for c in load_target_comps()}
     bad = [x for x in names if x not in known]
@@ -108,7 +108,7 @@ class TribeStarter:
     再把 turn 往前、cards 往少调（反向课程）。"""
 
     def __init__(self, p: float = 0.5, turn: int = 4, cards: int = 2, seed: int = 0, focus: list[str] | None = None):
-        from .calibrate import CompGifts
+        from .gifts import CompGifts
         self.cg = CompGifts(frac=0.0, seed=seed)          # 借它的卡牌表、next_card、_owned
         self.comps = [c for c in self.cg.comps if c["name"] in focus] if focus else new_comps(self.cg.comps)
         self.p, self.turn, self.cards = float(p), int(turn), int(cards)
@@ -137,8 +137,8 @@ class TribeStarter:
         from taverngym import _core
 
         from tg.obs import lobby
-        from .calibrate import _dumps, _loads
-        from .comp import reachable
+        from ._json import _dumps, _loads
+        from ..comp import reachable
         turns = np.rint(np.asarray(features[:, 0], dtype=np.float32) * 20).astype(int)
         changed = False
         for g, cur in self.plan.items():

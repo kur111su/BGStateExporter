@@ -120,7 +120,7 @@ def build(lib: dict, per_turn: int = 150, turns=range(5, 14), seed: int = 0, min
 
 
 def main() -> int:
-    from rl.calibrate import merge_pro_boards
+    from rl.curricula import merge_pro_boards
     ap = argparse.ArgumentParser()
     ap.add_argument("--boards", default=f"{RUNS / 'pro_boards.json'};{RUNS / 'h13_boards.json'}")
     ap.add_argument("--per-turn", type=int, default=150)

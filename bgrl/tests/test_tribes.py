@@ -1,4 +1,4 @@
-"""种族课程（rl/tribes.py）：换进来的局真的开了指定的种族、编号接得上、之后的局恢复随机；老师按种族筛局面。只要 TavernGym。"""
+"""种族课程（rl/curricula/tribes.py）：换进来的局真的开了指定的种族、编号接得上、之后的局恢复随机；老师按种族筛局面。只要 TavernGym。"""
 import sys
 from pathlib import Path
 
@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np                                     # noqa: E402
 from taverngym import BatchEnv                         # noqa: E402
 
-from rl.tribes import STRONG, WEAK, TribeLobbies, lobby_has_any, parse_types   # noqa: E402
+from rl.curricula import STRONG, WEAK, TribeLobbies, lobby_has_any, parse_types   # noqa: E402
 from tg.obs import lobby                               # noqa: E402
 
 
@@ -50,7 +50,7 @@ def main():
     # 概率 0：不换
     assert not TribeLobbies(0.0, list(WEAK), 3, {}).apply(env, 1)
     # 种族课程局全强度：加强概率 0、强度 0 的机器人加强器，full 里的局照样加强、每个座位都换
-    from rl.calibrate import ProBoardBooster
+    from rl.curricula import ProBoardBooster
     bst = ProBoardBooster({5: [{"tier": 3, "board": [["BG_LOE_077", 3, 3]]}]}, frac=0.0, start_turn=5)
     bst.strength = 0.0
     assert bst._seat_plan(0, 1) is None and bst.strength_at(6, 0) == 0.0
@@ -64,7 +64,7 @@ def main():
 def starter_checks():
     """起步牌：种族课程局第 4 回合招募时往手里放 2 张新种族阵容的核心卡，只放一次。"""
     import json
-    from rl.tribes import TribeStarter, new_comps
+    from rl.curricula import TribeStarter, new_comps
     from rl.comp import load_target_comps
     from tg.catalog import base_of_index
     from tg.obs import C_HAND, N_HAND
@@ -95,7 +95,7 @@ def starter_checks():
     assert gave, "第 4 回合没给起步牌"
     assert st.finish(0) and st.finish(0) is None
     assert not TribeStarter(0.0).begin(0, {"BEAST"})
-    from rl.tribes import parse_comps
+    from rl.curricula import parse_comps
     foc = parse_comps("圣盾流龙族, 喝茶流")
     st2 = TribeStarter(1.0, focus=foc)
     assert sorted(c["name"] for c in st2.comps) == sorted(foc)

@@ -1,4 +1,4 @@
-"""第二阶段的机器人加强（rl/calibrate.py）：目标曲线插值；加强后机器人的场面达到目标、学习者不变、读档后能接着打。"""
+"""第二阶段的机器人加强（rl/curricula/boost.py）：目标曲线插值；加强后机器人的场面达到目标、学习者不变、读档后能接着打。"""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rl.calibrate import AdaptiveStrength, BotBooster, ProBoardBooster, ramp, target_curve, target_for  # noqa: E402
+from rl.curricula import AdaptiveStrength, BotBooster, ProBoardBooster, ramp, target_curve, target_for  # noqa: E402
 
 REAL = json.loads((Path(__file__).resolve().parent.parent / "rl" / "real_profile.json").read_text(encoding="utf-8"))
 

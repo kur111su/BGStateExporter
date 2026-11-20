@@ -68,7 +68,7 @@ class TeacherMixin:
             ta[np.asarray(b["no_teacher"], dtype=bool)] = -1
         need = str(getattr(cfg, "teacher_need_tribes", "") or "").strip()
         if need:                                         # 老师只在开了它会的种族的局面上教
-            from .tribes import lobby_has_any, parse_types
+            from .curricula import lobby_has_any, parse_types
             ta[~lobby_has_any(b["f"], parse_types(need))] = -1
         if self.dev.type == "mps":
             torch.mps.empty_cache()

@@ -1,7 +1,7 @@
 """高分对局（Firestone 6500+ 分享包的 core/games.jsonl）→ 训练用的两个文件：
 
   runs/pro_boards.json   对手棋盘库：按回合存 6500+ 对局里战斗开始时的整板（卡牌 ID + 攻 / 血）和估计的酒馆等级。
-                         第二阶段加强机器人用（rl/calibrate.py 的 ProBoardBooster）：把机器人场面直接换成同一回合的
+                         第二阶段加强机器人用（rl/curricula/boost.py 的 ProBoardBooster）：把机器人场面直接换成同一回合的
                          真人高分阵容，机器人带上真的高本随从和效果，靠买增益法术堆身材的打法就不灵了。
                          只在本机（runs/ 不进 Git）：里面是别人对局的阵容，数据说明要求不要再公开分发。
   rl/pro_profile.json    汇总曲线（只有统计数字，可以进仓库）：每回合平均酒馆等级、对手场面总攻防四分位、

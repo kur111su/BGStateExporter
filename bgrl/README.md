@@ -89,11 +89,13 @@ tg/               TavernGym 桥接（不需要 torch）
 
 rl/               模型和训练
   model.py        实体 Transformer：指针式动作头 + 价值头 + 名次头（small / medium / large）
-  ppo.py          训练主流程（Trainer）：批量环境采样、PPO 更新、对手库快照、评估、检查点、train 循环
+  ppo.py          训练主流程（Trainer）：组装下面各部分，对手库快照、评估、检查点、train 循环
+  collector.py    采样：对局安排、学习者 / 对手快照前向、课程钩子、塑形、局末记账、引擎出错重建
+  update.py       PPO 更新：PPO + 价值 + 辅助头 + 老师 + 模仿，按词数排序切 micro、按 KL 提前结束
+  audit.py        塑形审计：每项塑形每局给了多少分、第 6–8 回合按动作分开记
   config.py       训练的全部设置（Config）
   rollout.py      Policy（出动作，可在另一设备放副本）、Rollout（一轮的经验、GAE）、名次奖励表
   teacher.py      老师：读老师、每轮先算好它的答案、系数
-  tribes.py       种族课程：一部分局强制出现模型还不会的种族
   guard.py        保险：健康检查和自动回滚、考试守护（best.pt）、预热、熵系数、--restore
   device.py       设备选择（MPS / CPU）、线程数
   extnet.py       外部模型（jimmypretend/hearthstone-bg-ppo）的读取和网络
@@ -103,7 +105,8 @@ rl/               模型和训练
   comp.py         最终阵容打分：主种族纯度、常见搭配、关键卡（训练、goldflow、nativedemos 共用）；读 sim_value.json
   boardsim.py     阵容强度：用引擎的战斗模拟（combat_preview）量场面打同期高分阵容的胜率（阵容强度奖励、simcards、comptest 用）
   league.py       对手库：快照按“和真人强度画像的距离”加权；考试对手
-  calibrate.py    机器人加强：按真人画像放大攻防（BotBooster）或换成高分真人阵容（ProBoardBooster），强度自适应
+  curricula/      训练课程：boost（加强对手：换高分真人阵容 / 按画像放大，强度自适应）、seed_comps（成型阵容课程）、
+                  gifts（送牌 / 送整套阵容）、tribes（种族课程 + 起步牌）
   *.json          只有汇总统计的参照数据：real_profile（真人对手画像）、pro_profile（6500+ 曲线）、
                   h13_profile（万三阵容和搭配）、card_value（关键卡、经济卡）、sim_value（引擎实测的关键卡和配合）
 
@@ -120,7 +123,7 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 万三对局 .npz ──▶ nativedemos ──▶ runs\h13_demos\、runs\h13_boards.json、rl\h13_profile.json
 高分示范 ──▶ cardvalue ──▶ rl\card_value.json                           │
                                                                        ▼
-                     configs\v3.json ──▶ train（rl/ppo.py + shaping + imitation）──▶ runs\v3\latest.pt、snapshots\
+                     configs\v3.json ──▶ train（rl/ppo.py + collector + update + shaping + imitation）──▶ runs\v3\latest.pt、snapshots\
                                                                        │
           ┌────────────────────────┬───────────────────────┬──────────┴──────────┐
           ▼                        ▼                       ▼                     ▼
@@ -155,7 +158,7 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | + 必须学会 S / A 阵容 | 第 14140 轮起 | 目标阵容只算本局凑得成的（核心卡的种族本局开了，观察里的 `tg/obs.F_LOBBY`；每局平均 10 套 S / A 凑得成）；`target_bonus` 0.15 → 0.3，等级权重 S 1 / A 0.85 / B 0.4（`target_weights`）；酒馆里有凑得成的 S / A 核心卡时老师 KL ×3（`teacher_core_mult`）；模仿权重 `tgtS` ×3、`tgtA` ×2.5、`tgtfit` ×2（老师用新权重重学）；comptest 加“本局凑得成 S / A 的局里成了 S / A 的比例”和每套的成型率 | `tgt_q`、`teacher_core`，comptest 的“凑得成的局里成型的比例” |
 | 退回 + 老师改成只教有把握的动作 | 第 14240 轮 → 退回第 14100 轮 | 第 14141–14240 轮老师用 KL：熵 1.0 → 2.1、加强局承受的对手强度 0.69 → 0.32、考试 5.2，连续 3 次变乱退回。老师改成只在它有把握（概率 ≥ 0.5）的局面教那个动作（`teacher_mode hard`、`teacher_conf 0.5`、`teacher_coef 0.02`、300 轮加上）；熵的绝对上限 1.6（`drift_ent_max`）；目标阵容 Φ = 权重 × 核心卡占比² × 本族随从 / 4（一张提图斯不再算半个畸变亡语）；comptest 按“核心卡 ≥ 2 张且 ≥ 2/3、种族阵容 ≥ 3 个本族随从”算成型 | `ent`、`teacher_sure`、`teacher_agree`、`tgt_q`、`boost_strength` |
 | + 成型以后怎么用 | 第 14240 轮起 | `bg.py playbook`：从高分示范里找每套阵容的配套卡（高手做这套时比平时多买的卡，例如机械 APM 的扩音机、宰割流亡灵的友善的恶鬼 / 断手被遗忘者，高手买卡里 12.4% 是这种）；酒馆里有正在做的 S / A 阵容的配套卡时老师 ×3、模仿 `tgtsup` ×2.5；comptest 的买法里加“正在做 S / A 阵容时买它的配套卡” | comptest 的买法一行 |
-| + 成型阵容课程 | 第 14350 轮起 | 15% 的机器人局在第 8 / 9 回合把学习者的场面换成高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打（`seed_comp_frac`、`seed_comp_turns`，`rl/calibrate.CompSeeder`）；换场面那一刻阵容强度 / 目标阵容奖励重新起算，这些局不算进 `place_bot` 和加强强度。老师的爬坡记进 `latest.pt`，重启不再从 0 爬 | `seeded`、`place_seeded`，comptest 的成型比例和第 10–13 回合阵容强度 |
+| + 成型阵容课程 | 第 14350 轮起 | 15% 的机器人局在第 8 / 9 回合把学习者的场面换成高分阵容库里已经成型的 S / A 阵容（本局凑得成），之后自己接着打（`seed_comp_frac`、`seed_comp_turns`，`rl/curricula/seed_comps.CompSeeder`）；换场面那一刻阵容强度 / 目标阵容奖励重新起算，这些局不算进 `place_bot` 和加强强度。老师的爬坡记进 `latest.pt`，重启不再从 0 爬 | `seeded`、`place_seeded`，comptest 的成型比例和第 10–13 回合阵容强度 |
 | 后期加倍、老师减半 | 第 15180 轮起 | 第 15180 轮阵容测试：成型的 S / A 3% → 9%，成型的局平均 3.50 名、没成的 4.66 名；但熵 1.1 → 1.6、加强局对手强度 0.66 → 0.58、第 12 / 13 回合阵容强度 0.52 / 0.40（高手 0.67 / 0.60）。老师 0.02 → 0.01；老师 ×3 只在那套阵容已经开了头时；第 10 回合起阵容强度 Φ ×2（`combat_late_mult`） | `ent`、`boost_strength`、`cs_late`，comptest 第 10–13 回合阵容强度 |
 | + 该留的牌别卖、配套卡联动 | 第 15180 轮起 | `bg.py playbook` 另外算出高手做某套时留着不卖的核心 / 配套卡（49 张；卖掉就触发效果的尖利的鲨鱼这类不算）；卖掉这种牌（没有第二张）扣 0.05（`keep_penalty`）；目标阵容 Φ 再乘配套卡配齐的程度 0.7–1；comptest 加“卖掉正在做的阵容里该留的牌”的比例（高手 5.2%） | `keep_sold`、`tgt_q`，comptest 的卖牌一行 |
 | 成型阵容课程往前挪 | 第 15300 轮起 | 第 15300 轮阵容测试 4.07 名（第 11600 轮以来最好），卖掉该留的牌 2.8%（高手 5.2%）；但模型自己的局成型的 S / A 只有 6%、买配套卡 0%。课程改成 20% 的机器人局、第 7 / 8 / 9 回合：第 7 回合换做到一半的场面（核心卡过半、2 个本族随从，`seed_comp_formed_from 8`），学怎么做完 | `place_seeded`，comptest 的成型比例 |
@@ -176,7 +179,7 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | 为什么总玩龙（诊断） | 第 18740 轮 | comptest 打印“模型走各主种族的结果”（每个主种族的局数、平均名次、吃鸡率、前四率）；成型阵容课程按阵容记“拿到手以后打第几”（`seeded_by_comp`，看板里有表）：看在模拟器里哪套阵容真能赢、模型自己走的龙是不是对它来说最好 | `seeded_by_comp` |
 | 训练对手前期别太弱 + 拿着成型阵容打满强度（诊断） | 第 19650 轮起 | 加强局前期强度下限 0.7（`boost_min_strength`，从当时的 0.29 每轮抬 0.002）：自适应把前期强度压到 0.26，机器人局吃鸡 20%、考试 1–3%，节奏龙在训练里就能赢；`seeded_by_comp` 按加强局分开记（看板多三列）；`comptest_seeded.bat` 对全强度直接测“拿到成型阵容以后打第几” | `boost_floor`、`boost_strength`、`seeded_by_comp`、`comptest_seeded.json` |
 | 养场面奖励 | 第 19650 轮起 | `comptest_seeded`：直接给高手成型的阵容，第 12–14 回合强度照样掉（0.55 / 0.41 / 0.38，高手 0.67 / 0.60 / 0.68），引擎拿到就卖；第 10 回合起换老师打更差。第 9 回合起每回合开始、结束各量一次同一组考官的强度，结束回合加 `grow_bonus 0.3` ×（结束 − 开始），不扣回：这回合自己养了多少（`rl/shaping.py` 的 `_grow_shape`）；comptest 阵容强度表多一列“养了多少” | `grow`、`t_grow`，comptest 的“养了多少” |
-| 阵容练习局 | 第 20020 轮起 | 25% 的机器人局开局定一套本局凑得成的 S / A，第 2–9 回合每回合酒馆里换进 2 张这套的卡（核心 / 配套 / 本族），场面不动，做不做全看模型（`rl/calibrate.py` 的 `ShopPractice`，`practice_*`）；成型阵容课程跳过这些局；comptest 的强度表还多了一列“对手涨了” | `place_practice`、`practice_by_comp`（看板“阵容练习局”） |
+| 阵容练习局 | 第 20020 轮起 | 25% 的机器人局开局定一套本局凑得成的 S / A，第 2–9 回合每回合酒馆里换进 2 张这套的卡（核心 / 配套 / 本族），场面不动，做不做全看模型（`ShopPractice`，`practice_*`，已删）；成型阵容课程跳过这些局；comptest 的强度表还多了一列“对手涨了” | `place_practice`、`practice_by_comp`（看板“阵容练习局”） |
 | 练习局里凑阵容值分 | 第 20240 轮起 | 6554 局练习局只做成 0.5%：牌刷到了也不要。练习局里目标阵容奖励局末不扣回（`practice_keep_target 1`），凑成几成拿 0.6 × 几成；普通局照常扣回 | `practice_tgt`（看板关键指标“练习局局末阵容做到几成”） |
 | 照着凑 | 第 20350 轮起 | 练习局第 7 回合起按规则给建议动作（发现选这套 → 打出这套的随从 → 买核心卡 → 跟上升本节奏 → 买配套 / 本族 → 满了卖杂牌 → 4 本以后满了有杂牌就刷新找核心卡），更新时加 `expert_coef 0.3` × 交叉熵；练习局换牌改到第 7–13 回合、只给核心 / 配套卡。启发式在引擎里试：只换牌 0%、按规则凑 50–67%、不换牌只靠刷新 25% 做成 | `expert_follow`、`expert_ce`、`expert_agree` |
 | 关掉照着凑、换回第 20200 轮 | 第 20800 轮 | 照着凑让练习局做成 0.7% → 31–35%，但那些局 4.76 名（之前 3.44），卖牌 / 刷新带到了所有局：机器人局 3.4 → 4.5–4.9 名、考试 4.2–4.5 → 5.6–6.0。`expert_coef 0`，守护也缩它（`guard_keys` 加了 `expert_coef`）；`train.bat --restore runs\v3\best.pt` 回到第 20200 轮 | 考试回到 4.2–4.5 |
@@ -184,7 +187,7 @@ Firestone 6500+ 分享包 ──▶ prolib ──▶ runs\pro_boards.json、rl\p
 | 整理 | 第 21800 轮 | 只留模拟训练和竞技场：影子模式（`shadow.bat`、`rl/advisor.py`）去掉；试过没用上的起步课程（`seed_start_*`）、阵容练习局 / 照着凑（`practice_*`、`expert_*`）、推演测试（`comptest_lookahead.bat`）的代码和设置删掉，上面几行只是记录。`load_model` 搬到 `rl/model.py` | 要找回：提交 a438805 |
 | 整理（二） | 第 21800 轮 | HDT 插件（`plugin/`、发布流程、插件文档）、回放检查（`replay.bat`、`tools/tg_replay.py`）、模仿你自己的对局（`bg.py demos`、`runs\demos.npz`、`bc_coef` 等）去掉。训练里少了 `bc_coef 0.05` 那一项（你自己十几局的示范），高分玩家的模仿（`pro_*`）、老师模型照旧 | 插件还在 `main` 分支和已发布的版本里 |
 | 目标阵容 23 → 32 套 | 第 21800 轮起 | 按战棋小酒馆 S14 流派图鉴补 9 套模拟器卡池里凑得齐的：飞机大队（S）、摩托抉择 / 牺牲亡语恶魔 / 手牌宝石（A）、手牌鱼人 / 畸变怪·腐泥 / 机械·扩音机 / 龙·战吼 / 亡灵·永恒骑士（B），每套加了打法说明 `play`。前 23 套的顺序、核心卡不动（模型按格子认阵容，新格子从 0 学起）。电表红龙、警戒恶霸、站地灾变投球等核心卡不在模拟器卡池里，没收。配套卡要在本机跑一次 `bg.py playbook` | comptest 的“成型阵容”表里会出现新的几套 |
-| 送整套阵容 + 成型场面提前 | 第 21800 轮起 | 规律：把牌放到手里 / 场上让它自己尝到好处的办法有用（送牌课程、成型阵容课程），只改奖励或酒馆的没用。`cgift_*`（`rl/calibrate.py` 的 `CompGifts`）：20% 的机器人局开局定一套本局凑得成的目标阵容，第 5–11 回合每回合 70% 的机会送一张这套还没有的核心卡到手里（酒馆等级 + 2 以内，齐了送配套卡）；零散送牌 `gift_frac` 0.25 → 0.15；成型阵容课程 `seed_comp_turns` 5–11、第 9 回合以前给做到一半的场面（原来 6–11、第 8 回合以前） | `place_cgift`、`cgift_formed`，看板“送整套阵容”表（每套做成的比例、名次） |
+| 送整套阵容 + 成型场面提前 | 第 21800 轮起 | 规律：把牌放到手里 / 场上让它自己尝到好处的办法有用（送牌课程、成型阵容课程），只改奖励或酒馆的没用。`cgift_*`（`rl/curricula/gifts.py` 的 `CompGifts`）：20% 的机器人局开局定一套本局凑得成的目标阵容，第 5–11 回合每回合 70% 的机会送一张这套还没有的核心卡到手里（酒馆等级 + 2 以内，齐了送配套卡）；零散送牌 `gift_frac` 0.25 → 0.15；成型阵容课程 `seed_comp_turns` 5–11、第 9 回合以前给做到一半的场面（原来 6–11、第 8 回合以前） | `place_cgift`、`cgift_formed`，看板“送整套阵容”表（每套做成的比例、名次） |
 | 面板 | 第 22200 轮前后 | `panel.bat`：一个网页（Streamlit，只在本机）里放训练看板和所有操作；原来 14 个 .bat 删掉，它们的流程搬进 `bg.py`（竞技场 → `tools/arena_run.py`，清理 → `tools/cleanup.py`）。任务层 `panel/jobs.py` + `panel/runner.py` 和界面层 `panel/app.py` 分开。训练加了“这一轮跑完存盘退出”（`runs\v3\STOP` 文件） | 旧的 .bat 用面板“维护 → 清理旧文件”删 |
 | 面板改成桌面程序 | 第 22200 轮以后 | 网页版（Streamlit）曲线卡、布局难调 → `panel/gui.py`（PySide6 + pyqtgraph），竞技场对局查看器也用原生重写；数据从界面里拆到 `panel/data.py`。CI（`bgrl-gui.yml`）用假数据无屏幕打开每一页、点一遍、留截图 | `bg.py panel --web` 还能开网页版 |
 | 送整套阵容的结果 | 第 21971–23622 轮 | 送的局里做成 16%、名次 3.2，但 256 局阵容测试（不送牌）：S / A 成型 5%（best.pt 也是 5%）、名次 4.16 对 4.07、关键卡占比 42% 对 53%、铜须上场 2% 对 7%、邪能野猪人引擎 3% 对 17%。会用送来的牌，不会自己去找 → `cgift_frac` 0、`gift_frac` 回 0.25、成型场面回 6–11 回合；用面板“退回 best.pt 再练”从第 21100 轮的模型接着练。模仿高手的卖 ×2.5、刷新 ×2（作用有限：模仿强度被 `pro_gap_cap` 压在最低，训练示范对 63%、留出局 45%，是样本不够） | 出牌时搜索不做：竞技场里没有模拟器，用不上 |
