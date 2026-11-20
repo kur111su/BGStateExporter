@@ -54,6 +54,26 @@ def main() -> int:
         assert (got.replace("\\", "/") if isinstance(got, str) else got) == (v.replace("\\", "/") if isinstance(v, str) else v), k
     c2, a2 = parse(args + ["--comp-bonus", "0.02", "--run", "runs/x"])
     assert c2.comp_bonus == 0.02 and a2.run == "runs/x"
+    # 实验配方：base 继承正式配方，只覆盖写了的几项；run 不写就用 base 的
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        e = Path(d) / "exp.json"
+        e.write_text(json.dumps({"base": "v3", "config": {"lam": 0.97, "comp_bonus": 0.01}}), encoding="utf-8")
+        r = load_recipe(str(e))
+        assert r["run"] == rec["run"] and r["config"]["lam"] == 0.97 and r["config"]["comp_bonus"] == 0.01
+        assert {k: v for k, v in r["config"].items() if k not in ("lam", "comp_bonus")} == \
+            {k: v for k, v in rec["config"].items() if k not in ("lam", "comp_bonus")}
+        c3, a3 = parse(["--recipe", str(e), "--lam", "0.9"])
+        assert c3.lam == 0.9 and a3.run == rec["run"]
+        (Path(d) / "loop.json").write_text(json.dumps({"base": str(Path(d) / "loop.json")}), encoding="utf-8")
+        try:
+            load_recipe(str(Path(d) / "loop.json"))
+            raise AssertionError("base 绕回自己应该报错")
+        except SystemExit:
+            pass
+    assert "notes" not in json.loads((ROOT / "configs" / "v3.json").read_text(encoding="utf-8"))   # 实验记录在 docs/recipe_history.md
+    assert (ROOT / json.loads((ROOT / "configs" / "v3.json").read_text(encoding="utf-8"))["history"]).is_file()
     print(f"recipe OK：面板的训练 → configs/v3.json，{len(rec['config'])} 项设置")
     return 0
 

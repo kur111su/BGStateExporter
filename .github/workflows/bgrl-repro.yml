@@ -38,7 +38,7 @@ jobs:
           for side in head base; do
             if [ "$side" = head ]; then root="$PWD/bgrl"; else root="$(cd ../base/bgrl && pwd)"; fi
             out="/tmp/repro/$side"; mkdir -p "$out"
-            cd "$root"
+            cd "$root"; mkdir -p runs
             python -X utf8 -c "import sys; sys.path.insert(0, '.'); sys.path.insert(0, 'tests'); from pathlib import Path; from test_extnet import fake_ckpt; fake_ckpt(Path('runs/_ext_repro.pt'))"
             run() { name=$1; shift; rm -rf runs/_smoke; python -X utf8 bg.py train --smoke --threads 1 --seed 7 "$@" > "$out/$name.txt" 2>&1 || { tail -30 "$out/$name.txt"; exit 1; }; cp runs/_smoke/log.jsonl "$out/$name.jsonl"; }
             run recipe --iters 6 --recipe configs/v3.json

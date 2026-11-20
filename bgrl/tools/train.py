@@ -6,7 +6,8 @@
   python train.py --run runs/v1 [--iters 2000] [--resume]   正式训练
   python train.py --recipe configs/v3.json --resume        按配方文件训练（面板的“训练”就是这样）
 其它参数见 --help（和 bgrl/rl/ppo.py 的 Config 一一对应）。
-优先级：Config 默认值 < 配方文件（--recipe）的 config < 命令行参数。配方里还可以写 run（训练目录）。
+优先级：Config 默认值 < 配方文件（--recipe）的 config < 命令行参数。配方里还可以写 run（训练目录）；
+实验配方（configs/exp/*.json）写 "base": "v3" 继承正式配方，只写改了的几项。为什么这样设记在 docs/recipe_history.md。
 """
 from __future__ import annotations
 
@@ -28,15 +29,30 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 
-def load_recipe(path: str) -> dict:
-    """读配方文件：先按当前目录找，找不到再按 bgrl 目录找。config 里的每一项必须是 Config 的字段，类型按默认值转换。"""
+def _recipe_path(path: str, near: Path | None = None) -> Path:
+    """配方文件的位置：当前目录 → near（继承时是子配方所在目录）→ bgrl 目录 → bgrl/configs；可以不写 .json。"""
+    path = path.replace("\\", "/")                     # Windows 上可能写成 configs\v3.json
+    for name in (path, path + ".json"):
+        dirs = [Path(".")] + ([near] if near else []) + [HERE.parent, HERE.parent / "configs"]
+        for p in ([Path(name)] if Path(name).is_absolute() else [d / name for d in dirs]):
+            if p.is_file():
+                return p
+    raise SystemExit(f"配方文件不存在：{path}")
+
+
+def load_recipe(path: str, _seen: tuple = ()) -> dict:
+    """读配方文件。config 里的每一项必须是 Config 的字段，类型按默认值转换。
+    "base": "v3"（或 configs/v3.json）= 先读那份配方，再用这份的 config 覆盖（实验配方 configs/exp/*.json 只写改了的几项）；
+    run 不写就用 base 的。"""
     from rl.ppo import Config
-    p = Path(path.replace("\\", "/"))                  # Windows 上可能写成 configs\v3.json
-    if not p.exists() and not p.is_absolute():
-        p = HERE.parent / path
-    if not p.exists():
-        raise SystemExit(f"配方文件不存在：{path}")
+    p = _recipe_path(path)
+    if p.resolve() in _seen:
+        raise SystemExit(f"配方 {p}：base 绕回了自己")
     r = json.loads(p.read_text(encoding="utf-8"))
+    if r.get("base"):
+        b = load_recipe(str(_recipe_path(str(r["base"]), p.parent)), _seen + (p.resolve(),))
+        r = {**b, **{k: v for k, v in r.items() if k != "config"}, "config": {**b["config"], **(r.get("config") or {})}}
+        r.setdefault("run", b.get("run"))
     fields = {f.name: f for f in dataclasses.fields(Config)}
     out = {}
     for k, v in (r.get("config") or {}).items():
