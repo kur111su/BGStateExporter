@@ -151,12 +151,6 @@ def convert(src: Path, mmr: int, val_every: int = 10):
     return data, boards, stats, len(games), profile
 
 
-def merge_boards(paths: list[str]) -> dict:
-    """几个阵容库合在一起（训练时 --pro-boards "a;b" 用）。"""
-    from rl.curricula import merge_pro_boards
-    return merge_pro_boards(paths)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("src")

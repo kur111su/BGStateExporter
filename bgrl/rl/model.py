@@ -327,9 +327,6 @@ class EntityTransformer(nn.Module):
                 mod, attr = name.split(".")
                 state_dict[prefix + name] = getattr(getattr(self, mod), attr).detach().clone()
 
-    def comp_input(self, x_in: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        return self.comp_proj(self.comp(x_in, c).reshape(c.shape[0], -1)).unsqueeze(1)
-
     def sense_input(self, x_in: torch.Tensor, c: torch.Tensor):
         """(加到全局词上的体系感知 [B,1,d], 加到场上 / 手里 / 酒馆 / 发现词上的联动感知 [B,NE,d])。"""
         feats, syn = self.comp.sense(x_in, c)

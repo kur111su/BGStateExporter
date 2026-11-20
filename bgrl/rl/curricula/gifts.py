@@ -48,10 +48,6 @@ class CardGifts:
         self.n_given, self.n_full = 0, 0
         self.given: dict[str, int] = {}
 
-    def is_active(self, g: int) -> bool:
-        v = self.plan.get(g)
-        return v is not None and bool(v[1])
-
     def active(self) -> set:
         return {g for g, v in self.plan.items() if v[1]}
 

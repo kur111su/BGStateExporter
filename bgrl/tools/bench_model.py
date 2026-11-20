@@ -7,8 +7,7 @@
   2. 每种设置跑若干次“前向 + 损失 + 反向”（和训练同样的输入格式、同样的混合精度），前几次预热不算：
        完整（现在训练用的）、不打包空词（pack 关）、不要体系 / 联动感知、不要 311 维卡牌属性、全精度（不用 bfloat16）、
        只算前向、不过 Transformer（只剩输入和输出头）、只算 Transformer（带 / 不带屏蔽），还有 micro 256 / 1024 两种批大小。
-  3. 采样前向：一次调用（和训练采样同样的 Policy）在 64–576 行时各要多久、固定开销多大，按词数分 1–4 份哪个最快
-     （训练的 rollout_groups）。
+  3. 采样前向：一次调用（和训练采样同样的 Policy）在 64–576 行时各要多久、固定开销多大。
   4. 老师（data/external/model.pt，有的话）只算前向。
 结果按“每个样本几微秒”和“换算成一轮 3.4 万样本要几秒”打印，写进 reports/bench_model.json。
 只读模型，不改训练、不写 runs/。约 2–4 分钟。训练正在跑时别测（抢同一块显卡，数不准）。
@@ -216,13 +215,13 @@ def time_pass(model, dev, data, micro: int, amp: bool, sort: bool, reps: int) ->
     return {"us_per_sample": round(best / len(f) * 1e6, 1)}
 
 
-def time_policy(model, dev, data, n: int, groups: int, amp: bool, reps: int, warm: int, seed: int = 0) -> float:
+def time_policy(model, dev, data, n: int, amp: bool, reps: int, warm: int, seed: int = 0) -> float:
     """采样那样的一次前向（rl/rollout.py 的 Policy：拷到显卡、补齐 64 行、前向、抽动作、拷回），每次随机取 n 行。返回毫秒（中位数）。"""
     import numpy as np
 
     from rl.rollout import Policy
     f, c, m, _ = data
-    pol = Policy(model, dev, amp=amp, groups=groups)
+    pol = Policy(model, dev, amp=amp)
     rng = np.random.default_rng(seed)
     times = []
     model.eval()
@@ -361,31 +360,25 @@ def main(argv=None) -> int:
         tc = model.token_counts(data[1])
         print(f"  按词数排序：快 {1 - pa[True]['us_per_sample'] / pa[False]['us_per_sample']:.0%}"
               f"（每行词数 {int(tc.min())}–{int(tc.max())}，中位 {int(np.median(tc))}）", flush=True)
-    # 采样前向：一次调用的耗时和行数的关系（看固定开销），以及按词数分几份算哪个快
+    # 采样前向：一次调用的耗时和行数的关系（看固定开销）。第 28725 轮试过按词数分组算（训练里同一步各局回合差不多，没效果，删了）
     print("采样前向（和训练采样一样的一次调用，随机挑局面；毫秒 / 次）：", flush=True)
     sizes = (64, 128, 256, 384, 576) if not a.smoke else (16, 32, 64)
     pol_res = {}
     for nn in sizes:
         if nn > len(data[0]):
             continue
-        row = {}
-        for g in (1, 2, 3, 4):
-            if g > 1 and nn // g < (64 if not a.smoke else 8):
-                continue
-            try:
-                row[g] = round(time_policy(model, dev, data, nn, g, amp, a.reps * 2, a.warm), 1)
-            except Exception as ex:                      # noqa: BLE001
-                row[g] = None
-                print(f"  {nn} 行分 {g} 份 失败：{type(ex).__name__}: {str(ex)[:120]}", flush=True)
-        pol_res[nn] = row
-        best = min((v, g) for g, v in row.items() if v)
-        print(f"  {nn:>4} 行：" + "、".join(f"分 {g} 份 {v} ms" for g, v in row.items() if v)
-              + f"（每行 {row[1] / nn * 1000:.0f} µs；最快：分 {best[1]} 份）", flush=True)
+        try:
+            ms = round(time_policy(model, dev, data, nn, amp, a.reps * 2, a.warm), 1)
+        except Exception as ex:                          # noqa: BLE001
+            print(f"  {nn} 行 失败：{type(ex).__name__}: {str(ex)[:120]}", flush=True)
+            continue
+        pol_res[nn] = ms
+        print(f"  {nn:>4} 行：{ms} ms（每行 {ms / nn * 1000:.0f} µs）", flush=True)
         if dev.type == "mps":
             torch.mps.empty_cache()
-    if len(pol_res) >= 2:                              # 一次调用的固定开销：按 1 份的耗时对行数做直线拟合，截距
-        xs = np.array([k_ for k_ in pol_res if pol_res[k_].get(1)], dtype=float)
-        ys = np.array([pol_res[int(k_)][1] for k_ in xs], dtype=float)
+    if len(pol_res) >= 2:                              # 一次调用的固定开销：耗时对行数做直线拟合，截距
+        xs = np.array(list(pol_res), dtype=float)
+        ys = np.array([pol_res[k_] for k_ in pol_res], dtype=float)
         slope, icpt = np.polyfit(xs, ys, 1)
         print(f"  一次调用的固定开销约 {icpt:.1f} ms，每多一行约 {slope * 1000:.0f} µs", flush=True)
         res["采样前向"] = {"ms": {str(k_): v for k_, v in pol_res.items()}, "fixed_ms": round(float(icpt), 1),

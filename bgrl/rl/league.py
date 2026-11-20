@@ -180,9 +180,6 @@ class League:
         ws = self.training_weights()
         return rng.choices([m for m, _ in ws], weights=[x for _, x in ws], k=k)
 
-    def exam_members(self) -> list[Member]:
-        return [m for m in self.members if m.exam] or [m for m in self.members if m.name == "bot"]
-
     def relocate(self, snap_dir: Path) -> int:
         """快照路径在别的电脑上存的（Windows 的 runs\\v3\\snapshots\\it123.pt 拿到 Mac 上）：文件名一样、在这台电脑的
         snapshots 目录里就改指过去。返回改了几个。"""

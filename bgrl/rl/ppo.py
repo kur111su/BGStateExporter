@@ -94,7 +94,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.since_rollback = 0
         self.good = None                       # 最近一次健康时的模型和优化器（出问题时回退到这里）
         self.model._ver = 0
-        self.learner = Policy(self.model, self.rdev, self.amp, groups=cfg.rollout_groups)
+        self.learner = Policy(self.model, self.rdev, self.amp)
         self.envs = []                                 # (名字, 环境, 槽位起点)
         off = 0
         if cfg.games_bot:
@@ -168,7 +168,6 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
 
     # ---------------- 更新 ----------------
 
-
     # ---------------- 对手库快照、评估 ----------------
 
     def snapshot(self):
@@ -232,9 +231,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
 
     # ---------------- 健康检查 / 回退 ----------------
 
-
     # ---------------- 考试守护（guard_*） ----------------
-
 
     def _redraw_board(self):
         """后台线程重写训练看板（dashboard.md）；上一次还没写完就跳过。出错只打印一次，不影响训练。"""
@@ -253,7 +250,6 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                     print(f"训练看板没画成（不影响训练）：{type(ex).__name__}: {str(ex)[:160]}", flush=True)
         self._board_th = threading.Thread(target=work, daemon=True)
         self._board_th.start()
-
 
     def init_from(self, path):
         """用另一个检查点 / 快照的参数开始（不带优化器和对手库）。"""
@@ -315,8 +311,6 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
             else:
                 print(f"加强方式改为 {self.cfg.boost_kind}：强度从 {self.adapt.strength} 开始重新调", flush=True)
             self.booster.strength = self.adapt.strength
-
-
 
     def start_stage(self):
         """新阶段：以当前策略为锚，前 anchor_iters 轮加 KL 约束。"""

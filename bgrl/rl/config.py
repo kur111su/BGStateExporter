@@ -57,8 +57,6 @@ class Config:
     # 更新时每个小批里按“有内容的词数”排序再切成 micro：同一份里的行词数相近，打包截到的词少（Transformer 的计算和词数成正比，
     # 注意力和词数平方成正比）。梯度是各份加起来，和原来完全一样，只是算得快
     bucket_tokens: bool = True
-    # 采样时每次前向按词数分成几份算（rl/rollout.py 的 Policy.groups；1 = 不分）。bg.py bench-model 的“采样前向”一节测哪个最快
-    rollout_groups: int = 1
     anchor_coef: float = 0.1
     anchor_iters: int = 100
     # 对手库 / 检查点

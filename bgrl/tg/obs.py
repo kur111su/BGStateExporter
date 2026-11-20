@@ -55,15 +55,6 @@ def up_cost(f):
     return _scaled(f, F_UPCOST, GOLD_SCALE)
 
 
-def board_cards(c):
-    """cards[..., 场上 7 格]"""
-    return np.asarray(c)[..., C_BOARD:C_BOARD + N_BOARD]
-
-
-def shop_cards(c):
-    return np.asarray(c)[..., C_SHOP:C_SHOP + N_SHOP]
-
-
 def board_stats(f, slot: int) -> tuple[int, int]:
     """(攻, 血)：场上第 slot 格随从。"""
     base = F_BOARD + MINION_F * slot

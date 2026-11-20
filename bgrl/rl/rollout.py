@@ -14,11 +14,8 @@ class Policy:
     device 和模型所在的设备不同时（采样用 CPU、更新用 MPS / CUDA），在 device 上放一份副本，
     模型的版本号（_ver，训练器每次改参数时加 1）变了就同步一次。"""
 
-    def __init__(self, model, device, amp=False, copy=False, groups: int = 1, min_group: int = 64):
+    def __init__(self, model, device, amp=False, copy=False):
         self.src, self.device = model, device
-        # 按词数分组前向（groups > 1）：同一步里各局处在不同回合，前期局面约 20 个词、后期约 60 个，打包时一批截到最长那行；
-        # 按词数排序切成 groups 份分别算，少算空词。每份至少 min_group 行（太小了多一次调用的固定开销不划算）
-        self.groups, self.min_group = max(1, int(groups)), max(1, int(min_group))
         self.amp = amp and device.type in ("cuda", "mps")
         self.bad_rows = 0                      # 输出出现 NaN 的局面数（应该一直是 0）
         if next(model.parameters()).device.type == device.type and not copy:
@@ -42,17 +39,6 @@ class Policy:
         """want_obs=True 时另外返回压缩后的观察（float16，存训练数据用：压缩后最大十几，不会溢出）。"""
         self.sync()
         n = len(f)
-        k = min(self.groups, n // self.min_group)
-        if k > 1 and hasattr(self.model, "token_counts"):
-            order = np.argsort(self.model.token_counts(c), kind="stable")
-            parts = [self._run(f[j], c[j], m[j], greedy, want_obs) for j in np.array_split(order, k)]
-            inv = np.empty(n, dtype=np.int64)
-            inv[order] = np.arange(n)
-            return tuple(np.concatenate([p[i] for p in parts])[inv] for i in range(len(parts[0])))
-        return self._run(f, c, m, greedy, want_obs)
-
-    def _run(self, f, c, m, greedy, want_obs):
-        n = len(f)
         if self.device.type == "mps" and n % 64:        # MPS：局面数凑成 64 的倍数（重复最后一行，算完丢掉），原因同上
             pad = 64 - n % 64
             rep = lambda x: np.concatenate([x, np.repeat(np.asarray(x)[-1:], pad, 0)])   # noqa: E731
@@ -75,7 +61,6 @@ class Policy:
         return out
 
 
-
 def parse_place_reward(spec: str):
     """"1:1,2:0.55,…,8:-1" → 长度 9 的数组（下标 = 名次，0 不用）；空 / 不全 → None（用引擎的线性奖励）。"""
     if not str(spec or "").strip():
@@ -91,11 +76,9 @@ def parse_place_reward(spec: str):
     return tab
 
 
-
 def linear_place_reward(p: int) -> float:
     """引擎自带的名次奖励：第 1 名 1，第 8 名 -1，线性。"""
     return 1.0 - 2.0 * (int(p) - 1) / 7.0
-
 
 
 def seed_row(v) -> list:
@@ -110,14 +93,12 @@ def seed_row(v) -> list:
     return row
 
 
-
 def place_score_equiv(places, tab) -> float:
     """一组名次按奖励表算平均分，再换成“线性奖励下的等效名次”（4.5 - 3.5 × 平均分；线性表就是平均名次本身），
     考试守护拿它比，越小越好。"""
     if tab is None:
         return float(np.mean(places))
     return float(4.5 - 3.5 * np.mean([tab[int(p)] for p in places]))
-
 
 
 def grow_opt_state(opt, od: dict) -> dict:
@@ -137,7 +118,6 @@ def grow_opt_state(opt, od: dict) -> dict:
     od["param_groups"][0]["params"] = ids + list(range(nxt, nxt + want - have))
     print(f"优化器状态：检查点里 {have} 个参数，现在 {want} 个（新加的体系感知参数从 0 开始）", flush=True)
     return od
-
 
 
 class Rollout:

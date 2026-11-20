@@ -572,27 +572,6 @@ class CardChip(QtWidgets.QFrame):
             lay.addWidget(st, 0, Qt.AlignRight)
 
 
-class CardRow(QtWidgets.QWidget):
-    """一个区（场面 / 手牌 / 酒馆 / 待选）：左边区名，右边一排卡片（多了自动换行）。"""
-
-    def __init__(self, name: str, cards: list[dict], per_row: int = 8):
-        super().__init__()
-        lay = QtWidgets.QHBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
-        lab = label(name, "mute")
-        lab.setFixedWidth(40)
-        lay.addWidget(lab, 0, Qt.AlignTop)
-        g = QtWidgets.QGridLayout()
-        g.setHorizontalSpacing(6)
-        g.setVerticalSpacing(6)
-        if not cards:
-            g.addWidget(label("（空）", "mute"), 0, 0)
-        for i, c in enumerate(cards):
-            g.addWidget(CardChip(c), i // per_row, i % per_row)
-        lay.addLayout(g)
-        lay.addStretch(1)
-
-
 class TrinketCard(QtWidgets.QFrame):
     """当前对局的一个饰品（小 / 大）：名字、价格、效果；还没选就写第几回合给。"""
 
@@ -654,6 +633,7 @@ class StandRow(QtWidgets.QFrame):
         for c in cards:
             lay.addWidget(CardChip(c, small=True))
         lay.addStretch(1)
+
 
 class ArenaPage(QtWidgets.QWidget):
     """竞技场：上面一排操作和战绩；下面只看当前这一局（正在打的，没有就最近打完的）：左边预计名次和操作记录，

@@ -43,7 +43,6 @@
   "teacher_mode": "hard",
   "teacher_conf": 0.4,
   "teacher_frac": 0.25,
-  "rollout_groups": 1,
   "teacher_actions": "",
   "teacher_from_turn": 1,
   "aux_comp_coef": 0.05,

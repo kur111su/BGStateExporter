@@ -96,7 +96,7 @@ class CollectMixin:
             model = build_model(**self.mkw).to(self.rdev)
             model.load_state_dict(torch.load(m.path, map_location=self.rdev))
             model.eval()
-            self.snap_cache[name] = Policy(model, self.rdev, self.amp, groups=self.cfg.rollout_groups)
+            self.snap_cache[name] = Policy(model, self.rdev, self.amp)
             if len(self.snap_cache) > 12:
                 self.snap_cache.pop(next(iter(self.snap_cache)))
         return self.snap_cache[name]
@@ -344,14 +344,6 @@ class CollectMixin:
               f"（第 {cfg.seed_comp_formed_from} 回合以前是做到一半的，之后是成型的；库里 {sd.size()} 个："
               + "、".join(f"第 {t} 回合 {len(v)}" for t, v in sorted(sd.pool.items())) + "）", flush=True)
         return sd if sd.size() else None
-
-    @torch.inference_mode()
-    def _comp_name(self, k) -> str:
-        """_final_comp 的序号 → 阵容名字（没成 → 空字符串）。"""
-        if getattr(self, "_comp_names", None) is None:
-            from .comp import load_target_comps
-            self._comp_names = [c["name"] for c in load_target_comps()]
-        return self._comp_names[int(k)] if k is not None and 0 <= int(k) < len(self._comp_names) else ""
 
     def _final_comp(self, s: int) -> int:
         """这一局（槽位 s）最后成了哪一套：rl/target_comps.json 里的序号，没成 = K_MAX（辅助头的“没成”类）。"""
