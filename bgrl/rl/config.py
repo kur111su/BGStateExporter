@@ -266,6 +266,14 @@ class Config:
     guard_max: int = 6
     guard_keys: str = "teacher_coef,pro_coef"
 
+    # 指定酒馆种族（rl/curricula/lobbies.py；单种族专家 configs/exp/beast.json 用）：新开的一局按 lobby_frac 的概率
+    # 换成必开 lobby_must（逗号隔开）的一局，其余种族从 lobby_pool 里抽（空 = 野猪人 / 恶魔 / 元素以外的 7 个）。
+    # 对机器人局和联赛都生效；lobby_exam 打开时考试也在这种酒馆里考。0 = 不用
+    lobby_must: str = ""
+    lobby_pool: str = ""
+    lobby_frac: float = 0.0
+    lobby_exam: bool = False
+
     def rules(self) -> dict:
         caps = [int(x) for x in str(self.turn_caps).replace(" ", "").split(",") if x]
         return {"turn_action_caps": caps} if caps else {}

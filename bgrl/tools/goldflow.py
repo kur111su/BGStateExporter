@@ -128,13 +128,14 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
-               judge_lib: dict | None = None):
+               judge_lib: dict | None = None, lobby_must: str = ""):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
     （rl/curricula/seed_comps.CompSeeder，本局凑得成），看模型拿着成型阵容能打成什么样。seed_lib：测试用，代替高分阵容库。
     late：(act, info)，第 late_from 回合起换它来打（例如老师模型），看后期换个打法场面能不能养起来。
-    judge_lib：测试用，代替高分阵容库。"""
+    judge_lib：测试用，代替高分阵容库。
+    lobby_must（例如 "BEAST"）：每局必开这几个种族、其余从野猪人 / 恶魔 / 元素以外的种族里抽（和野兽专家训练的酒馆一样）。"""
     import time as _t
     from taverngym import BatchEnv
     from tools.cardvalue import PickStats
@@ -143,6 +144,10 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     # 和训练一样给每回合动作数设上限（turn_caps）：不设的话模型取最大概率时可能在两个动作之间来回绕
     # （例如换位置换回来），这一局永远打不完——第 57 局卡住就是这样
     env = BatchEnv(games, seed=seed, controlled=(0,), threads=threads, config=train_rules(ckpt))
+    if lobby_must:
+        from rl.curricula import LobbyForcer, parse_types
+        LobbyForcer(parse_types(lobby_must), None, 1.0, train_rules(ckpt), seed=seed).apply_all(env)
+        print(f"酒馆：必开 {lobby_must}，其余从野猪人 / 恶魔 / 元素以外的种族里抽", flush=True)
     booster = None
     if boosted:
         from rl.curricula import ProBoardBooster, merge_pro_boards
@@ -739,6 +744,7 @@ def main() -> int:
     ap.add_argument("--late-ckpt", default="", help="第 --late-from 回合起换这个模型打（例如 runs\\teacher.pt：老师后期会不会养场面），"
                                                     "结果文件名后面加 _late")
     ap.add_argument("--late-from", type=int, default=10)
+    ap.add_argument("--lobby", default="", help="例如 BEAST：每局必开这几个种族、没有野猪人 / 恶魔 / 元素（看野兽专家 / 主模型在这种酒馆里的成绩）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
     a = ap.parse_args()
@@ -764,7 +770,7 @@ def main() -> int:
         print(f"第 {a.late_from} 回合起换 {a.late_ckpt} 打 …", flush=True)
         late = model_policy(a.late_ckpt, dev, not a.sample)
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
-                             late=late, late_from=a.late_from)
+                             late=late, late_from=a.late_from, lobby_must=a.lobby)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)

@@ -1,0 +1,12 @@
+{
+ "base": "v3",
+ "run": "runs/beast",
+ "description": "野兽专家：只在必开野兽、没有野猪人 / 恶魔 / 元素的酒馆里练（对机器人局、联赛、考试都是），从主模型 best.pt 起步。练好以后蒸馏回主模型。",
+ "config": {
+  "lobby_must": "BEAST",
+  "lobby_frac": 1.0,
+  "lobby_exam": true,
+  "teacher_coef": 0.0,
+  "pro_weights": "upgrade:3,end:2,buy:1.5,sell:1.5,key:2,eco:2,tribe:2,syn:3,simkey:2,simsyn:2,engine:3,engcard:2,triple:2,tgtS:3,tgtA:2.5,tgtB:1.2,tgtfit:2,tgtsup:2.5,engfuel:3,choose:1.5,spelltgt:3,t2-5:2,t6-9:1.5,t10-20:2.5,lobnew:3,tgtnew:3"
+ }
+}

@@ -107,6 +107,10 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
             self.envs.append(("league", e, off))
             off += e.n_slots
         self.n_slots = off
+        self.lobbies = self._make_lobbies(cfg.seed) if cfg.lobby_frac > 0 else None
+        if self.lobbies is not None:                   # 指定酒馆种族：第一批对局也换
+            for _, e, _ in self.envs:
+                self.lobbies.apply_all(e)
         self.booster = self._make_booster(cfg.boost_frac, cfg.seed) if cfg.boost_frac > 0 and cfg.games_bot else None
         if self.booster is not None and hasattr(self.booster, "late_from") and cfg.boost_late_from > 0:
             self.booster.late_from, self.booster.late_strength = int(cfg.boost_late_from), float(cfg.boost_late_strength)
@@ -191,6 +195,8 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         from taverngym import BatchEnv
         games = games or self.cfg.eval_games
         env = BatchEnv(games, seed=seed, controlled=(0,), threads=self.cfg.threads, config=self.cfg.rules())
+        if self.cfg.lobby_frac > 0 and self.cfg.lobby_exam:   # 专家：考试也在指定种族的酒馆里考（每次考试同一组酒馆）
+            self._make_lobbies(seed, frac=1.0).apply_all(env)
         booster = self._make_booster(1.0, seed) if boosted else None
         if booster is not None:
             booster.strength = 1.0
@@ -430,6 +436,8 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 self.t_boost = 0.0
             if self.gifts is not None:
                 rec.update(self.gifts.take_stats())
+            if self.lobbies is not None:
+                rec.update(self.lobbies.take_stats())
                 if self.gift_places:
                     rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
                     rec["gift_games"] = len(self.gift_places)

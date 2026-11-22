@@ -52,6 +52,8 @@ class CollectMixin:
                 self.rollout.reward(off + i, self._econ_close(off + i), True, 0)
         seed = (cfg.seed if name == "bot" else cfg.seed + 10**6) + 7919 * (self.iter + 1) + self.env_rebuilds
         new = BatchEnv(env.n_games, seed=seed, controlled=env.controlled, threads=cfg.threads, config=cfg.rules())
+        if self.lobbies is not None:
+            self.lobbies.apply_all(new)
         self.envs[ei] = (name, new, off)
         self.episode[name] = np.asarray([new.episode_index(i) for i in range(new.n_games)])
         for g in range(new.n_games):
@@ -256,11 +258,16 @@ class CollectMixin:
                     continue
                 if dones.any():                                # 新开的对局：重新抽对手
                     k = len(env.controlled)
+                    swapped = False
                     for g in np.unique(np.flatnonzero(dones) // k):
                         e = env.episode_index(int(g))
                         if e != self.episode[name][g]:
+                            if self.lobbies is not None and self.lobbies.apply(env, int(g)):
+                                swapped = True             # 指定酒馆种族：换成必开那几个种族的一局（episode 编号不变）
                             self.episode[name][g] = env.episode_index(int(g))
                             self._assign(name, env, off, int(g))
+                    if swapped:
+                        self.obs[name] = env.observe()
             t_net += tb - ta
             t_env += time.time() - tb
         # 没打完的：用当前局面的价值自举
@@ -275,6 +282,12 @@ class CollectMixin:
                 last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
         return batch, n_dec, time.time() - t0, t_env, t_net
+
+    def _make_lobbies(self, seed: int, frac: float | None = None):
+        cfg = self.cfg
+        from .curricula import LobbyForcer, parse_types
+        return LobbyForcer(parse_types(cfg.lobby_must), parse_types(cfg.lobby_pool) or None,
+                           cfg.lobby_frac if frac is None else frac, cfg.rules(), seed=seed)
 
     def _make_booster(self, frac: float, seed: int):
         cfg = self.cfg
