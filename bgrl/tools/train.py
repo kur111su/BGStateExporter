@@ -144,7 +144,7 @@ def main() -> int:
                  "pro_bc", "pro_top1", "pro_top1_train", "pro_upgrade", "pro_buy", "pro_sell", "pro_choose", "pro_top1_hi", "pro_upgrade_hi", "pro_end", "pro_nll", "up_turn", "ref_turn", "buy_turn", "sell_turn", "ref_waste", "tempo_bonus", "tier_gap", "up_afford", "up_t2", "starve_turn", "end_rich", "unspent", "pro_scale", "env_rebuild", "comp_coh", "comp_syn", "comp_key", "comp_golden", "cs_wr", "cs_late", "t_combat", "econ", "keep_sold", "aux_comp", "comp_acc", "drift", "kl_teacher", "teacher_coef", "teacher_core", "teacher_sure", "teacher_agree", "boost_strength", "seeded", "place_seeded", "pro_injected", "pro_failed", "place_boost", "boost_place_avg", "boosts", "t_boost", "early_stop", "bad_rows", "skipped", "noop_frac", "noop_move", "noop_freeze", "noop_cancel", "shape_fin", "shape_repay", "ent_coef", "guard_avg", "guard_ref", "guard_best", "guard_bad", "guard_fix", "guard_capped", "guard_scale", "grow", "grow_n", "t_grow", "boost_floor", "seeded_by_comp", "gifts", "gift_hand_full", "place_gift", "gift_games", "ev", "adv_std", "ret_mean", "ret_std", "t_infer", "rows_per_call", "t_data", "t_fwd", "t_bwd", "t_bc", "t_opt")
     verbose = a.verbose or bool(os.environ.get("GITHUB_ACTIONS"))
     if not verbose:
-        print("每轮只显示主要几项（全部字段在 runs/v3/log.jsonl；曲线看面板的“看板”或 runs/v3/dashboard.md；"
+        print(f"每轮只显示主要几项（全部字段在 {tr.run / 'log.jsonl'}；看板在面板里或 {tr.run / 'dashboard.md'}；"
               "要像以前那样全打印加 --verbose）", flush=True)
 
     def f(rec, k, fmt="{:.2f}", dash="-"):
