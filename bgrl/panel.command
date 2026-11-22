@@ -9,4 +9,5 @@ fi
 mkdir -p reports
 nohup .venv/bin/python -X utf8 bg.py panel >/dev/null 2>reports/panel_stderr.txt &
 disown
+clear && printf '\033[3J'            # 清屏，连滚动记录一起清掉（面板在后台跑，这个窗口可以直接关）
 exit 0
