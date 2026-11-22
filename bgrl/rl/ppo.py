@@ -436,12 +436,12 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 self.t_boost = 0.0
             if self.gifts is not None:
                 rec.update(self.gifts.take_stats())
-            if self.lobbies is not None:
-                rec.update(self.lobbies.take_stats())
                 if self.gift_places:
                     rec["place_gift"] = round(float(np.mean(self.gift_places)), 3)
                     rec["gift_games"] = len(self.gift_places)
                 self.gift_places = []
+            if self.lobbies is not None:
+                rec.update(self.lobbies.take_stats())
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
