@@ -164,3 +164,8 @@
 ## board_every
 
 训练看板：每 10 轮在后台重画 runs\v3\dashboard.md + runs\v3\board\*.svg（tools/board.py；VS Code 打开 dashboard.md 按 Ctrl+Shift+V 预览，或者双击 board.bat）
+
+## 单种族专家 + 蒸馏（第 37920 轮以后，先只做野兽）
+
+阶段 A：专家（configs/exp/beast.json，run 在 runs/beast，从 runs/v3/best.pt 起步）。所有训练局和考试局都用 LobbyForcer（rl/curricula/lobbies.py）强制酒馆里有野兽、没有野猪人 / 恶魔 / 元素，其余 4 个从弱种族里随机（随机酒馆里这种局约 6%）；外部老师关掉（它只会三族，会往回拉）；模仿高手时 lobnew:3、tgtnew:3。和第 27116–28579 轮的种族课程不同：那次只占 30% 的局、老师照样在教、考试是随机酒馆，主模型有现成的三族打法就不去试；这次专家整个世界只有“没有三族”的酒馆，考试也一样，守护按这种酒馆的名次保存 best。看效果：`goldflow --boosted --games 256 --lobby BEAST` 和主模型 best.pt 比名次、野兽阵容成型率。
+阶段 B（还没做）：专家当老师，只在酒馆种族相符的局面上教主模型（主训练里也强制一部分局进这种酒馆），主模型学会以后再换下一个种族。
