@@ -16,10 +16,11 @@ from tg.actions import (
     A_CHOOSE,
     A_PLAY,
     A_SELL,
+    A_UPGRADE,
     is_noop,
     is_panic,
 )
-from tg.obs import C_BOARD, C_HAND, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_HAND, N_POS, N_SHOP
+from tg.obs import C_BOARD, C_HAND, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_HAND, N_POS, N_SHOP, tier
 
 from .curricula import (
     BotBooster,
@@ -85,8 +86,18 @@ def _ids_mask(ids: str) -> np.ndarray:
     return np.array([bool(i) and base_id(card_id(i)) in want for i in range(n_cards())])
 
 
+def parse_tiers(spec: str) -> dict:
+    """“3:5,4:7” → {3: 5, 4: 7}（酒馆等级 → 最晚第几回合）。"""
+    out = {}
+    for part in str(spec).split(","):
+        if ":" in part:
+            a, b = part.split(":")
+            out[int(a)] = int(b)
+    return out
+
+
 def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndarray, force: np.ndarray | None,
-                from_turn: int) -> int:
+                from_turn: int, tiers: np.ndarray | None = None, plan: dict | None = None) -> int:
     """定向局的动作掩码（就地改 m，返回关掉了几个“买”）：第 from_turn 回合起只能买 ok 里的牌；
     force 里的牌：手里有、场上有空位就只能先打出来；酒馆里有、买得起就只能买它；场上的不能卖。
     （第 800 轮定向测试：只逼买，97/128 局拿到了龙虾 / 土狼，但龙虾加成到第 12 回合平均才 0.2——买了放在手里不打出来。）"""
@@ -94,6 +105,12 @@ def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndar
     for r in range(len(m)):
         if turns[r] < from_turn:
             continue
+        if plan and tiers is not None and m[r, A_UPGRADE]:
+            want = max([k for k, t in plan.items() if turns[r] >= t], default=0)
+            if tiers[r] < want:                        # 升本节奏：到了回合还没到这一本、升得起就只能升本
+                m[r, :] = False
+                m[r, A_UPGRADE] = True
+                continue
         shop = cards[r, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
         bad = ~ok[shop] & (shop > 0)
         if bad.any():
@@ -423,8 +440,10 @@ class CollectMixin:
                 if self._commit_force is None and self.cfg.commit_force:
                     self._commit_force = _ids_mask(self.cfg.commit_force)
                 t = np.rint(obs["features"][i:i + 1, 0] * 20).astype(int)
+                tr = np.array([tier(obs["features"][i])])
                 self.commit_masked += commit_rows(obs["action_mask"][i:i + 1], t, obs["cards"][i:i + 1], self._commit_ok,
-                                                  self._commit_force, self.cfg.commit_from_turn)
+                                                  self._commit_force, self.cfg.commit_from_turn, tr,
+                                                  parse_tiers(self.cfg.commit_tiers))
 
     def _make_lobbies(self, seed: int, frac: float | None = None):
         cfg = self.cfg
