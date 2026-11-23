@@ -26,7 +26,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
-from tg.actions import A_BUY, A_END, A_SELL, action_family  # noqa: E402
+from tg.actions import A_ACTIVATE, A_BUY, A_END, A_SELL, action_family  # noqa: E402
 from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
 from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, lobby, tier, turn, up_cost  # noqa: E402
 
@@ -128,7 +128,7 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
-               judge_lib: dict | None = None, lobby_must: str = ""):
+               judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = ""):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
@@ -172,7 +172,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         ts = tuple(int(x) for x in str(seed_comps).split(",") if x.strip())
         slib = seed_lib if seed_lib is not None else lib
         if ts and slib:
-            seeder = CompSeeder(slib, frac=1.0, turns=ts, seed=seed, formed_from=min(ts))
+            names = [x.strip() for x in str(seed_names).split(",") if x.strip()] or None
+            seeder = CompSeeder(slib, frac=1.0, turns=ts, seed=seed, formed_from=min(ts), names=names)
             print(f"拿着成型阵容打：每局在第 {','.join(map(str, ts))} 回合（随机一个）招募开始时，场面换成高手同一回合已经成型的 "
                   f"S / A 阵容（本局凑得成）；库里 " + "、".join(f"第 {t} 回合 {len(v)} 个" for t, v in sorted(seeder.pool.items())),
                   flush=True)
@@ -199,6 +200,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     from tg.catalog import base_of_index, n_cards
     from tg.obs import lobby_bits
     _ctab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())], tiers="SA")
+    rally = RallyStats()
     obs = env.observe()
     t0, shown = _t.time(), 0
     print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
@@ -234,6 +236,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 last_cards[i] = ci[C_BOARD:C_BOARD + N_BOARD].copy()
                 last_lobby[i] = lobby(fi)
                 ak = int(a[k])
+                rally.see(int(i), int(turn(fi)), ci, ak, done[i])
                 if A_BUY <= ak < A_BUY + N_SHOP:
                     picks.add(ci[C_SHOP:C_SHOP + N_SHOP], ak - A_BUY)
                     buy_rows.append((ci.copy(), ak))
@@ -298,9 +301,90 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     info["starts"] = {i: v for i, v in starts.items()}
     info["places"] = places
     info["judge"], info["lib"] = judge, lib
+    info["rally"] = rally.report(places, lib)
     if seeder is not None:
         info["seeded"] = show_seeded(places, seeded_comp, seed_comps)
     return [x.turns for x in logs], info
+
+
+class RallyStats:
+    """龙虾流野兽（进击流）会不会玩：场上有猎头狮鹫的回合，结束回合时
+    · 狮鹫在不在最左边（深潜狮子鱼 / 尖利的鲨鱼让“最左边的野兽”去打鱼饵，狮鹫在最左边才触发进击：拿野兽牌、
+      逐亡陆行鸟再触发最左边的亡语——美味龙虾，有提图斯·瑞文戴尔再翻倍，招募阶段的身材是永久的）；
+    · 逐亡陆行鸟、提图斯在不在场上，最左边的亡语随从是不是美味龙虾；
+    · 这回合发动了几次深潜狮子鱼 / 天诞逃生飞龙（发动：触发一个友方随从的进击）、卖了几次尖利的鲨鱼。
+    高手那一列：高分阵容库里同样有狮鹫的场面（库里是回合结束时的站位）。"""
+    GRIFFIN, ROADRUNNER, LOBSTER, TITUS = "BG36_204", "BG36_208", "BG36_202", "BG25_354"
+    LIONFISH, WYRM, SHARK = "BG36_201", "BG36_243", "BG36_206"
+
+    def __init__(self):
+        from tg.catalog import base_id, card_id, catalog
+        self._id = lambda x: base_id(card_id(int(x))) if x > 0 else ""
+        det = catalog()
+        self._dr = lambda c: "Deathrattle" in str((det.get(c) or {}).get("text") or "")
+        self.cur: dict[int, dict] = {}                 # 槽位 → 这回合到现在的计数
+        self.rows: dict[int, list] = {}                # 槽位 → [每个有狮鹫的回合结束时的一行]
+
+    def _board(self, ci):
+        return [self._id(x) for x in ci[C_BOARD:C_BOARD + N_BOARD] if x > 0]
+
+    def see(self, i: int, t: int, ci, a: int, finished: bool):
+        if finished:
+            return
+        c = self.cur.get(i)
+        if c is None or c["t"] != t:
+            c = self.cur[i] = {"t": t, "lion": 0, "wyrm": 0, "shark": 0}
+        if A_ACTIVATE <= a < A_ACTIVATE + N_BOARD:
+            cid = self._id(ci[C_BOARD + a - A_ACTIVATE])
+            c["lion"] += cid == self.LIONFISH
+            c["wyrm"] += cid == self.WYRM
+        elif A_SELL <= a < A_SELL + N_BOARD and self._id(ci[C_BOARD + a - A_SELL]) == self.SHARK:
+            c["shark"] += 1
+        if a == A_END:
+            b = self._board(ci)
+            if self.GRIFFIN in b:
+                self.rows.setdefault(i, []).append({**c, **self.row(b)})
+
+    def row(self, b: list) -> dict:
+        dr = [x for x in b if self._dr(x)]
+        return {"left": b[0] == self.GRIFFIN, "road": self.ROADRUNNER in b, "titus": self.TITUS in b,
+                "lob_left": bool(dr) and dr[0] == self.LOBSTER, "lob": self.LOBSTER in b}
+
+    def report(self, places: dict, lib) -> dict | None:
+        from tg.catalog import base_id
+        rows = [r for v in self.rows.values() for r in v if r["t"] >= 7]
+        if not rows:
+            return None
+        pro = []
+        for t, v in (lib or {}).items():
+            if int(t) < 7:
+                continue
+            for e in v:
+                b = [base_id(str(x[0])) for x in e["board"][:7]]
+                if self.GRIFFIN in b:
+                    pro.append(self.row(b))
+        full = [r for r in rows if r["road"] and r["lob"]]
+        def pct(rs, k):
+            return f"{np.mean([r[k] for r in rs]):.0%}" if rs else "-"
+        def avg(rs, k):
+            return f"{np.mean([r[k] for r in rs]):.2f}" if rs else "-"
+        print(f"\n龙虾流（场上有猎头狮鹫的回合，第 7 回合起，共 {len(rows)} 个回合 / {len(self.rows)} 局；高手 {len(pro)} 个场面）：", flush=True)
+        print(f"  狮鹫放最左边 {pct(rows, 'left')}（高手 {pct(pro, 'left')}）；有陆行鸟 {pct(rows, 'road')}（高手 {pct(pro, 'road')}）、"
+              f"有提图斯 {pct(rows, 'titus')}（高手 {pct(pro, 'titus')}）、有美味龙虾 {pct(rows, 'lob')}（高手 {pct(pro, 'lob')}）", flush=True)
+        print(f"  陆行鸟 + 龙虾都在的回合（{len(full)}）：狮鹫最左 {pct(full, 'left')}、龙虾是最左边的亡语 {pct(full, 'lob_left')}；"
+              f"每回合发动深潜狮子鱼 {avg(full, 'lion')} 次、天诞逃生飞龙 {avg(full, 'wyrm')} 次、卖尖利的鲨鱼 {avg(full, 'shark')} 次", flush=True)
+        g_left = {i: np.mean([r["left"] for r in v if r["t"] >= 7]) for i, v in self.rows.items() if any(r["t"] >= 7 for r in v)}
+        hi = [places[i] for i, x in g_left.items() if x >= 0.5 and places.get(i, 0) > 0]
+        lo = [places[i] for i, x in g_left.items() if x < 0.5 and places.get(i, 0) > 0]
+        if hi or lo:
+            print(f"  狮鹫多半放最左的局 {len(hi)} 局 平均 {np.mean(hi) if hi else float('nan'):.2f} 名；"
+                  f"多半不放最左的 {len(lo)} 局 平均 {np.mean(lo) if lo else float('nan'):.2f} 名", flush=True)
+        keys = ("left", "road", "titus", "lob", "lob_left")
+        return {"turns": len(rows), "games": len(self.rows), "model": {k: round(float(np.mean([r[k] for r in rows])), 3) for k in keys},
+                "pro": {k: round(float(np.mean([r[k] for r in pro])), 3) for k in keys} if pro else None,
+                "full": {"n": len(full), **({k: round(float(np.mean([r[k] for r in full])), 3) for k in ("left", "lob_left", "lion", "wyrm", "shark")} if full else {})},
+                "place_left": [len(hi), round(float(np.mean(hi)), 2) if hi else None],
+                "place_not_left": [len(lo), round(float(np.mean(lo)), 2) if lo else None]}
 
 
 def show_seeded(places: dict, comp_of: dict, turns: str = "") -> dict:
@@ -745,6 +829,7 @@ def main() -> int:
                                                     "结果文件名后面加 _late")
     ap.add_argument("--late-from", type=int, default=10)
     ap.add_argument("--lobby", default="", help="例如 BEAST：每局必开这几个种族、没有野猪人 / 恶魔 / 元素（看野兽专家 / 主模型在这种酒馆里的成绩）")
+    ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
     a = ap.parse_args()
@@ -770,7 +855,7 @@ def main() -> int:
         print(f"第 {a.late_from} 回合起换 {a.late_ckpt} 打 …", flush=True)
         late = model_policy(a.late_ckpt, dev, not a.sample)
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
-                             late=late, late_from=a.late_from, lobby_must=a.lobby)
+                             late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
@@ -831,7 +916,7 @@ def main() -> int:
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
                                "places": [p for p in (info.get("places") or {}).values() if p > 0],
-                               "seeded": info.get("seeded"),
+                               "seeded": info.get("seeded"), "rally": info.get("rally"),
                                "late": {"ckpt": a.late_ckpt, "from": a.late_from} if late is not None else None},
                               ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
