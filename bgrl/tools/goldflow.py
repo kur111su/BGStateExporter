@@ -309,13 +309,13 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
 
 class RallyStats:
     """龙虾流野兽（进击流）会不会玩：场上有猎头狮鹫的回合，结束回合时
-    · 狮鹫在不在最左边（深潜狮子鱼 / 尖利的鲨鱼让“最左边的野兽”去打鱼饵，狮鹫在最左边才触发进击：拿野兽牌、
+    · 最左边是不是进击随从（狮鹫 / 囤食土狼；深潜狮子鱼 / 尖利的鲨鱼让“最左边的野兽”去打鱼饵，进击随从在最左边才触发进击：拿野兽牌、
       逐亡陆行鸟再触发最左边的亡语——美味龙虾，有提图斯·瑞文戴尔再翻倍，招募阶段的身材是永久的）；
     · 逐亡陆行鸟、提图斯在不在场上，最左边的亡语随从是不是美味龙虾；
     · 这回合发动了几次深潜狮子鱼 / 天诞逃生飞龙（发动：触发一个友方随从的进击）、卖了几次尖利的鲨鱼。
     高手那一列：高分阵容库里同样有狮鹫的场面（库里是回合结束时的站位）。"""
     GRIFFIN, ROADRUNNER, LOBSTER, TITUS = "BG36_204", "BG36_208", "BG36_202", "BG25_354"
-    LIONFISH, WYRM, SHARK = "BG36_201", "BG36_243", "BG36_206"
+    LIONFISH, WYRM, SHARK, HYENA = "BG36_201", "BG36_243", "BG36_206", "BG36_210"
 
     def __init__(self):
         from tg.catalog import base_id, card_id, catalog
@@ -347,7 +347,8 @@ class RallyStats:
 
     def row(self, b: list) -> dict:
         dr = [x for x in b if self._dr(x)]
-        return {"left": b[0] == self.GRIFFIN, "road": self.ROADRUNNER in b, "titus": self.TITUS in b,
+        return {"left": b[0] in (self.GRIFFIN, self.HYENA), "road": self.ROADRUNNER in b, "road2": b.count(self.ROADRUNNER) >= 2,
+                "titus": self.TITUS in b,
                 "lob_left": bool(dr) and dr[0] == self.LOBSTER, "lob": self.LOBSTER in b}
 
     def report(self, places: dict, lib) -> dict | None:
@@ -369,17 +370,18 @@ class RallyStats:
         def avg(rs, k):
             return f"{np.mean([r[k] for r in rs]):.2f}" if rs else "-"
         print(f"\n龙虾流（场上有猎头狮鹫的回合，第 7 回合起，共 {len(rows)} 个回合 / {len(self.rows)} 局；高手 {len(pro)} 个场面）：", flush=True)
-        print(f"  狮鹫放最左边 {pct(rows, 'left')}（高手 {pct(pro, 'left')}）；有陆行鸟 {pct(rows, 'road')}（高手 {pct(pro, 'road')}）、"
+        print(f"  最左边是进击随从（狮鹫 / 囤食土狼） {pct(rows, 'left')}（高手 {pct(pro, 'left')}）；有陆行鸟 {pct(rows, 'road')}（高手 {pct(pro, 'road')}）、"
+              f"两只陆行鸟 {pct(rows, 'road2')}（高手 {pct(pro, 'road2')}）、"
               f"有提图斯 {pct(rows, 'titus')}（高手 {pct(pro, 'titus')}）、有美味龙虾 {pct(rows, 'lob')}（高手 {pct(pro, 'lob')}）", flush=True)
-        print(f"  陆行鸟 + 龙虾都在的回合（{len(full)}）：狮鹫最左 {pct(full, 'left')}、龙虾是最左边的亡语 {pct(full, 'lob_left')}；"
+        print(f"  陆行鸟 + 龙虾都在的回合（{len(full)}）：最左是进击随从 {pct(full, 'left')}、龙虾是最左边的亡语 {pct(full, 'lob_left')}；"
               f"每回合发动深潜狮子鱼 {avg(full, 'lion')} 次、天诞逃生飞龙 {avg(full, 'wyrm')} 次、卖尖利的鲨鱼 {avg(full, 'shark')} 次", flush=True)
         g_left = {i: np.mean([r["left"] for r in v if r["t"] >= 7]) for i, v in self.rows.items() if any(r["t"] >= 7 for r in v)}
         hi = [places[i] for i, x in g_left.items() if x >= 0.5 and places.get(i, 0) > 0]
         lo = [places[i] for i, x in g_left.items() if x < 0.5 and places.get(i, 0) > 0]
         if hi or lo:
-            print(f"  狮鹫多半放最左的局 {len(hi)} 局 平均 {np.mean(hi) if hi else float('nan'):.2f} 名；"
-                  f"多半不放最左的 {len(lo)} 局 平均 {np.mean(lo) if lo else float('nan'):.2f} 名", flush=True)
-        keys = ("left", "road", "titus", "lob", "lob_left")
+            print(f"  最左多半是进击随从的局 {len(hi)} 局 平均 {np.mean(hi) if hi else float('nan'):.2f} 名；"
+                  f"多半不是的 {len(lo)} 局 平均 {np.mean(lo) if lo else float('nan'):.2f} 名", flush=True)
+        keys = ("left", "road", "road2", "titus", "lob", "lob_left")
         return {"turns": len(rows), "games": len(self.rows), "model": {k: round(float(np.mean([r[k] for r in rows])), 3) for k in keys},
                 "pro": {k: round(float(np.mean([r[k] for r in pro])), 3) for k in keys} if pro else None,
                 "full": {"n": len(full), **({k: round(float(np.mean([r[k] for r in full])), 3) for k in ("left", "lob_left", "lion", "wyrm", "shark")} if full else {})},
