@@ -246,7 +246,8 @@ class CollectMixin:
                             self.rollout.reward(off + int(i), r, False, 0)
                             self.audit.add_one("trick", r)
                             self.trick_log[0] += 1
-                            self.trick_log[1] += d（见 rl/curricula/boost.py）
+                            self.trick_log[1] += d
+                if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/curricula/boost.py）
                     tc = time.time()
                     if self.adapt is None:
                         self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)
