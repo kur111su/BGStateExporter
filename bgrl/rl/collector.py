@@ -17,7 +17,7 @@ from tg.actions import (
     is_noop,
     is_panic,
 )
-from tg.obs import F_BOARD, MF_ATK, MF_HP, MINION_F
+from tg.obs import C_BOARD, F_BOARD, MF_ATK, MF_HP, MINION_F
 
 from .curricula import (
     BotBooster,
@@ -39,6 +39,24 @@ def _board_stat_sum(f, slot: int | None = None) -> float:
     rng = range(7) if slot is None else (slot,)
     return float(sum(round(float(f[F_BOARD + MINION_F * s + MF_ATK]) * 10) + round(float(f[F_BOARD + MINION_F * s + MF_HP]) * 10)
                      for s in rng))
+
+
+_ENGINE_IDX: dict = {}
+
+
+def _engine_board(cards: np.ndarray, kind: str) -> np.ndarray:
+    """每一行（卡牌编号）的场面是不是这种连招场面。rally：最左边是猎头狮鹫 / 囤食土狼，场上有逐亡陆行鸟（金色也算）。"""
+    if kind != "rally":
+        raise ValueError(f"trick_engine 只支持 rally，给的是 {kind!r}")
+    if kind not in _ENGINE_IDX:
+        from tg.catalog import base_id, card_id, n_cards
+        ids = [base_id(card_id(i)) if i else "" for i in range(n_cards())]
+        left = np.array([x in ("BG36_204", "BG36_210") for x in ids])
+        need = np.array([x == "BG36_208" for x in ids])
+        _ENGINE_IDX[kind] = (left, need)
+    left, need = _ENGINE_IDX[kind]
+    b = np.asarray(cards)[:, C_BOARD:C_BOARD + 7].astype(np.int64)
+    return left[b[:, 0]] & need[b].any(axis=1)
 
 
 class CollectMixin:
@@ -174,6 +192,8 @@ class CollectMixin:
                             chain = self.trick_chain[off + idx]
                             sel = (trig | (chain & (ak >= A_CHOOSE) & (ak < A_CHOOSE + 16))) & (tk >= cfg.trick_from_turn)
                             self.trick_chain[off + idx] = trig | (chain & (ak >= A_CHOOSE) & (ak < A_CHOOSE + 16))
+                            if cfg.trick_engine:
+                                sel &= _engine_board(c[o:o + k], cfg.trick_engine)
                             for j in np.flatnonzero(sel):
                                 st = _board_stat_sum(f[o + j])
                                 if A_SELL <= int(ak[j]) < A_SELL + 7:

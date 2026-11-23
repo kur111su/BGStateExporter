@@ -229,6 +229,9 @@ class Config:
     # 卖掉最多的牌就是深潜狮子鱼。养场面奖励（grow_bonus）只在回合末给整回合一个分数，分不清是哪一步
     trick_bonus: float = 0.0
     trick_from_turn: int = 6
+    # 只在这种场面上算（第 476 轮：不限场面时连招次数从 236 涨到 1271、考试从 4.23 掉到 4.70，成型的是下毒流鱼人——
+    # 模型找到了别的“发动 / 卖了就涨身材”的打法，不是龙虾流）。"rally" = 最左边是猎头狮鹫 / 囤食土狼、场上有逐亡陆行鸟；空 = 不限
+    trick_engine: str = ""
     grow_from_turn: int = 9
     grow_fights: int = 3
     grow_frac: float = 0.5

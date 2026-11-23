@@ -36,7 +36,7 @@ jobs:
           python -X utf8 bgrl/bg.py train --smoke --threads 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --resume --restore bgrl/runs/_smoke/snapshots/it00002.pt
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
-          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --lobby-must BEAST --lobby-frac 1.0 --lobby-exam true --trick-bonus 0.05 --trick-from-turn 2 --eval-every 2 --eval-games 4 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --lobby-must BEAST --lobby-frac 1.0 --lobby-exam true --trick-bonus 0.05 --trick-from-turn 2 --trick-engine rally --eval-every 2 --eval-games 4 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --recipe bgrl/configs/v3.json
       - name: Pro-board library from a synthetic sample + tiny PPO run with pro boards
         run: |
