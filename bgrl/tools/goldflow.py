@@ -28,7 +28,7 @@ sys.path.insert(0, str(HERE.parent))
 from paths import ROOT, RUNS  # noqa: E402
 from tg.actions import A_ACTIVATE, A_BUY, A_END, A_SELL, action_family  # noqa: E402
 from tg.catalog import base_id, card_id, catalog, is_golden_id  # noqa: E402
-from tg.obs import C_BOARD, C_SHOP, N_BOARD, N_SHOP, gold, lobby, tier, turn, up_cost  # noqa: E402
+from tg.obs import C_BOARD, C_HAND, C_SHOP, N_BOARD, N_HAND, N_SHOP, gold, lobby, tier, turn, up_cost  # noqa: E402
 
 PROFILE = ROOT / "rl" / "pro_profile.json"
 COLS = ("upgrade", "buy", "refresh", "activate", "dark_gift", "hero_power", "other")
@@ -128,7 +128,7 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
-               judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = ""):
+               judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = "", commit_comp: str = ""):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
@@ -201,6 +201,11 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     from tg.obs import lobby_bits
     _ctab = CompTables(load_target_comps(), [base_of_index(i) if i else "" for i in range(n_cards())], tiers="SA")
     rally = RallyStats()
+    commit_ok = None
+    if commit_comp:                                    # 定向：第 3 回合起只能买这套阵容的牌、野兽和非随从（和训练的定向局一样）
+        from rl.collector import _commit_allowed
+        commit_ok = _commit_allowed(commit_comp)
+        print(f"定向：第 3 回合起只能买{commit_comp}的核心 / 配套卡、野兽和法术（看它拿着这套能打成什么样）", flush=True)
     obs = env.observe()
     t0, shown = _t.time(), 0
     print(f"开始打 {games} 局（每打完 8 局报一次进度）…", flush=True)
@@ -220,6 +225,10 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
         if ready:
             f = obs["features"][ready]
             m = obs["action_mask"][ready].astype(bool)
+            if commit_ok is not None:
+                shop = obs["cards"][ready][:, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
+                bad = ~commit_ok[shop] & (shop > 0) & (np.rint(f[:, :1] * 20) >= 3)
+                m[:, A_BUY:A_BUY + N_SHOP] &= ~bad
             if late is None:
                 a = np.asarray(act(f, obs["cards"][ready], m)).astype(np.int64)
             else:                                      # 第 late_from 回合起换另一个模型打
@@ -237,6 +246,9 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
                 last_lobby[i] = lobby(fi)
                 ak = int(a[k])
                 rally.see(int(i), int(turn(fi)), ci, ak, done[i])
+                if ak == A_END and not done[i] and int(turn(fi)) >= 3:
+                    g_, seat_ = env.slot(int(i))
+                    rally.end_turn(int(i), int(turn(fi)), fi, ci, env.game(int(g_)), int(seat_))
                 if A_BUY <= ak < A_BUY + N_SHOP:
                     picks.add(ci[C_SHOP:C_SHOP + N_SHOP], ak - A_BUY)
                     buy_rows.append((ci.copy(), ak))
@@ -302,6 +314,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     info["places"] = places
     info["judge"], info["lib"] = judge, lib
     info["rally"] = rally.report(places, lib)
+    info["lobster_scale"] = rally.report_scale(places)
     if seeder is not None:
         info["seeded"] = show_seeded(places, seeded_comp, seed_comps)
     return [x.turns for x in logs], info
@@ -323,6 +336,7 @@ class RallyStats:
         det = catalog()
         self._dr = lambda c: "Deathrattle" in str((det.get(c) or {}).get("text") or "")
         self.cur: dict[int, dict] = {}                 # 槽位 → 这回合到现在的计数
+        self.scale: dict[int, list] = {}               # 槽位 → [(回合, 场上总身材, 龙虾加成, 场上 / 手里有没有美味龙虾)]
         self.rows: dict[int, list] = {}                # 槽位 → [每个有狮鹫的回合结束时的一行]
 
     def _board(self, ci):
@@ -350,6 +364,51 @@ class RallyStats:
         return {"left": b[0] in (self.GRIFFIN, self.HYENA), "road": self.ROADRUNNER in b, "road2": b.count(self.ROADRUNNER) >= 2,
                 "titus": self.TITUS in b,
                 "lob_left": bool(dr) and dr[0] == self.LOBSTER, "lob": self.LOBSTER in b}
+
+    def end_turn(self, i: int, t: int, f, ci, game, seat: int):
+        """回合结束：场上总身材、龙虾加成（玩家的 lobster_bonus：美味龙虾的亡语每触发一次 +1，之后的龙虾给的身材更多）。"""
+        import json as _json
+        from tg.obs import board_stats
+        tot = sum(sum(board_stats(f, s)) for s in range(N_BOARD))
+        try:
+            lb = int(_json.loads(game.state_json())["players"][seat]["stats"].get("lobster_bonus", 0))
+        except Exception:                              # noqa: BLE001
+            lb = 0
+        ids = [self._id(x) for x in list(ci[C_BOARD:C_BOARD + N_BOARD]) + list(ci[C_HAND:C_HAND + N_HAND]) if x > 0]
+        self.scale.setdefault(i, []).append((t, tot, lb, self.LOBSTER in ids or self.HYENA in ids))
+
+    def report_scale(self, places: dict) -> dict | None:
+        """龙虾加成（越早拿龙虾、越早开始触发，后面每次触发给的越多）和场上总身材，按回合。"""
+        if not self.scale:
+            return None
+        first = {}
+        for i, v in self.scale.items():
+            ts = [t for t, _, _, has in v if has]
+            first[i] = min(ts) if ts else None
+        got = [t for t in first.values() if t is not None]
+        print(f"\n龙虾加成（美味龙虾的亡语每触发一次 +1，之后的龙虾越来越强）：{len(got)}/{len(first)} 局拿过美味龙虾 / 囤食土狼"
+              + (f"，第一次拿到平均在第 {np.mean(got):.1f} 回合" if got else ""), flush=True)
+        print("回合 | 场上总身材（全部） | 拿过龙虾的局：总身材 | 龙虾加成", flush=True)
+        out = {}
+        for t in range(5, 16):
+            allv = [tot for v in self.scale.values() for tt, tot, _, _ in v if tt == t]
+            lobv = [(tot, lb) for i, v in self.scale.items() if first.get(i) is not None for tt, tot, lb, _ in v if tt == t]
+            if not allv:
+                continue
+            print(f"  {t:2d} | {np.mean(allv):8.0f} | " + (f"{np.mean([x for x, _ in lobv]):8.0f}（{len(lobv)} 局） | {np.mean([y for _, y in lobv]):5.1f}"
+                                                        if lobv else "       - |     -"), flush=True)
+            out[t] = {"all": round(float(np.mean(allv)), 1), "lob": round(float(np.mean([x for x, _ in lobv])), 1) if lobv else None,
+                      "bonus": round(float(np.mean([y for _, y in lobv])), 2) if lobv else None, "n_lob": len(lobv)}
+        early = [places[i] for i, t in first.items() if t is not None and t <= 7 and places.get(i, 0) > 0]
+        late = [places[i] for i, t in first.items() if t is not None and t > 7 and places.get(i, 0) > 0]
+        none = [places[i] for i, t in first.items() if t is None and places.get(i, 0) > 0]
+        print(f"  第 7 回合前拿到龙虾的局 {len(early)} 局 平均 {np.mean(early) if early else float('nan'):.2f} 名；"
+              f"之后才拿到的 {len(late)} 局 {np.mean(late) if late else float('nan'):.2f} 名；没拿的 {len(none)} 局 "
+              f"{np.mean(none) if none else float('nan'):.2f} 名", flush=True)
+        return {"by_turn": out, "first_avg": round(float(np.mean(got)), 2) if got else None,
+                "place_early": [len(early), round(float(np.mean(early)), 2) if early else None],
+                "place_late": [len(late), round(float(np.mean(late)), 2) if late else None],
+                "place_none": [len(none), round(float(np.mean(none)), 2) if none else None]}
 
     def report(self, places: dict, lib) -> dict | None:
         from tg.catalog import base_id
@@ -831,6 +890,8 @@ def main() -> int:
                                                     "结果文件名后面加 _late")
     ap.add_argument("--late-from", type=int, default=10)
     ap.add_argument("--lobby", default="", help="例如 BEAST：每局必开这几个种族、没有野猪人 / 恶魔 / 元素（看野兽专家 / 主模型在这种酒馆里的成绩）")
+    ap.add_argument("--commit", default="", help="定向：第 3 回合起只能买这套阵容（目标阵容名字，例如 龙虾流野兽）的牌、野兽和法术，"
+                    "看模型拿着这套能打成什么样（和训练的定向局一样）")
     ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
@@ -857,7 +918,8 @@ def main() -> int:
         print(f"第 {a.late_from} 回合起换 {a.late_ckpt} 打 …", flush=True)
         late = model_policy(a.late_ckpt, dev, not a.sample)
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
-                             late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names)
+                             late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names,
+                             commit_comp=a.commit)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
@@ -913,12 +975,14 @@ def main() -> int:
                                            else "goldflow.json")
     if late is not None:
         out = out.with_name(out.stem + "_late.json")
+    if a.commit:
+        out = out.with_name(out.stem + "_commit.json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games, "seed": a.seed,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
                                "places": [p for p in (info.get("places") or {}).values() if p > 0],
-                               "seeded": info.get("seeded"), "rally": info.get("rally"),
+                               "seeded": info.get("seeded"), "rally": info.get("rally"), "lobster_scale": info.get("lobster_scale"),
                                "late": {"ckpt": a.late_ckpt, "from": a.late_from} if late is not None else None},
                               ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n→ {out}")
