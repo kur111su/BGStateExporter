@@ -134,6 +134,7 @@ def bought_in(d, which: str, root: Path | None = None):
       tgtS / tgtA / tgtB  买的是 S / A / B 级目标阵容（rl/target_comps.json，bgbuddy.gg）的核心卡
       tgtnew     买的是新种族（野猪人 / 恶魔 / 元素以外）S / A 阵容的核心卡
       lobnew     （所有示范）本局野猪人 / 恶魔 / 元素都没开
+      comp-<名字> 买的是这套目标阵容（rl/target_comps.json 的名字，例如 comp-龙虾流野兽）的核心卡或配套卡
       tgtfit     买的核心卡和场上 / 手里已有的核心卡属于同一套目标阵容——在往那套阵容成型
       tgtsup     正在做一套 S / A 阵容（核心卡过半、本族 ≥ 2），买的是这套的配套卡（rl/target_comps.json 的 support，
                  bg.py playbook：高手做这套时比平时多买的卡）——成型以后提升实力、倒转经济、卡牌联动
@@ -180,6 +181,15 @@ def bought_in(d, which: str, root: Path | None = None):
         bm = tab.building(d["c"][buy], lobby_bits(d["f"][buy]) if "f" in d else None)
         hit = (tab.supp[np.clip(cards.astype(np.int64), 0, len(tab.supp) - 1)] & bm).any(1)
         sel[buy[hit]] = True
+        return sel
+    if which.startswith("comp-"):                       # 买的是这一套阵容的核心 / 配套卡（野兽专家：前期就拿美味龙虾）
+        from .comp import load_target_comps
+        want = set().union(*(set(c["core"]) | set(c.get("support") or ()) for c in load_target_comps(root)
+                             if c["name"] == which[5:]))
+        if not want:
+            return None
+        idx = [i for i, b in base.items() if b in want]
+        sel[buy[np.isin(cards, idx)]] = True
         return sel
     if which == "tgtnew":                               # 买的是新种族 S / A 阵容（老师不会的种族）的核心卡
         from .comp import load_target_comps
