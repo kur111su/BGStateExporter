@@ -128,7 +128,8 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
-               judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = "", commit_comp: str = ""):
+               judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = "", commit_comp: str = "",
+               commit_force: str = ""):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
@@ -203,8 +204,9 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     rally = RallyStats()
     commit_ok = None
     if commit_comp:                                    # 定向：第 3 回合起只能买这套阵容的牌、野兽和非随从（和训练的定向局一样）
-        from rl.collector import _commit_allowed
+        from rl.collector import _commit_allowed, _ids_mask, commit_rows
         commit_ok = _commit_allowed(commit_comp)
+        commit_fm = _ids_mask(commit_force) if commit_force else None
         print(f"定向：第 3 回合起只能买{commit_comp}的核心 / 配套卡、野兽和法术（看它拿着这套能打成什么样）", flush=True)
     obs = env.observe()
     t0, shown = _t.time(), 0
@@ -226,9 +228,7 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             f = obs["features"][ready]
             m = obs["action_mask"][ready].astype(bool)
             if commit_ok is not None:
-                shop = obs["cards"][ready][:, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
-                bad = ~commit_ok[shop] & (shop > 0) & (np.rint(f[:, :1] * 20) >= 3)
-                m[:, A_BUY:A_BUY + N_SHOP] &= ~bad
+                commit_rows(m, np.rint(f[:, 0] * 20).astype(int), obs["cards"][ready], commit_ok, commit_fm, 3)
             if late is None:
                 a = np.asarray(act(f, obs["cards"][ready], m)).astype(np.int64)
             else:                                      # 第 late_from 回合起换另一个模型打
@@ -892,6 +892,7 @@ def main() -> int:
     ap.add_argument("--lobby", default="", help="例如 BEAST：每局必开这几个种族、没有野猪人 / 恶魔 / 元素（看野兽专家 / 主模型在这种酒馆里的成绩）")
     ap.add_argument("--commit", default="", help="定向：第 3 回合起只能买这套阵容（目标阵容名字，例如 龙虾流野兽）的牌、野兽和法术，"
                     "看模型拿着这套能打成什么样（和训练的定向局一样）")
+    ap.add_argument("--commit-force", default="", help="和 --commit 一起用：非拿不可的牌（卡牌编号，逗号隔开）——酒馆里有、买得起就只能买，场上的不能卖")
     ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
@@ -919,7 +920,7 @@ def main() -> int:
         late = model_policy(a.late_ckpt, dev, not a.sample)
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
                              late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names,
-                             commit_comp=a.commit)
+                             commit_comp=a.commit, commit_force=a.commit_force)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)

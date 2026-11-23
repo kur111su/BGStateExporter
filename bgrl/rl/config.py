@@ -239,6 +239,10 @@ class Config:
     commit_comp: str = ""
     commit_frac: float = 0.0
     commit_from_turn: int = 3
+    # 定向局里非拿不可的牌（卡牌编号，逗号隔开）：酒馆里有、买得起就只能买它（别的动作这一步都关掉），场上的也不能卖。
+    # 第 600 轮定向测试（只限“能买什么”）：128 局只有 9 局拿过美味龙虾（第一次平均第 8.3 回合），主种族混合 / 龙 / 海盗——
+    # 模型改买法术、靠发现 / 黑暗之赐拿别的随从，绕过了限制
+    commit_force: str = ""
     grow_from_turn: int = 9
     grow_fights: int = 3
     grow_frac: float = 0.5

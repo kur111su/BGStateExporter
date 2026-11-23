@@ -77,6 +77,37 @@ def _commit_allowed(comp: str) -> np.ndarray:
     return ok
 
 
+def _ids_mask(ids: str) -> np.ndarray:
+    """卡牌编号（逗号隔开，金色也算）→ 按卡牌编号的布尔表。"""
+    from tg.catalog import base_id, card_id, n_cards
+    want = {x.strip() for x in str(ids).split(",") if x.strip()}
+    return np.array([bool(i) and base_id(card_id(i)) in want for i in range(n_cards())])
+
+
+def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndarray, force: np.ndarray | None,
+                from_turn: int) -> int:
+    """定向局的动作掩码（就地改 m，返回关掉了几个“买”）：第 from_turn 回合起只能买 ok 里的牌；
+    force 里的牌酒馆里有、买得起就只能买它，场上的 force 牌不能卖。"""
+    n = 0
+    for r in range(len(m)):
+        if turns[r] < from_turn:
+            continue
+        shop = cards[r, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
+        bad = ~ok[shop] & (shop > 0)
+        if bad.any():
+            m[r, A_BUY:A_BUY + N_SHOP] &= ~bad
+            n += int(bad.sum())
+        if force is None:
+            continue
+        brd = cards[r, C_BOARD:C_BOARD + 7].astype(np.int64)
+        m[r, A_SELL:A_SELL + 7] &= ~force[brd]
+        must = m[r, A_BUY:A_BUY + N_SHOP] & force[shop] & (shop > 0)
+        if must.any():
+            m[r, :] = False
+            m[r, A_BUY:A_BUY + N_SHOP] = must
+    return n
+
+
 class CollectMixin:
     def _role_id(self, name: str) -> int:
         if name not in self.role_names:
@@ -381,14 +412,11 @@ class CollectMixin:
             for i in np.flatnonzero(obs["ready"]):
                 if self.role[off + i] != 0 or not self._committed(name, int(i) // k):
                     continue
-                if int(np.rint(obs["features"][i, 0] * 20)) < self.cfg.commit_from_turn:
-                    continue
-                shop = obs["cards"][i, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
-                m = obs["action_mask"][i]
-                bad = ~self._commit_ok[shop] & (shop > 0)
-                if bad.any():
-                    m[A_BUY:A_BUY + N_SHOP] &= ~bad
-                    self.commit_masked += int(bad.sum())
+                if self._commit_force is None and self.cfg.commit_force:
+                    self._commit_force = _ids_mask(self.cfg.commit_force)
+                t = np.rint(obs["features"][i:i + 1, 0] * 20).astype(int)
+                self.commit_masked += commit_rows(obs["action_mask"][i:i + 1], t, obs["cards"][i:i + 1], self._commit_ok,
+                                                  self._commit_force, self.cfg.commit_from_turn)
 
     def _make_lobbies(self, seed: int, frac: float | None = None):
         cfg = self.cfg

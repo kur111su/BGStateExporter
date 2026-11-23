@@ -146,6 +146,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.commit_places: list[int] = []            # 定向局（commit_comp）的名次
         self.commit_masked = 0                         # 定向局这一轮关掉了几个“买”
         self._commit_ok = None
+        self._commit_force = None
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
