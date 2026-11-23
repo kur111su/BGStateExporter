@@ -11,9 +11,13 @@ import numpy as np
 import torch
 
 from tg.actions import (
+    A_ACTIVATE,
+    A_CHOOSE,
+    A_SELL,
     is_noop,
     is_panic,
 )
+from tg.obs import F_BOARD, MF_ATK, MF_HP, MINION_F
 
 from .curricula import (
     BotBooster,
@@ -28,6 +32,13 @@ from .rollout import (
     Policy,
     linear_place_reward,
 )
+
+
+def _board_stat_sum(f, slot: int | None = None) -> float:
+    """场上随从攻 + 血的总和（slot 给了就只算那一格）。"""
+    rng = range(7) if slot is None else (slot,)
+    return float(sum(round(float(f[F_BOARD + MINION_F * s + MF_ATK]) * 10) + round(float(f[F_BOARD + MINION_F * s + MF_HP]) * 10)
+                     for s in rng))
 
 
 class CollectMixin:
@@ -157,6 +168,17 @@ class CollectMixin:
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
+                        if cfg.trick_bonus > 0:                # 招募阶段连招：发动 / 卖之前其余随从的身材总和
+                            trig = ((ak >= A_ACTIVATE) & (ak < A_ACTIVATE + 7)) | ((ak >= A_SELL) & (ak < A_SELL + 7))
+                            # 发动深潜狮子鱼要再选一张酒馆里的牌（选择动作）才真正触发：紧跟在发动 / 卖后面的选择也算
+                            chain = self.trick_chain[off + idx]
+                            sel = (trig | (chain & (ak >= A_CHOOSE) & (ak < A_CHOOSE + 16))) & (tk >= cfg.trick_from_turn)
+                            self.trick_chain[off + idx] = trig | (chain & (ak >= A_CHOOSE) & (ak < A_CHOOSE + 16))
+                            for j in np.flatnonzero(sel):
+                                st = _board_stat_sum(f[o + j])
+                                if A_SELL <= int(ak[j]) < A_SELL + 7:
+                                    st -= _board_stat_sum(f[o + j], int(ak[j]) - A_SELL)
+                                self.trick_pre.setdefault(name, {})[int(idx[j])] = (st, int(tk[j]))
                         n_dec += k
                         self.n_noop += int(noop.sum())
                         self.mix["noop_move"] += int((ak >= 196).sum())        # 无效操作分开记：调站位 / 冻结 / 取消
@@ -212,7 +234,19 @@ class CollectMixin:
                                 if self.adapt is not None:
                                     self.adapt.add(int(info["placement"][i]))
                 self.obs[name] = env.observe()
-                if name == "bot" and self.booster is not None:   # 机器人加强到真人强度（见 rl/curricula/boost.py）
+                pend = self.trick_pre.pop(name, None) if cfg.trick_bonus > 0 else None
+                if pend:                                       # 招募阶段连招：发动 / 卖以后其余随从涨了多少
+                    fn = self.obs[name]["features"]
+                    for i, (st0, t0_) in pend.items():
+                        if dones[i] or int(np.rint(fn[i, 0] * 20)) != t0_:
+                            continue
+                        d = min(100.0, _board_stat_sum(fn[i]) - st0)
+                        if d > 0:
+                            r = cfg.trick_bonus * d / 10.0
+                            self.rollout.reward(off + int(i), r, False, 0)
+                            self.audit.add_one("trick", r)
+                            self.trick_log[0] += 1
+                            self.trick_log[1] += d（见 rl/curricula/boost.py）
                     tc = time.time()
                     if self.adapt is None:
                         self.booster.strength = ramp(self.iter, 0, cfg.boost_ramp_iters)

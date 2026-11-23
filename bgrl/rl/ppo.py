@@ -141,10 +141,13 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
                   f"{what}（{len(self.gifts.pool)} 种）", flush=True)
         self.gift_places: list[int] = []
+        self.trick_pre: dict = {}                      # 招募阶段连招奖励（trick_bonus）：环境 → {槽位: (发动 / 卖之前的身材, 回合)}
+        self.trick_log = [0, 0.0]                      # [这一轮给了几次, 一共涨了多少身材]
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
         self.role = np.zeros(off, dtype=np.int64)      # 0 = 学习者，k = self.role_names[k]
+        self.trick_chain = np.zeros(off, dtype=bool)  # 招募阶段连招：上一步是不是发动 / 卖（紧跟着的选择也算）
         self.role_names = ["learner"]
         self.snap_cache: dict[str, Policy] = {}
         self.league = League(load_real_profile())
@@ -450,6 +453,9 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 self.gift_places = []
             if self.lobbies is not None:
                 rec.update(self.lobbies.take_stats())
+            if cfg.trick_bonus > 0:
+                rec["trick_n"], rec["trick_stats"] = int(self.trick_log[0]), round(float(self.trick_log[1]), 1)
+                self.trick_log = [0, 0.0]
             if self.seeder is not None:
                 rec.update(self.seeder.take_stats())
                 if self.seed_places:
