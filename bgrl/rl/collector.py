@@ -14,11 +14,12 @@ from tg.actions import (
     A_ACTIVATE,
     A_BUY,
     A_CHOOSE,
+    A_PLAY,
     A_SELL,
     is_noop,
     is_panic,
 )
-from tg.obs import C_BOARD, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_SHOP
+from tg.obs import C_BOARD, C_HAND, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_HAND, N_POS, N_SHOP
 
 from .curricula import (
     BotBooster,
@@ -87,7 +88,8 @@ def _ids_mask(ids: str) -> np.ndarray:
 def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndarray, force: np.ndarray | None,
                 from_turn: int) -> int:
     """定向局的动作掩码（就地改 m，返回关掉了几个“买”）：第 from_turn 回合起只能买 ok 里的牌；
-    force 里的牌酒馆里有、买得起就只能买它，场上的 force 牌不能卖。"""
+    force 里的牌：手里有、场上有空位就只能先打出来；酒馆里有、买得起就只能买它；场上的不能卖。
+    （第 800 轮定向测试：只逼买，97/128 局拿到了龙虾 / 土狼，但龙虾加成到第 12 回合平均才 0.2——买了放在手里不打出来。）"""
     n = 0
     for r in range(len(m)):
         if turns[r] < from_turn:
@@ -101,6 +103,12 @@ def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndar
             continue
         brd = cards[r, C_BOARD:C_BOARD + 7].astype(np.int64)
         m[r, A_SELL:A_SELL + 7] &= ~force[brd]
+        hand = cards[r, C_HAND:C_HAND + N_HAND].astype(np.int64)
+        play = m[r, A_PLAY:A_PLAY + N_HAND * N_POS].reshape(N_HAND, N_POS) & (force[hand] & (hand > 0))[:, None]
+        if play.any():                                 # 手里的非拿不可的牌：场上有空位就先打出来（站位模型自己选）
+            m[r, :] = False
+            m[r, A_PLAY:A_PLAY + N_HAND * N_POS] = play.reshape(-1)
+            continue
         must = m[r, A_BUY:A_BUY + N_SHOP] & force[shop] & (shop > 0)
         if must.any():
             m[r, :] = False
