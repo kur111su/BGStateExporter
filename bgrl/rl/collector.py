@@ -12,12 +12,13 @@ import torch
 
 from tg.actions import (
     A_ACTIVATE,
+    A_BUY,
     A_CHOOSE,
     A_SELL,
     is_noop,
     is_panic,
 )
-from tg.obs import C_BOARD, F_BOARD, MF_ATK, MF_HP, MINION_F
+from tg.obs import C_BOARD, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_SHOP
 
 from .curricula import (
     BotBooster,
@@ -57,6 +58,23 @@ def _engine_board(cards: np.ndarray, kind: str) -> np.ndarray:
     left, need = _ENGINE_IDX[kind]
     b = np.asarray(cards)[:, C_BOARD:C_BOARD + 7].astype(np.int64)
     return left[b[:, 0]] & need[b].any(axis=1)
+
+
+def _commit_allowed(comp: str) -> np.ndarray:
+    """定向局能买的卡（按卡牌编号）：这套阵容的核心 / 配套卡、野兽、不是随从的（法术、饰品）。"""
+    from tg.catalog import base_id, card_id, catalog, n_cards
+    from .comp import load_target_comps
+    want = set().union(*(set(c["core"]) | set(c.get("support") or ()) for c in load_target_comps() if c["name"] == comp))
+    if not want:
+        raise ValueError(f"commit_comp：目标阵容里没有 {comp!r}")
+    det = catalog()
+    ok = np.ones(n_cards(), dtype=bool)
+    for i in range(1, n_cards()):
+        b = base_id(card_id(i))
+        e = det.get(b) or {}
+        if e.get("kind") == "minion" and b not in want and "BEAST" not in (e.get("races") or ()):
+            ok[i] = False
+    return ok
 
 
 class CollectMixin:
@@ -147,6 +165,8 @@ class CollectMixin:
         for _ in range(cfg.steps_per_iter):
             # 先把所有环境里同一个模型要算的局面合在一起，一次前向（比每个环境各算一次快）
             ta = time.time()
+            if cfg.commit_frac > 0:
+                self._commit_mask()
             actions = {name: np.zeros(env.n_slots, dtype=np.int64) for name, env, _ in self.envs}
             groups = defaultdict(list)                 # 模型编号 -> [(环境下标, 槽位数组)]
             for ei, (name, env, off) in enumerate(self.envs):
@@ -235,7 +255,13 @@ class CollectMixin:
                         if dones[i] and env.controlled[int(i) % len(env.controlled)] == 0:
                             seeded = name == "bot" and self.seeder is not None and self.seeder.finish(int(i))
                             gifted = name == "bot" and self.gifts is not None and self.gifts.finish(int(i))
-                            if gifted and not seeded:      # 送牌局：单独记名次
+                            committed = name == "bot" and cfg.commit_frac > 0 and self._committed(name, int(i))
+                            if committed and not seeded and not gifted:   # 定向局：单独记名次
+                                self.commit_places.append(int(info["placement"][i]))
+                                if self.booster is not None:
+                                    self.booster.finish(int(i))
+                                seeded = True
+                            elif gifted and not seeded:    # 送牌局：单独记名次
                                 self.gift_places.append(int(info["placement"][i]))
                                 if self.booster is not None:
                                     self.booster.finish(int(i))
@@ -337,6 +363,32 @@ class CollectMixin:
                 last_values[off + live] = v
         batch = self.rollout.collect(cfg.gamma, cfg.lam, last_values)
         return batch, n_dec, time.time() - t0, t_env, t_net
+
+    def _committed(self, name: str, g: int) -> bool:
+        """机器人局的第 g 局（这一局的 episode）是不是定向局：按 (局号, episode) 定下来，整局不变。"""
+        e = int(self.episode[name][g])
+        return ((g * 7919 + e * 104729 + self.cfg.seed * 31) % 1000) < self.cfg.commit_frac * 1000
+
+    def _commit_mask(self):
+        """定向局里学习者的“买”只留这套阵容的牌、野兽和非随从（见 Config.commit_comp）。"""
+        if self._commit_ok is None:
+            self._commit_ok = _commit_allowed(self.cfg.commit_comp)
+        for name, env, off in self.envs:
+            if name != "bot":
+                continue
+            obs = self.obs[name]
+            k = len(env.controlled)
+            for i in np.flatnonzero(obs["ready"]):
+                if self.role[off + i] != 0 or not self._committed(name, int(i) // k):
+                    continue
+                if int(np.rint(obs["features"][i, 0] * 20)) < self.cfg.commit_from_turn:
+                    continue
+                shop = obs["cards"][i, C_SHOP:C_SHOP + N_SHOP].astype(np.int64)
+                m = obs["action_mask"][i]
+                bad = ~self._commit_ok[shop] & (shop > 0)
+                if bad.any():
+                    m[A_BUY:A_BUY + N_SHOP] &= ~bad
+                    self.commit_masked += int(bad.sum())
 
     def _make_lobbies(self, seed: int, frac: float | None = None):
         cfg = self.cfg

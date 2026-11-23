@@ -143,6 +143,9 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.gift_places: list[int] = []
         self.trick_pre: dict = {}                      # 招募阶段连招奖励（trick_bonus）：环境 → {槽位: (发动 / 卖之前的身材, 回合)}
         self.trick_log = [0, 0.0]                      # [这一轮给了几次, 一共涨了多少身材]
+        self.commit_places: list[int] = []            # 定向局（commit_comp）的名次
+        self.commit_masked = 0                         # 定向局这一轮关掉了几个“买”
+        self._commit_ok = None
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}
@@ -453,6 +456,11 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 self.gift_places = []
             if self.lobbies is not None:
                 rec.update(self.lobbies.take_stats())
+            if cfg.commit_frac > 0:
+                rec["commit_masked"] = self.commit_masked
+                if self.commit_places:
+                    rec["place_commit"], rec["commit_games"] = round(float(np.mean(self.commit_places)), 3), len(self.commit_places)
+                self.commit_places, self.commit_masked = [], 0
             if cfg.trick_bonus > 0:
                 rec["trick_n"], rec["trick_stats"] = int(self.trick_log[0]), round(float(self.trick_log[1]), 1)
                 self.trick_log = [0, 0.0]
