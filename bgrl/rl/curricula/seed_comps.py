@@ -20,7 +20,8 @@ class CompSeeder:
     高手的场面第 9 / 10 / 11 回合分别有 28% / 46% / 51% 是成型的 S / A。
     换场面后这一局的阵容强度 / 目标阵容奖励从新场面重新起算（不把换来的强度算成学习者的功劳），见 ppo 的 seeded。"""
 
-    def __init__(self, lib: dict, frac: float = 0.15, turns=(8, 9), seed: int = 0, formed_from: int = 8):
+    def __init__(self, lib: dict, frac: float = 0.15, turns=(8, 9), seed: int = 0, formed_from: int = 8,
+                 names=None):
         from tg.catalog import catalog
         from ..comp import comp_progress, formed, load_target_comps, reachable
 
@@ -30,7 +31,7 @@ class CompSeeder:
         self.frac, self.turns = frac, tuple(int(t) for t in turns)
         self.rng = random.Random(seed + 4243)
         det = catalog()
-        comps = [c for c in load_target_comps() if c["tier"] in "SA"]
+        comps = [c for c in load_target_comps() if c["tier"] in "SA" and (not names or c["name"] in names)]
         self.pool: dict[int, list] = {}
         for t in self.turns:
             out = []

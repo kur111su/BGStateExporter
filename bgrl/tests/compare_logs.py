@@ -15,6 +15,8 @@ SKIP_PREFIX = ("t_",)
 SKIP = {"time", "dps", "gpu_mem_gb", "snapshot", "restored_from"}
 # 第 33328 轮清理时删掉的功能留下的日志字段（关着时也会写一个 None）：只在改动前那边有，不算不同
 REMOVED = {"comp_q", "tgt_q", "eng_q"}
+# 只多记的统计（不影响训练）：只在改动后那边有，不算不同
+ADDED = {"comp_formed", "comp_formed_by"}
 
 
 def load(p):
@@ -42,7 +44,7 @@ def diff(A, B) -> list[str]:
     for i, (a, b) in enumerate(zip(A, B)):
         keys = {k for k in a.keys() | b.keys() if k not in SKIP and not k.startswith(SKIP_PREFIX)}
         for k in sorted(keys):
-            if k not in b and k in REMOVED:
+            if (k not in b and k in REMOVED) or (k not in a and k in ADDED):
                 continue
             if k not in a or k not in b:
                 out.append(f"第 {i} 行（iter {a.get('iter')}）：{k} 只在一边有")

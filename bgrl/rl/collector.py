@@ -312,17 +312,29 @@ class CollectMixin:
             if not hasattr(self, "_comp_ref"):
                 self._comp_ref = (*load_comp_refs(), catalog())
             pairs, key, det = self._comp_ref
-            rows = []
+            if not hasattr(self, "_comp_targets"):
+                from .comp import load_target_comps
+                self._comp_targets = [c for c in load_target_comps() if c["tier"] in "SA"]
+            from .comp import formed
+            rows, by, n_formed = [], {}, 0
             for b in boards:
                 ids = [card_id(int(x)) for x in b if x > 0]
                 if len(ids) < 5:
                     continue
-                sc = board_scores([base_id(x) for x in ids], det, pairs, key)
+                base = [base_id(x) for x in ids]
+                sc = board_scores(base, det, pairs, key)
                 sc["golden"] = sum(is_golden_id(x) for x in ids)
                 rows.append(sc)
+                hit = [c["name"] for c in self._comp_targets if formed(base, c)]
+                n_formed += bool(hit)
+                for nm in hit:
+                    by[nm] = by.get(nm, 0) + 1
             if not rows:
                 return {}
-            return {f"comp_{k}": round(float(np.mean([r[k] for r in rows])), 3) for k in ("coh", "syn", "key", "golden")}
+            out = {f"comp_{k}": round(float(np.mean([r[k] for r in rows])), 3) for k in ("coh", "syn", "key", "golden")}
+            out["comp_formed"] = round(n_formed / len(rows), 3)             # 最终场面成了 S / A 阵容的比例（rl/comp.formed）
+            out["comp_formed_by"] = {k: round(v / len(rows), 3) for k, v in sorted(by.items(), key=lambda kv: -kv[1])}
+            return out
         except Exception as ex:                        # noqa: BLE001 —— 只是统计，出错不影响训练
             return {"comp_error": type(ex).__name__}
 
@@ -352,8 +364,10 @@ class CollectMixin:
             print("没有高分阵容库（runs\\pro_boards.json），成型阵容课程不用", flush=True)
             return None
         turns = [int(x) for x in str(cfg.seed_comp_turns).split(",") if x.strip()]
-        sd = CompSeeder(lib, cfg.seed_comp_frac, turns, seed=cfg.seed, formed_from=cfg.seed_comp_formed_from)
-        print(f"成型阵容课程：{cfg.seed_comp_frac:.0%} 的机器人局在第 {cfg.seed_comp_turns} 回合把学习者的场面换成 S / A 阵容"
+        names = [x.strip() for x in str(cfg.seed_comp_names).split(",") if x.strip()] or None
+        sd = CompSeeder(lib, cfg.seed_comp_frac, turns, seed=cfg.seed, formed_from=cfg.seed_comp_formed_from, names=names)
+        print(f"成型阵容课程：{cfg.seed_comp_frac:.0%} 的机器人局在第 {cfg.seed_comp_turns} 回合把学习者的场面换成 "
+              + ("、".join(names) if names else "S / A 阵容") +
               f"（第 {cfg.seed_comp_formed_from} 回合以前是做到一半的，之后是成型的；库里 {sd.size()} 个："
               + "、".join(f"第 {t} 回合 {len(v)}" for t, v in sorted(sd.pool.items())) + "）", flush=True)
         return sd if sd.size() else None

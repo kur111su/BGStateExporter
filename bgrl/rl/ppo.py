@@ -129,9 +129,17 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         if cfg.gift_frac > 0 and cfg.games_bot:
             from .curricula import CardGifts
             g_turns = [int(x) for x in str(cfg.gift_turns).split(",") if x.strip()]
-            self.gifts = CardGifts(cfg.gift_frac, g_turns, p=cfg.gift_p, min_lift=cfg.gift_min_lift, seed=cfg.seed)
+            g_comps = [x.strip() for x in str(cfg.gift_comps).split(",") if x.strip()]
+            g_cards = None
+            if g_comps:
+                from .comp import load_target_comps
+                g_cards = sorted({cid for c in load_target_comps() if c["name"] in g_comps
+                                  for cid in set(c["core"]) | set(c.get("support") or ())})
+            self.gifts = CardGifts(cfg.gift_frac, g_turns, p=cfg.gift_p, min_lift=cfg.gift_min_lift, seed=cfg.seed,
+                                   cards=g_cards)
+            what = f"{'、'.join(g_comps)}的核心 / 配套卡" if g_comps else "高手抢着买、模型不买的牌"
             print(f"送牌课程：{cfg.gift_frac:.0%} 的机器人局，第 {cfg.gift_turns} 回合每回合 {cfg.gift_p:.0%} 的机会往手里放一张"
-                  f"高手抢着买、模型不买的牌（{len(self.gifts.pool)} 种）", flush=True)
+                  f"{what}（{len(self.gifts.pool)} 种）", flush=True)
         self.gift_places: list[int] = []
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])

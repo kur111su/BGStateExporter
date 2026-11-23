@@ -196,6 +196,7 @@ class Config:
     seed_comp_frac: float = 0.0
     seed_comp_turns: str = "8,9"
     seed_comp_formed_from: int = 8     # 早于这一回合换的是“做到一半”的场面（核心卡过半、场上 2 个本族随从），学怎么做完
+    seed_comp_names: str = ""          # 只换成这几套（目标阵容名字，逗号隔开）；空 = 所有 S / A
     teacher_conf: float = 0.5
     # 只学老师的某几类动作（hard 模式）：例如 "sell" = 只在老师有把握、而且它最想做的是“卖随从”的局面上学；可选
     # end / refresh / freeze / upgrade / buy / sell / play，逗号分开。空 = 全学。teacher_from_turn：早于这一回合的局面不学
@@ -252,6 +253,8 @@ class Config:
     gift_turns: str = "4,5,6,7,8,9,10,11,12"
     gift_p: float = 0.6
     gift_min_lift: float = 2.0
+    # 不按挑中倍率挑，改成送这几套目标阵容（rl/target_comps.json 的名字，逗号隔开）的核心卡和配套卡（起步牌，野兽专家用）
+    gift_comps: str = ""
     # 考试守护（三天无人看着跑用）：每次加强局考试（eval_every 轮一次、eval_games 局、全强度高分阵容）记下名次，
     # 最近 guard_window 次的平均比历史最好低（名次数字大）guard_margin 以上、连续 guard_patience 次 →
     # 换回最好的那一版参数（runs/<run>/best.pt，优化器重新开始），guard_keys 里的模仿 / 老师系数 × guard_decay。
