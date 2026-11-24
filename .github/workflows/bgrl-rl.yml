@@ -51,6 +51,7 @@ jobs:
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST --commit 龙虾流野兽 --commit-force BG36_202,BG36_201 --commit-tiers 3:5,4:7
+          python -X utf8 bgrl/bg.py goldflow --policy lobster --games 48 --threads 2 --lobby BEAST
           python -X utf8 bgrl/bg.py distill --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2
           python -X utf8 bgrl/tests/test_lobby.py

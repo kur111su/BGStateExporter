@@ -895,6 +895,8 @@ def main() -> int:
                     "看模型拿着这套能打成什么样（和训练的定向局一样）")
     ap.add_argument("--commit-force", default="", help="和 --commit 一起用：非拿不可的牌（卡牌编号，逗号隔开）——酒馆里有、买得起就只能买，场上的不能卖")
     ap.add_argument("--commit-tiers", default="", help="和 --commit 一起用：升本节奏“等级:最晚回合”，例如 3:5,4:7,5:8,6:10")
+    ap.add_argument("--policy", default="", choices=["", "lobster"],
+                    help="lobster：不用模型，用写死规则的龙虾流机器人（tools/lobster_bot.py）打，量这套打法的上限；结果写在 runs/lobster_bot/")
     ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
@@ -906,7 +908,13 @@ def main() -> int:
         print(f"高手金币流向：{prof['gold_flow']['games']} 局 → {PROFILE}")
         show({}, prof["gold_flow"], a.turns)
         return 0
-    if not Path(a.ckpt).exists():
+    policy = None
+    if a.policy == "lobster":
+        from tools.lobster_bot import lobster_policy
+        policy = lobster_policy()
+        a.ckpt = str(ROOT / "runs" / "lobster_bot" / "lobster_bot")
+        Path(a.ckpt).parent.mkdir(parents=True, exist_ok=True)
+    elif not Path(a.ckpt).exists():
         print(f"没有检查点 {a.ckpt}")
         return 1
     dev = a.device
@@ -923,7 +931,7 @@ def main() -> int:
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
                              late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names,
                              commit_comp=a.commit, commit_force=a.commit_force,
-                             commit_tiers=a.commit_tiers)
+                             commit_tiers=a.commit_tiers, policy=policy)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
