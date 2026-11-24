@@ -106,11 +106,14 @@ def parse_tiers(spec: str) -> dict:
 
 
 def parse_hunt(spec: str):
-    """“5:BG36_208,BG25_354” → (5, 按卡牌编号的布尔表, 要找的卡牌编号集合)；空 → None。"""
-    if not spec or ":" not in spec:
-        return None
-    a, ids = spec.split(":", 1)
-    return int(a), _ids_mask(ids), {x.strip() for x in ids.split(",") if x.strip()}
+    """“5:BG25_354;6:BG25_354,BG36_208” → [(5, 布尔表, 卡牌编号集合), (6, …)]（按等级从高到低）；空 → None。
+    到了这一本才找这一档的牌（逐亡陆行鸟是 6 本卡，5 本时刷新找不到它）。"""
+    out = []
+    for part in str(spec).split(";"):
+        if ":" in part:
+            a, ids = part.split(":", 1)
+            out.append((int(a), _ids_mask(ids), {x.strip() for x in ids.split(",") if x.strip()}))
+    return sorted(out, key=lambda x: -x[0]) or None
 
 
 def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndarray, force: np.ndarray | None,
@@ -149,11 +152,11 @@ def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndar
             m[r, :] = False
             m[r, A_BUY:A_BUY + N_SHOP] = must
             continue
-        if hunt is not None and tiers is not None and golds is not None and tiers[r] >= hunt[0] and golds[r] >= 4 \
-                and m[r, A_REFRESH]:
+        hu = next((h for h in hunt if tiers[r] >= h[0]), None) if hunt and tiers is not None else None
+        if hu is not None and golds is not None and golds[r] >= 4 and m[r, A_REFRESH]:
             mine = np.concatenate([brd, hand])
-            got = {int(x) for x in mine[hunt[1][mine] & (mine > 0)]}
-            if len({_BASE[x] for x in got}) < len(hunt[2]):   # 后期引擎还没凑齐、钱够：刷新找
+            got = {int(x) for x in mine[hu[1][mine] & (mine > 0)]}
+            if len({_BASE[x] for x in got}) < len(hu[2]):     # 这一本该有的引擎还没凑齐、钱够：刷新找
                 m[r, :] = False
                 m[r, A_REFRESH] = True
     return n
