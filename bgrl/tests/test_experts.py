@@ -7,7 +7,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rl.experts import _lobby_ok, parse_experts  # noqa: E402
-from tg.obs import F_LOBBY, LOBBY_IDX  # noqa: E402
+from tg.obs import F_LOBBY  # noqa: E402
 
 
 def test_parse():
@@ -22,8 +22,8 @@ def test_parse():
 
 
 def test_lobby():
-    f = np.zeros((3, max(LOBBY_IDX) + 1), np.float32)
-    on = lambda r, t: f.__setitem__((r, LOBBY_IDX[F_LOBBY.index(t)]), 1.0)  # noqa: E731
+    f = np.zeros((3, max(F_LOBBY.values()) + 1), np.float32)
+    on = lambda r, t: f.__setitem__((r, F_LOBBY[t]), 1.0)  # noqa: E731
     on(0, "BEAST"); on(0, "MURLOC")
     on(1, "BEAST"); on(1, "DEMON")
     on(2, "MURLOC")

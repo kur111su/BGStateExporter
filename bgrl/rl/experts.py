@@ -46,13 +46,13 @@ def parse_experts(spec) -> list[dict]:
 
 def _lobby_ok(f, must: str, exclude: str) -> np.ndarray:
     """[行]：酒馆开了 must 里所有种族、一个 exclude 都没开。"""
-    from tg.obs import F_LOBBY, lobby_bits
-    bits = lobby_bits(f)
-    ok = np.ones(len(bits), dtype=bool)
+    from tg.obs import F_LOBBY                          # 种族 → 特征下标（开了 ≈ 1）
+    f = np.asarray(f)
+    ok = np.ones(len(f), dtype=bool)
     for t in [x.strip().upper() for x in must.split(",") if x.strip()]:
-        ok &= (bits >> F_LOBBY.index(t)) & 1 == 1
+        ok &= f[:, F_LOBBY[t]] > 0.3
     for t in [x.strip().upper() for x in exclude.split(",") if x.strip()]:
-        ok &= (bits >> F_LOBBY.index(t)) & 1 == 0
+        ok &= f[:, F_LOBBY[t]] <= 0.3
     return ok
 
 
