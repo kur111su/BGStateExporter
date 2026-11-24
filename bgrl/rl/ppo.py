@@ -150,6 +150,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.lob_log = [0, 0]                          # [这一轮一共涨了多少加成, 见到的最高加成]
         self._commit_ok = None
         self._commit_force = None
+        self._commit_hunt = None
         self.obs = {name: env.observe() for name, env, _ in self.envs}
         self.episode = {name: np.asarray([env.episode_index(i) for i in range(env.n_games)])
                         for name, env, _ in self.envs}

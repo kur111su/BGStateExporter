@@ -17,12 +17,13 @@ from tg.actions import (
     A_CHOOSE,
     A_END,
     A_PLAY,
+    A_REFRESH,
     A_SELL,
     A_UPGRADE,
     is_noop,
     is_panic,
 )
-from tg.obs import C_BOARD, C_HAND, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_HAND, N_POS, N_SHOP, tier
+from tg.obs import C_BOARD, C_HAND, C_SHOP, F_BOARD, MF_ATK, MF_HP, MINION_F, N_HAND, N_POS, N_SHOP, gold, tier
 
 from .curricula import (
     BotBooster,
@@ -85,7 +86,13 @@ def _ids_mask(ids: str) -> np.ndarray:
     """卡牌编号（逗号隔开，金色也算）→ 按卡牌编号的布尔表。"""
     from tg.catalog import base_id, card_id, n_cards
     want = {x.strip() for x in str(ids).split(",") if x.strip()}
-    return np.array([bool(i) and base_id(card_id(i)) in want for i in range(n_cards())])
+    out = np.zeros(n_cards(), dtype=bool)
+    for i in range(1, n_cards()):
+        b = base_id(card_id(i))
+        if b in want:
+            out[i] = True
+            _BASE[i] = b
+    return out
 
 
 def parse_tiers(spec: str) -> dict:
@@ -98,8 +105,17 @@ def parse_tiers(spec: str) -> dict:
     return out
 
 
+def parse_hunt(spec: str):
+    """“5:BG36_208,BG25_354” → (5, 按卡牌编号的布尔表, 要找的卡牌编号集合)；空 → None。"""
+    if not spec or ":" not in spec:
+        return None
+    a, ids = spec.split(":", 1)
+    return int(a), _ids_mask(ids), {x.strip() for x in ids.split(",") if x.strip()}
+
+
 def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndarray, force: np.ndarray | None,
-                from_turn: int, tiers: np.ndarray | None = None, plan: dict | None = None) -> int:
+                from_turn: int, tiers: np.ndarray | None = None, plan: dict | None = None,
+                golds: np.ndarray | None = None, hunt=None) -> int:
     """定向局的动作掩码（就地改 m，返回关掉了几个“买”）：第 from_turn 回合起只能买 ok 里的牌；
     force 里的牌：手里有、场上有空位就只能先打出来；酒馆里有、买得起就只能买它；场上的不能卖。
     （第 800 轮定向测试：只逼买，97/128 局拿到了龙虾 / 土狼，但龙虾加成到第 12 回合平均才 0.2——买了放在手里不打出来。）"""
@@ -132,7 +148,18 @@ def commit_rows(m: np.ndarray, turns: np.ndarray, cards: np.ndarray, ok: np.ndar
         if must.any():
             m[r, :] = False
             m[r, A_BUY:A_BUY + N_SHOP] = must
+            continue
+        if hunt is not None and tiers is not None and golds is not None and tiers[r] >= hunt[0] and golds[r] >= 4 \
+                and m[r, A_REFRESH]:
+            mine = np.concatenate([brd, hand])
+            got = {int(x) for x in mine[hunt[1][mine] & (mine > 0)]}
+            if len({_BASE[x] for x in got}) < len(hunt[2]):   # 后期引擎还没凑齐、钱够：刷新找
+                m[r, :] = False
+                m[r, A_REFRESH] = True
     return n
+
+
+_BASE: dict = {}
 
 
 class CollectMixin:
@@ -465,9 +492,12 @@ class CollectMixin:
                     self._commit_force = _ids_mask(self.cfg.commit_force)
                 t = np.rint(obs["features"][i:i + 1, 0] * 20).astype(int)
                 tr = np.array([tier(obs["features"][i])])
+                if self._commit_hunt is None and self.cfg.commit_hunt:
+                    self._commit_hunt = parse_hunt(self.cfg.commit_hunt)
                 self.commit_masked += commit_rows(obs["action_mask"][i:i + 1], t, obs["cards"][i:i + 1], self._commit_ok,
                                                   self._commit_force, self.cfg.commit_from_turn, tr,
-                                                  parse_tiers(self.cfg.commit_tiers))
+                                                  parse_tiers(self.cfg.commit_tiers),
+                                                  np.array([gold(obs["features"][i])]), self._commit_hunt)
 
     def _make_lobbies(self, seed: int, frac: float | None = None):
         cfg = self.cfg

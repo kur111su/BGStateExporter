@@ -129,7 +129,7 @@ def model_policy(ckpt: str, device: str, greedy: bool):
 def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, device: str, boosted: bool = False,
                policy=None, seed_comps: str = "", seed_lib: dict | None = None, late=None, late_from: int = 10,
                judge_lib: dict | None = None, lobby_must: str = "", seed_names: str = "", commit_comp: str = "",
-               commit_force: str = "", commit_tiers: str = ""):
+               commit_force: str = "", commit_tiers: str = "", commit_hunt: str = ""):
     """boosted：7 个机器人从第 5 回合起每 2 回合换成高分对局里同一回合的真实阵容（runs/pro_boards.json +
     runs/h13_boards.json，和训练时的考试 eval_boost_place 一样，全强度）。policy：测试用，代替检查点。
     seed_comps（例如 "8,9,10"）：每局在其中随机一个回合招募开始时，模型的场面换成高手同一回合已经成型的 S / A 阵容
@@ -204,7 +204,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
     rally = RallyStats()
     commit_ok = None
     if commit_comp:                                    # 定向：第 3 回合起只能买这套阵容的牌、野兽和非随从（和训练的定向局一样）
-        from rl.collector import _commit_allowed, _ids_mask, commit_rows, parse_tiers
+        from rl.collector import _commit_allowed, _ids_mask, commit_rows, parse_hunt, parse_tiers
+        commit_hu = parse_hunt(commit_hunt)
         commit_ok = _commit_allowed(commit_comp)
         commit_fm = _ids_mask(commit_force) if commit_force else None
         print(f"定向：第 3 回合起只能买{commit_comp}的核心 / 配套卡、野兽和法术（看它拿着这套能打成什么样）", flush=True)
@@ -229,7 +230,8 @@ def play_model(ckpt: str, games: int, seed: int, threads: int, greedy: bool, dev
             m = obs["action_mask"][ready].astype(bool)
             if commit_ok is not None:
                 commit_rows(m, np.rint(f[:, 0] * 20).astype(int), obs["cards"][ready], commit_ok, commit_fm, 3,
-                            np.array([tier(x) for x in f]), parse_tiers(commit_tiers))
+                            np.array([tier(x) for x in f]), parse_tiers(commit_tiers),
+                            np.array([gold(x) for x in f]), commit_hu)
             if late is None:
                 a = np.asarray(act(f, obs["cards"][ready], m)).astype(np.int64)
             else:                                      # 第 late_from 回合起换另一个模型打
@@ -897,6 +899,7 @@ def main() -> int:
     ap.add_argument("--commit-tiers", default="", help="和 --commit 一起用：升本节奏“等级:最晚回合”，例如 3:5,4:7,5:8,6:10")
     ap.add_argument("--policy", default="", choices=["", "lobster"],
                     help="lobster：不用模型，用写死规则的龙虾流机器人（tools/lobster_bot.py）打，量这套打法的上限；结果写在 runs/lobster_bot/")
+    ap.add_argument("--commit-hunt", default="", help="和 --commit 一起用：后期引擎“等级:卡牌编号,…”，缺了、钱 ≥ 4 就刷新找")
     ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
@@ -931,7 +934,7 @@ def main() -> int:
     games, info = play_model(a.ckpt, a.games, a.seed, a.threads, not a.sample, dev, a.boosted, seed_comps=a.seed_comps,
                              late=late, late_from=a.late_from, lobby_must=a.lobby, seed_names=a.seed_names,
                              commit_comp=a.commit, commit_force=a.commit_force,
-                             commit_tiers=a.commit_tiers, policy=policy)
+                             commit_tiers=a.commit_tiers, commit_hunt=a.commit_hunt, policy=policy)
     if late is not None:
         print(f"（第 1–{a.late_from - 1} 回合 {Path(a.ckpt).name}，第 {a.late_from} 回合起 {Path(a.late_ckpt).name}）", flush=True)
     model = summarize(games)
