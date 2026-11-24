@@ -2,7 +2,7 @@
 # 一次性安装（Mac / Linux；可以重复运行）：Python 环境、TavernGym 模拟器、PyTorch，然后跑测试、一次小训练、测设备速度。
 #   ./setup.sh          安装 / 更新并检查（Mac 上最后测一下 MPS / CPU 哪个快，约 5–15 分钟）
 #   ./setup.sh quick    不测设备速度
-# 全部装在 bgrl/.venv 和 bgrl/wheels；记录在 bgrl/reports/setup.txt（出问题把它发给 Claude）。
+# 默认用系统的 python3（包装进用户目录）；以前装过 bgrl/.venv 或 BG_VENV=1 ./setup.sh 就用虚拟环境；安装包在 bgrl/wheels；记录在 bgrl/reports/setup.txt（出问题把它发给 Claude）。
 set -u
 cd "$(dirname "$0")"
 mkdir -p reports wheels
@@ -11,31 +11,46 @@ echo "setup $(date)" > "${LOG}"
 say() { echo "$@"; echo "$@" >> "${LOG}"; }
 fail() { say "失败：$1（详细见 bgrl/${LOG}）"; exit 1; }
 
-# --- 1. Python 3.10–3.13 ---
-ok_py() { "$1" -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)' >/dev/null 2>&1; }
-PY=""
-if [ ! -x .venv/bin/python ]; then
-  for c in python3.12 python3.13 python3.11 python3.10 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.13 \
-           /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 python3; do
-    if command -v "$c" >/dev/null 2>&1 && ok_py "$c"; then PY="$c"; break; fi
-  done
-  if [ -z "${PY}" ]; then
-    say "没找到 Python 3.10–3.13，用 uv 装一个 Python 3.12（只装在你的用户目录里）……"
-    if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
-      curl -LsSf https://astral.sh/uv/install.sh | sh >> "${LOG}" 2>&1 || fail "装 uv"
-    fi
-    UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
-    "$UV" python install 3.12 >> "${LOG}" 2>&1 || fail "装 Python 3.12"
-    PY="$("$UV" python find 3.12)"
+# --- 1. Python 3.10–3.15 ---
+# 默认直接用系统的 python3，包装进用户目录（pip --user，不建虚拟环境）。
+# 以前装过 bgrl/.venv、设了 BG_VENV=1、或者 python3 不合适（没有 / 版本不对）时，用虚拟环境 bgrl/.venv。
+ok_py() { "$1" -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,15) else 1)' >/dev/null 2>&1; }
+PIPX=()
+if [ ! -x .venv/bin/python ] && [ -z "${BG_VENV:-}" ] && command -v python3 >/dev/null 2>&1 && ok_py python3; then
+  VPY=python3
+  PIPX=(--user)
+  # Homebrew 等“外部管理”的 Python 不让 pip 装包，要加 --break-system-packages（只装进用户目录，不动系统的包）
+  if python3 -c 'import os, sys, sysconfig; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)'; then
+    PIPX+=(--break-system-packages)
   fi
-  say "建 .venv（${PY}）……"
-  "${PY}" -m venv .venv >> "${LOG}" 2>&1 || fail "建 .venv"
+  say "用系统的 python3（$(python3 -c 'import sys; print(sys.version.split()[0])')，$(command -v python3)），包装进用户目录"
+else
+  PY=""
+  if [ ! -x .venv/bin/python ]; then
+    for c in python3.12 python3.13 python3.11 python3.10 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.13 \
+             /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 python3; do
+      if command -v "$c" >/dev/null 2>&1 && ok_py "$c"; then PY="$c"; break; fi
+    done
+    if [ -z "${PY}" ]; then
+      say "没找到 Python 3.10–3.15，用 uv 装一个 Python 3.12（只装在你的用户目录里）……"
+      if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh >> "${LOG}" 2>&1 || fail "装 uv"
+      fi
+      UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+      "$UV" python install 3.12 >> "${LOG}" 2>&1 || fail "装 Python 3.12"
+      PY="$("$UV" python find 3.12)"
+    fi
+    say "建 .venv（${PY}）……"
+    "${PY}" -m venv .venv >> "${LOG}" 2>&1 || fail "建 .venv"
+  fi
+  VPY=.venv/bin/python
+  say "用虚拟环境 bgrl/.venv"
+  $VPY -m pip install -q --upgrade pip >> "${LOG}" 2>&1
 fi
-VPY=.venv/bin/python
-$VPY -m pip install -q --upgrade pip >> "${LOG}" 2>&1
-$VPY -m pip install -q -r requirements.txt >> "${LOG}" 2>&1 || {
+pipi() { $VPY -m pip install ${PIPX[@]+"${PIPX[@]}"} "$@"; }
+pipi -q -r requirements.txt >> "${LOG}" 2>&1 || {
   say "pip 换清华镜像再试……"
-  $VPY -m pip install -q -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple >> "${LOG}" 2>&1 || fail "pip install"
+  pipi -q -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple >> "${LOG}" 2>&1 || fail "pip install"
 }
 
 # --- 2. TavernGym（我们的 GitHub Actions 从 MCG-NJU/AutoTavern 编译，MIT；版本锁在 taverngym/PIN.txt）---
@@ -61,7 +76,7 @@ if ! $VPY -c "import taverngym" >/dev/null 2>&1 || [ "$(cat "${STAMP}" 2>/dev/nu
         $VPY -c "import json,re,sys; a=[x['name'] for x in json.load(sys.stdin)['assets'] if x['name'].endswith('.whl') and re.search(r'${PAT}', x['name'])]; print(a[0] if a else '')")
   [ -n "${WHL}" ] || fail "${TAG} 里没有这台电脑能用的安装包（${PAT}）——要等 GitHub 上的 TavernGym 工作流编译好"
   curl -fsSL -o "wheels/${WHL}" "https://github.com/kur111su/BGStateExporter/releases/download/${TAG}/${WHL}" || fail "下载 ${WHL}"
-  $VPY -m pip install -q --force-reinstall --no-deps "wheels/${WHL}" >> "${LOG}" 2>&1 || fail "装 TavernGym"
+  pipi -q --force-reinstall --no-deps "wheels/${WHL}" >> "${LOG}" 2>&1 || fail "装 TavernGym"
   echo "${TAG}" > "${STAMP}"
 fi
 
@@ -69,9 +84,9 @@ fi
 if ! $VPY -c "import torch" >/dev/null 2>&1; then
   say "装 PyTorch（几百 MB）……"
   if [ "$(uname -s)" = "Linux" ] && command -v nvidia-smi >/dev/null 2>&1; then
-    $VPY -m pip install torch --index-url https://download.pytorch.org/whl/cu124 >> "${LOG}" 2>&1 || fail "装 PyTorch"
+    pipi torch --index-url https://download.pytorch.org/whl/cu124 >> "${LOG}" 2>&1 || fail "装 PyTorch"
   else
-    $VPY -m pip install torch >> "${LOG}" 2>&1 || fail "装 PyTorch"
+    pipi torch >> "${LOG}" 2>&1 || fail "装 PyTorch"
   fi
 fi
 

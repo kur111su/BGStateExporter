@@ -8,7 +8,7 @@
 
 | 文件 | 做什么 |
 | --- | --- |
-| `setup.sh` | 第一次用、或更新后在“终端”里运行：建 `.venv`，装 numpy、TavernGym 安装包、PyTorch，跑测试和几轮极小训练，最后测设备速度。`./setup.sh quick` 不测速 |
+| `setup.sh` | 第一次用、或更新后在“终端”里运行：用系统的 `python3`（3.10–3.15）往用户目录里装 numpy、TavernGym 安装包、PyTorch，跑测试和几轮极小训练，最后测设备速度。`./setup.sh quick` 不测速 |
 | `panel.command` | 双击打开**面板**（桌面程序）：训练看板 + 训练 / 测试 + 竞技场对局 + 任务输出，都在一个窗口里。关掉窗口不影响正在跑的训练和任务，再打开还能看到 |
 
 ## 面板（`panel.command`）
@@ -36,7 +36,7 @@
 
 ## 命令行（`bg.py`）
 
-面板的按钮跑的都是 `bg.py` 的子命令，也可以直接在命令行里用（`.venv\Scripts\python bg.py <命令> --help` 看参数）：
+面板的按钮跑的都是 `bg.py` 的子命令，也可以直接在命令行里用（Mac：`python3 -X utf8 bg.py <命令> --help` 看参数；Windows：`.venv\Scripts\python bg.py <命令> --help`）：
 
 | 命令 | 实现 | 说明 |
 | --- | --- | --- |

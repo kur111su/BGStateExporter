@@ -70,7 +70,7 @@ def zip_ok(p: Path, deep: bool) -> str:
 def check_env(R: Report) -> None:
     print("环境", flush=True)
     v = sys.version_info
-    (R.ok if (3, 10) <= v[:2] <= (3, 13) else R.no)(f"Python {v.major}.{v.minor}.{v.micro}（{sys.executable}）")
+    (R.ok if (3, 10) <= v[:2] <= (3, 15) else R.no)(f"Python {v.major}.{v.minor}.{v.micro}（{sys.executable}）")
     try:
         import torch
         from rl.device import available, describe

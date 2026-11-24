@@ -161,7 +161,7 @@ def main(argv=None) -> int:
         else:
             dout.write_text(json.dumps(dist, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
             print(f"写好蒸馏配方 {dout.relative_to(ROOT)}")
-    py = ".venv/bin/python -X utf8 bg.py"
+    py = (".venv/bin/python" if (ROOT / ".venv").exists() else "python3") + " -X utf8 bg.py"
     cf = f'--commit {c["name"]} --commit-force {force} --commit-tiers {TIER_PLAN}' + \
          (f' --commit-hunt "{cfg["commit_hunt"]}"' if cfg["commit_hunt"] else "")
     print(f"""
