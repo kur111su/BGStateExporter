@@ -145,6 +145,9 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self.trick_log = [0, 0.0]                      # [这一轮给了几次, 一共涨了多少身材]
         self.commit_places: list[int] = []            # 定向局（commit_comp）的名次
         self.commit_masked = 0                         # 定向局这一轮关掉了几个“买”
+        self.lob_pend: dict = {}                       # 龙虾加成奖励：这一步结束回合的槽位
+        self.lob_prev: dict = {}                       # (环境, 槽位) → (episode, 上次结束回合时的加成)
+        self.lob_log = [0, 0]                          # [这一轮一共涨了多少加成, 见到的最高加成]
         self._commit_ok = None
         self._commit_force = None
         self.obs = {name: env.observe() for name, env, _ in self.envs}
@@ -457,6 +460,9 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
                 self.gift_places = []
             if self.lobbies is not None:
                 rec.update(self.lobbies.take_stats())
+            if cfg.lobster_coef > 0:
+                rec["lobster_gain"], rec["lobster_max"] = int(self.lob_log[0]), int(self.lob_log[1])
+                self.lob_log = [0, 0]
             if cfg.commit_frac > 0:
                 rec["commit_masked"] = self.commit_masked
                 if self.commit_places:

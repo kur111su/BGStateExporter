@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -262,6 +263,9 @@ class CollectMixin:
                         self.rollout.add(off + idx, res[3][o:o + k], c[o:o + k], m[o:o + k], ak,
                                          res[1][o:o + k], res[2][o:o + k], r0=r0)
                         self._after_add(off + idx, ak, np.rint(f[o:o + k, 0] * 20).astype(int))
+                        if cfg.lobster_coef > 0 and name == "bot":   # 龙虾加成奖励：结束回合的记下来，下一步读加成
+                            for j in np.flatnonzero(ak == A_END):
+                                self.lob_pend.setdefault(name, []).append(int(idx[j]))
                         if cfg.trick_bonus > 0:                # 招募阶段连招：发动 / 卖之前其余随从的身材总和
                             trig = ((ak >= A_ACTIVATE) & (ak < A_ACTIVATE + 7)) | ((ak >= A_SELL) & (ak < A_SELL + 7))
                             # 发动深潜狮子鱼要再选一张酒馆里的牌（选择动作）才真正触发：紧跟在发动 / 卖后面的选择也算
@@ -336,6 +340,25 @@ class CollectMixin:
                                 if self.adapt is not None:
                                     self.adapt.add(int(info["placement"][i]))
                 self.obs[name] = env.observe()
+                for i in self.lob_pend.pop(name, []) if cfg.lobster_coef > 0 else []:
+                    if dones[i]:
+                        continue
+                    try:
+                        gi, seat = env.slot(int(i))
+                        lb = int(json.loads(env.game(int(gi)).state_json())["players"][int(seat)]["stats"].get("lobster_bonus", 0))
+                    except Exception:                          # noqa: BLE001
+                        continue
+                    ep = int(self.episode[name][int(i) // len(env.controlled)])
+                    e0, b0 = self.lob_prev.get((name, int(i)), (ep, 0))
+                    if e0 != ep:
+                        b0 = 0
+                    self.lob_prev[(name, int(i))] = (ep, lb)
+                    if lb > b0:
+                        r = cfg.lobster_coef * min(lb - b0, 20)
+                        self.rollout.reward(off + int(i), r, False, 0)
+                        self.audit.add_one("lobster", r)
+                        self.lob_log[0] += lb - b0
+                    self.lob_log[1] = max(self.lob_log[1], lb)
                 pend = self.trick_pre.pop(name, None) if cfg.trick_bonus > 0 else None
                 if pend:                                       # 招募阶段连招：发动 / 卖以后其余随从涨了多少
                     fn = self.obs[name]["features"]
