@@ -376,7 +376,7 @@ class CollectMixin:
                         continue
                     try:
                         gi, seat = env.slot(int(i))
-                        lb = int(json.loads(env.game(int(gi)).state_json())["players"][int(seat)]["stats"].get("lobster_bonus", 0))
+                        lb = int(json.loads(env.game(int(gi)).state_json())["players"][int(seat)]["stats"].get(cfg.counter_key or "lobster_bonus", 0))
                     except Exception:                          # noqa: BLE001
                         continue
                     ep = int(self.episode[name][int(i) // len(env.controlled)])

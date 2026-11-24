@@ -1,0 +1,12 @@
+{
+ "base": "v3",
+ "run": "runs/v3",
+ "description": "第二阶段：主模型在 龙虾流野兽 的局面上向专家 runs/beast/snapshots/it02700.pt（自由测试 4.32 名、龙虾流成型 25%；beast 的 best.pt 是第 600 轮的旧模型，不用它） 学（15% 的局强制开 BEAST、不开 QUILBOAR,DEMON,ELEMENTAL；其它局照常）。",
+ "config": {
+  "lobby_must": "BEAST",
+  "lobby_pool": "DRAGON,MECHANICAL,MURLOC,PIRATE,UNDEAD,ABERRATION",
+  "lobby_frac": 0.15,
+  "lobby_exam": false,
+  "experts": "[{\"ckpt\": \"runs/beast/snapshots/it02700.pt\", \"name\": \"龙虾流野兽\", \"must\": \"BEAST\", \"exclude\": \"QUILBOAR,DEMON,ELEMENTAL\", \"engage\": \"BG25_354,BG36_202,BG36_204,BG36_208,BG25_016,BG36_243,BG35_604,BG36_201,BG28_500,BG36_849,BG27_084,BG36_206,BG36_210\", \"from_turn\": 3, \"coef\": 0.05, \"conf\": 0.4}]"
+ }
+}

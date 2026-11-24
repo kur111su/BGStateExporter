@@ -47,7 +47,7 @@ sys.path.insert(0, str(ROOT))
 TOOLS = {"train": "train",
          "tavernbench": "tavernbench", "prolib": "pro_library", "prodemos": "make_pro_demos",
          "bridge": "tg_bridge_check", "goldflow": "goldflow", "nativedemos": "native_demos", "cardvalue": "cardvalue", "simcards": "simcards", "playbook": "playbook", "board": "board",
-         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "bench-model": "bench_model", "doctor": "doctor", "arena": "arena_run", "cleanup": "cleanup", "distill": "distill", "set-best": "set_best", "compstrength": "compstrength"}
+         "profile": "opp_profile", "bench": "tg_bench", "bench-device": "bench_device", "bench-model": "bench_model", "doctor": "doctor", "arena": "arena_run", "cleanup": "cleanup", "distill": "distill", "set-best": "set_best", "compstrength": "compstrength", "comp-expert": "comp_expert"}
 
 
 def _run_tool(name: str, args: list[str]) -> int:

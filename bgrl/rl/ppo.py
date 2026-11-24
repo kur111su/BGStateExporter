@@ -48,11 +48,12 @@ from .rollout import (
     seed_row,
 )
 from .shaping import ShapingMixin
+from .experts import ExpertMixin
 from .teacher import TeacherMixin
 from .update import UpdateMixin
 
 
-class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMixin, GuardMixin):
+class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMixin, ExpertMixin, GuardMixin):
     """训练主流程：组装各部分，管对手库快照、评估、检查点、train 循环。
     采样 rl/collector.py、更新 rl/update.py、奖励塑形 rl/shaping.py、模仿 rl/imitation.py、老师 rl/teacher.py、考试守护 rl/guard.py
     都作为 mixin 继承进来（Trainer.collect / Trainer._shape 之类照样能用）。"""
@@ -167,6 +168,7 @@ class Trainer(CollectMixin, UpdateMixin, ShapingMixin, ImitationMixin, TeacherMi
         self._init_imitation()                         # 示范数据和模仿强度（rl/imitation.py）
         self._init_shaping()                           # 升本曲线和每个座位的塑形状态（rl/shaping.py）
         self.teacher, self.teacher_t0 = self._load_teacher(), None
+        self.experts, self.expert_t0 = self._load_experts(), None   # 流派专家当老师（rl/experts.py）
         self.repay_t0 = None                           # 局末扣回势能从哪一轮开始爬（存在 latest.pt 里）
         self.place_tab = parse_place_reward(getattr(cfg, "place_reward", ""))
         if self.place_tab is not None:

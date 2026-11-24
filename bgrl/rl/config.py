@@ -205,6 +205,11 @@ class Config:
     teacher_frac: float = 1.0
     teacher_actions: str = ""
     teacher_from_turn: int = 0
+    # 流派专家当老师（第二阶段，rl/experts.py、docs/comp_expert.md）：JSON 列表（或 JSON 文件路径），每个专家
+    # {"ckpt", "name", "must", "exclude", "engage", "from_turn", "coef", "conf"}；在它擅长的局面上学它有把握的动作。
+    # expert_ramp：开始用专家后的前几轮系数从 0 慢慢加上去
+    experts: str = ""
+    expert_ramp: int = 100
     # 阵容强度奖励（rl/boardsim.py，见 _combat_shape）：结束回合时让引擎拿当前场面打 combat_boards 个同期高分阵容
     # （第 t … t-3 回合的，每个 combat_fights 场），胜率比这局上次量的时候涨了多少，就加 combat_bonus × 涨的。0 = 不用。
     # combat_frac：每次结束回合按这个概率量一次（一次约 2.5 毫秒，全量会让每轮多 9 秒左右）
@@ -236,6 +241,9 @@ class Config:
     # 战斗里死也算），比上次结束回合涨了多少，加 lobster_coef × 涨的。compstrength 实测：第 8–9 回合高手的龙虾流场面
     # 加成 0 → 40，胜率 0.46 → 0.83（后期身材已经很大，影响小）——越早攒越值；连招奖励只管招募阶段的身材，管不到这个
     lobster_coef: float = 0.0
+    # 通用写法（做别的流派用）：counter_key = 玩家 stats 里的哪个计数（bg.py comp-expert --stats 列出能用的），默认龙虾加成；
+    # 奖励系数还是 lobster_coef（名字沿用）
+    counter_key: str = "lobster_bonus"
     # 定向局（第 500 轮的野兽专家：送牌 + 示范 ×5 以后，测试里美味龙虾 / 深潜狮子鱼 / 逐亡陆行鸟的购买倍率还是 0.0，
     # 野兽成型 0%——只做到一半的龙虾流打不过别的，策略从来不走这条路，也就学不到做完以后有多强）：
     # 机器人局里 commit_frac 的局，学习者从第 commit_from_turn 回合起只能买这套阵容（目标阵容名字）的核心 / 配套卡、

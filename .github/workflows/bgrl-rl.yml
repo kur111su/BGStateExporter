@@ -38,6 +38,8 @@ jobs:
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --boost-frac 1.0 --boost-from-turn 3 --boost-every 1 --boost-ramp-iters 2
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --lobby-must BEAST --lobby-frac 1.0 --lobby-exam true --trick-bonus 0.05 --trick-from-turn 2 --trick-engine rally --commit-comp 龙虾流野兽 --commit-frac 0.5 --commit-from-turn 2 --commit-force BG36_202,BG36_201,BG36_204 --commit-tiers 2:3,3:5 --lobster-coef 0.05 --commit-hunt "2:BG25_354;3:BG25_354,BG36_208" --eval-every 2 --eval-games 4 --boost-frac 1.0 --boost-kind pro --boost-from-turn 3
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --recipe bgrl/configs/v3.json
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --lobby-must BEAST --lobby-frac 1.0 --expert-ramp 1 --experts '[{"ckpt": "bgrl/runs/_smoke/latest.pt", "name": "ci", "must": "BEAST", "exclude": "", "engage": "", "from_turn": 1, "coef": 0.05, "conf": 0.0}]'
+          python -X utf8 bgrl/bg.py comp-expert --comp 龙虾流野兽 --run _ci_lobster --distill --counter lobster_bonus --trick rally && python -X utf8 bgrl/bg.py comp-expert --stats
       - name: Pro-board library from a synthetic sample + tiny PPO run with pro boards
         run: |
           python -X utf8 bgrl/bg.py prolib bgrl/tests/fixtures/pro_games_sample.jsonl --profile-out bgrl/runs/_pro_profile_ci.json
@@ -48,6 +50,7 @@ jobs:
           python -X utf8 bgrl/tests/test_extnet.py
           python -X utf8 -c "import sys; sys.path.insert(0, 'bgrl'); sys.path.insert(0, 'bgrl/tests'); from pathlib import Path; from test_extnet import fake_ckpt; fake_ckpt(Path('bgrl/runs/_ext_ci.pt'))"
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2 --teacher-actions sell,buy --teacher-from-turn 1 --teacher-conf 0.05 --teacher-frac 0.5
+          python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 2 --experts '[{"ckpt": "bgrl/runs/_ext_ci.pt", "must": "BEAST"}]' | tee /tmp/ext_expert.log && grep -q '外部模型' /tmp/ext_expert.log
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST --commit 龙虾流野兽 --commit-force BG36_202,BG36_201 --commit-tiers 3:5,4:7 --commit-hunt 4:BG36_208
@@ -56,6 +59,7 @@ jobs:
           python -X utf8 bgrl/bg.py distill --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2
           python -X utf8 bgrl/tests/test_lobby.py
+          python -X utf8 bgrl/tests/test_experts.py
           python -X utf8 bgrl/bg.py bench-model --smoke --threads 2 --device cpu
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 3 --profile-update true --aux-comp-coef 0.05 --teacher bgrl/runs/_smoke/latest.pt --teacher-coef 0.03 --teacher-ramp 1 --verbose
           python -X utf8 bgrl/bg.py train --smoke --threads 2 --iters 6 --teacher bgrl/runs/_ext_ci.pt --teacher-coef 0.03 --teacher-ramp 2

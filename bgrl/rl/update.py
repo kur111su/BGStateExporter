@@ -82,6 +82,17 @@ class UpdateMixin:
             t_ta, t_tp = self._teacher_targets(b, A_N)
             stats["t_teacher"].append(time.time() - t0_t)
             stats["teacher_rows"].append(float((t_ta >= 0).mean()))
+        ex_t = []
+        ex_ramp = 0.0
+        if getattr(self, "experts", None):                 # 流派专家：在它擅长的局面上的答案，也是每轮先算好
+            if self.expert_t0 is None:
+                self.expert_t0 = self.iter
+            ex_ramp = min(1.0, (self.iter - self.expert_t0 + 1) / max(1, int(getattr(cfg, "expert_ramp", 100))))
+            t0_e = time.time()
+            ex_t = self._expert_targets(b, A_N)
+            stats["t_expert"].append(time.time() - t0_e)
+            for e_, ta_, _ in ex_t:
+                stats["expert_rows"].append(float((ta_ >= 0).mean()))
         if self.dev.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         # 统计量留在显卡上（张量），每个小批结束时一起取回一次：每取一个数（.item() / float() / .any()）MPS 都要停下来
@@ -190,6 +201,14 @@ class UpdateMixin:
                             loss = loss + tcoef * boost * (nll_t * sure * tw_t).mean()
                             add("teacher_sure", sure.mean())
                             add_ratio("teacher_agree", ((logp_all.argmax(-1) == ta).float() * sure).sum(), sure.sum())
+                    for e_, ta_all, tp_all in ex_t:                       # 流派专家：有把握的局面学它最想做的动作
+                        ta = t(ta_all[j], torch.long)
+                        sure = ((t(tp_all[j], torch.float32) >= e_["conf"]) & (ta >= 0)).float()
+                        ta = ta.clamp(min=0)
+                        nll_e = -logp_all.gather(1, ta.unsqueeze(1)).squeeze(1).clamp(max=20)
+                        loss = loss + e_["coef"] * ex_ramp * (nll_e * sure).mean()
+                        add("expert_sure", sure.mean())
+                        add_ratio("expert_agree", ((logp_all.argmax(-1) == ta).float() * sure).sum(), sure.sum())
                     tp = mark("t_fwd", tp)
                     self.scaler.scale(loss * w).backward()
                     tp = mark("t_bwd", tp)
