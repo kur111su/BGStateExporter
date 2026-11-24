@@ -15,6 +15,7 @@ from tg.actions import (
     A_ACTIVATE,
     A_BUY,
     A_CHOOSE,
+    A_END,
     A_PLAY,
     A_SELL,
     A_UPGRADE,
