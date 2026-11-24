@@ -29,6 +29,7 @@ def main(argv=None) -> int:
     ap.add_argument("--fights", type=int, default=4, help="每对打几场")
     ap.add_argument("--max", type=int, default=40, help="每回合每套阵容最多测几个场面")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--lib", default="", help="阵容库文件（分号隔开）；默认 runs/pro_boards.json;runs/h13_boards.json")
     a = ap.parse_args(argv)
 
     from rl.boardsim import lab_game, put_board, strength
@@ -36,7 +37,8 @@ def main(argv=None) -> int:
     from rl.curricula.boost import merge_pro_boards
     from tg.catalog import base_id
 
-    paths = [p for p in (RUNS / "pro_boards.json", RUNS / "h13_boards.json") if p.exists()]
+    paths = [Path(x) for x in a.lib.split(";") if x] if a.lib else [RUNS / "pro_boards.json", RUNS / "h13_boards.json"]
+    paths = [p for p in paths if p.exists()]
     if not paths:
         print("没有高分阵容库（runs/pro_boards.json / runs/h13_boards.json）")
         return 1
