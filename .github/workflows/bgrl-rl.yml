@@ -52,7 +52,7 @@ jobs:
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST
           python -X utf8 bgrl/bg.py goldflow --games 4 --threads 2 --ckpt bgrl/runs/_ext_ci.pt --lobby BEAST --commit 龙虾流野兽 --commit-force BG36_202,BG36_201 --commit-tiers 3:5,4:7
           python -X utf8 bgrl/bg.py goldflow --policy lobster --games 48 --threads 2 --lobby BEAST
-          echo '{"turns": {"8": [{"tier": 4, "board": [["BG36_204", 20, 20], ["BG36_202", 5, 5], ["BG36_208", 10, 11], ["BG25_354", 1, 7]]}, {"tier": 4, "board": [["BG36_098", 9, 9], ["BG36_201", 4, 4]]}, {"tier": 4, "board": [["BG36_210", 6, 6]]}]}}' > bgrl/runs/_cs_lib.json && python -X utf8 bgrl/bg.py compstrength --lib bgrl/runs/_cs_lib.json --turns 8 --k 2 --max 2 --fights 2
+          echo '{"turns": {"8": [{"tier": 4, "board": [["BG36_204", 20, 20], ["BG36_202", 5, 5], ["BG36_208", 10, 11], ["BG25_354", 1, 7]]}, {"tier": 4, "board": [["BG36_098", 9, 9], ["BG36_201", 4, 4]]}, {"tier": 4, "board": [["BG36_210", 6, 6]]}]}}' > bgrl/runs/_cs_lib.json && python -X utf8 bgrl/bg.py compstrength --lib bgrl/runs/_cs_lib.json --turns 8 --k 2 --max 2 --fights 2 --lobster-bonus 0,20
           python -X utf8 bgrl/bg.py distill --smoke --threads 2 --teacher bgrl/runs/_ext_ci.pt
           python -X utf8 bgrl/bg.py distill --smoke --threads 2
           python -X utf8 bgrl/tests/test_lobby.py

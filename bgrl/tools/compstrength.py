@@ -21,6 +21,15 @@ sys.path.insert(0, str(HERE.parent))
 from paths import RUNS  # noqa: E402
 
 
+def _with_stat(game, seat: int, key: str, val: int):
+    """game 的副本，seat 玩家的 stats[key] 改成 val（存档 → 改 → 读档）。"""
+    import json
+    import taverngym
+    st = json.loads(game.state_json())
+    st["players"][seat].setdefault("stats", {})[key] = int(val)
+    return taverngym.Game.from_json(json.dumps(st))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--comps", default="", help="只看这几套（目标阵容名字，逗号隔开）；默认所有 S / A")
@@ -29,6 +38,8 @@ def main(argv=None) -> int:
     ap.add_argument("--fights", type=int, default=4, help="每对打几场")
     ap.add_argument("--max", type=int, default=40, help="每回合每套阵容最多测几个场面")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--lobster-bonus", default="", help="例如 0,5,10,20：龙虾流的场面再按这几档龙虾加成各测一遍"
+                    "（高手库只有卡牌和身材，没有玩家身上的龙虾加成；看它对战斗强度影响多大）")
     ap.add_argument("--lib", default="", help="阵容库文件（分号隔开）；默认 runs/pro_boards.json;runs/h13_boards.json")
     a = ap.parse_args(argv)
 
@@ -73,6 +84,20 @@ def main(argv=None) -> int:
                             pass
             if wr:
                 res.setdefault(name, {})[t] = (sum(wr) / len(wr), len(es))
+            if name == "龙虾流野兽" and a.lobster_bonus:
+                for lb in [int(x) for x in a.lobster_bonus.split(",") if x.strip()]:
+                    wr = []
+                    for e in es:
+                        put_board(g, 0, e["board"], e.get("tier"))
+                        gb = _with_stat(g, 0, "lobster_bonus", lb)
+                        for o in rng.sample(boards, min(a.k, len(boards))):
+                            if put_board(gb, 1, o["board"], o.get("tier")):
+                                try:
+                                    wr.append(strength(gb, 0, 1, a.fights))
+                                except BaseException:      # noqa: BLE001
+                                    pass
+                    if wr:
+                        res.setdefault(f"龙虾流（加成 {lb}）", {})[t] = (sum(wr) / len(wr), len(es))
         print(f"第 {t} 回合测完（{len(boards)} 个场面）", flush=True)
     names = sorted(res, key=lambda n: -sum(v[1] for v in res[n].values()))
     print("\n阵容 | " + " | ".join(f"第{t}回合" for t in turns) + "    （同回合胜率；括号里是测了几个场面）")
