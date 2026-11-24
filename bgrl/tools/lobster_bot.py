@@ -53,9 +53,9 @@ class LobsterBot:
             s, cap = CORE[cid]
             return s if have.get(cid, 0) < cap else 30
         if self.beast[idx]:
-            return 10 + 3 * self.tier_of[idx]
+            return 12 + 4 * self.tier_of[idx]
         if self.minion[idx]:
-            return 5 + self.tier_of[idx] if t <= 4 else 0
+            return 4 * self.tier_of[idx]                     # 别的随从按酒馆等级算身材（过渡用）
         return 0                                            # 法术、饰品：不买
 
     def _have(self, board, hand) -> dict:
@@ -139,20 +139,19 @@ class LobsterBot:
         # 6. 买
         buys = [(self.score(x, have, t), A_BUY + s) for s, x in enumerate(shop) if x and m[A_BUY + s]]
         best = max(buys) if buys else (0, None)
-        if best[1] is not None and best[0] > 0:
-            hand_n = sum(1 for x in hand if x)
-            if nb < 7 or hand_n < 9:
-                return int(best[1])
+        hand_minions = sum(1 for x in hand if x and self.minion[x])
+        if best[1] is not None and best[0] > 0 and (nb + hand_minions < 7 or best[0] >= 50):
+            return int(best[1])
         # 场满了、有更好的：卖掉分最低的（不卖龙虾流的牌）
-        if nb >= 7 and best[0] >= 50:
+        if nb >= 7 and best[1] is not None:
             sells = [(self.score(x, {}, t), A_SELL + i) for i, x in enumerate(board)
                      if x and self.ids[x] not in CORE and m[A_SELL + i]]
-            if sells and min(sells)[0] < best[0]:
+            if sells and min(sells)[0] + 5 < best[0]:
                 return int(min(sells)[1])
 
         # 7. 刷新：钱够、酒馆里没想要的
         missing = (tr >= 5 and (have.get(ROADRUNNER, 0) < 2 or have.get(TITUS, 0) < 1))
-        if m[A_REFRESH] and (g >= 4 or (missing and g >= 1)) and best[0] < 40:
+        if m[A_REFRESH] and (g >= 4 or (missing and g >= 1)) and best[0] < max(40, 4 * tr + 12):
             return A_REFRESH
         return A_END if m[A_END] else int(legal[0])
 
