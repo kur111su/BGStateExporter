@@ -15,6 +15,8 @@
 
 我们的训练数据存的是压缩过的特征（soft_log，float16）：compressed=True 时先还原再喂给它。
 allow_moves=False（默认）：还有别的动作可选时不让它挪随从。
+z（流派编号，0–44 是 45 套阵容，45 = none）：net_config.z_vocab 是名字；zcard[z] 标出这套阵容的牌（核心 / 配套两列，0/1）。
+默认 none（我们当老师一直这样用，打法偏野猪人）；z_index(ck, "7") / z_index(ck, "beasts-tasty-lobstah") 选别的流派。
 读文件不用 torch.load：只认 OrderedDict、_rebuild_tensor_v2、FloatStorage 三个对象，张量直接从 zip 里的原始字节读。
 """
 from __future__ import annotations
@@ -153,21 +155,42 @@ def _ln(x, w, b):
     return (x - m) / np.sqrt(v + 1e-5) * w + b
 
 
-def forward_np(ck: dict, f, c, compressed: bool = False):
+def z_index(ck: dict, z=None) -> int:
+    """流派编号：None / "" / "none" → none；数字（或数字字符串）；z_vocab 里的名字（也认去掉 hsreplay: 前缀前的全名）。"""
+    zv = list(ck["net_config"]["z_vocab"])
+    if z is None or str(z).strip() in ("", "none"):
+        return zv.index("none")
+    t = str(z).strip()
+    if t.lstrip("-").isdigit():
+        i = int(t)
+        if not 0 <= i < len(zv):
+            raise ValueError(f"流派编号 {i} 不在 0–{len(zv) - 1}")
+        return i
+    if t in zv:
+        return zv.index(t)
+    raise ValueError(f"没有流派 {t}（可选：{', '.join(f'{i}={n}' for i, n in enumerate(zv))}）")
+
+
+def _z_parts(s: dict, zi: int):
+    """→ (每张卡加的流派向量 [n_cards, d], 全局词加的 [d])。"""
+    return s["zcard"][zi] @ s["z_tok.weight"].T, s["z_global.weight"][:, zi]
+
+
+def forward_np(ck: dict, f, c, compressed: bool = False, z=None):
     """→ (logits [B,245] 未屏蔽, 价值 [B])。"""
     s = ck["state_dict"]
     cfg = ck["net_config"]
     d, H = int(cfg["d"]), int(cfg["heads"])
-    z_none = list(cfg["z_vocab"]).index("none")
+    zc, zg = _z_parts(s, z_index(ck, z))
     f = np.asarray(f, dtype=np.float32)
     c = np.asarray(c, dtype=np.int64)
     B = f.shape[0]
     x = soft_exp(f) if compressed else f              # 作者的网络吃原始特征
     lin = lambda n, t: t @ s[n + ".weight"].T + s[n + ".bias"]                    # noqa: E731
-    emb = s["card.weight"] + s["attr"] @ s["attr_proj.weight"].T
+    emb = s["card.weight"] + s["attr"] @ s["attr_proj.weight"].T + zc
     cc = np.clip(c[:, C_ORDER], 0, emb.shape[0] - 1)
     tok = np.empty((B, N_TOK, d), dtype=np.float32)
-    tok[:, 0] = lin("f_global", x[:, :GF]) + s["z_global.weight"][:, z_none]
+    tok[:, 0] = lin("f_global", x[:, :GF]) + zg
     tok[:, 1:] = emb[cc]
     present = np.ones((B, N_TOK), dtype=bool)
     present[:, 1:] = cc > 0
@@ -208,7 +231,7 @@ def forward_np(ck: dict, f, c, compressed: bool = False):
 
 
 # ---------------------------------------------------------------- torch 版（训练当老师、测试工具用）
-def build_torch(ck: dict, allow_moves: bool = False):
+def build_torch(ck: dict, allow_moves: bool = False, z=None):
     """→ nn.Module，接口和 rl.model 的模型一样：forward(f, c, mask, compressed=False) → (logits（非法 = -1e9）, 价值, 名次 logits)。
     名次 logits 没有（全 0）；价值是作者的效用尺度。参数全冻住。"""
     import torch
@@ -220,7 +243,8 @@ def build_torch(ck: dict, allow_moves: bool = False):
     s = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in ck["state_dict"].items()}
     cfg = ck["net_config"]
     d, H, L = int(cfg["d"]), int(cfg["heads"]), int(cfg["layers"])
-    z_none = list(cfg["z_vocab"]).index("none")
+    zi = z_index(ck, z)
+    zc, zg = _z_parts(s, zi)
 
     class ExtModel(nn.Module):
         external = True
@@ -232,9 +256,10 @@ def build_torch(ck: dict, allow_moves: bool = False):
                 raise ValueError("外部模型的输入格式和现在的 TavernGym 不一样（换过版本？），不能用")
             self.d = d
             self.allow_moves = bool(allow_moves)
-            self.register_buffer("emb", s["card.weight"] + s["attr"] @ s["attr_proj.weight"].T)
+            self.register_buffer("emb", s["card.weight"] + s["attr"] @ s["attr_proj.weight"].T + zc)
             self.register_buffer("pos", s["pos"].clone())
-            self.register_buffer("g0", s["z_global.weight"][:, z_none].clone())
+            self.register_buffer("g0", zg.clone())
+            self.z, self.z_name = zi, list(cfg["z_vocab"])[zi]
             self.register_buffer("c_order", torch.from_numpy(C_ORDER))
             mk = lambda n, i, o: self._lin(n, i, o)                               # noqa: E731
             self.f_global, self.f_board, self.f_item = mk("f_global", GF, d), mk("f_board", MF, d), mk("f_item", IF, d)
@@ -305,13 +330,14 @@ def build_torch(ck: dict, allow_moves: bool = False):
     return ExtModel()
 
 
-def load_external(path, device: str = "cpu", allow_moves: bool = False):
-    """外部模型文件 → (模型, 信息)。和 rl.model.load_model 返回的一样用。"""
+def load_external(path, device: str = "cpu", allow_moves: bool = False, z=None):
+    """外部模型文件 → (模型, 信息)。和 rl.model.load_model 返回的一样用。z：流派编号或名字（默认 none）。"""
     path = Path(path)
     ck = load_checkpoint(path)
     meta = ck.get("meta") or {}
-    model = build_torch(ck, allow_moves=allow_moves).to(device)
+    model = build_torch(ck, allow_moves=allow_moves, z=z).to(device)
     info = {"path": str(path), "mtime": path.stat().st_mtime, "iter": meta.get("iter"), "external": True,
             "size": {k: ck["net_config"].get(k) for k in ("d", "layers", "heads")},
-            "license": "CC BY-NC 4.0（jimmypretend/hearthstone-bg-ppo，非商业、要署名）"}
+            "license": "CC BY-NC 4.0（jimmypretend/hearthstone-bg-ppo，非商业、要署名）",
+            "z": model.z, "z_name": model.z_name}
     return model, info

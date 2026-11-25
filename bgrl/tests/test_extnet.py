@@ -89,6 +89,22 @@ def main():
     with torch.no_grad():
         lg2 = model(soft_log(torch.from_numpy(f)), torch.from_numpy(c), mm, compressed=True)[0]
     assert float((lg2 - lg).abs().max()) < 2e-3
+    # 指定流派 z：编号 / 名字都认；torch 和 numpy 一致；和 none 不一样；不存在的报错
+    assert X.z_index(ck) == 1 and X.z_index(ck, "none") == 1 and X.z_index(ck, "0") == 0 and X.z_index(ck, "a") == 0
+    for bad in ("2", "nope"):
+        try:
+            X.z_index(ck, bad)
+            raise AssertionError(f"z={bad} 没报错")
+        except ValueError:
+            pass
+    lgz_np, _ = X.forward_np(ck, f, c, z="a")
+    mz, iz = load_model(p, "cpu", ext_z="0")
+    assert iz["z"] == 0 and iz["z_name"] == "a" and info["z_name"] == "none"
+    mz.allow_moves = True
+    with torch.no_grad():
+        lgz = mz(torch.from_numpy(f), torch.from_numpy(c), mm)[0]
+    assert float(np.abs(lgz.numpy() - lgz_np).max()) < 2e-3
+    assert float(np.abs(lgz_np - lg_np).max()) > 1e-3, "换了流派 logits 应该变"
     # 默认不让移动（还有别的动作时）；非法动作 -1e9
     model.allow_moves = False
     mt = torch.from_numpy(m)

@@ -107,11 +107,11 @@ def train_rules(ckpt: str) -> dict:
     return cfg.rules()
 
 
-def model_policy(ckpt: str, device: str, greedy: bool):
-    """检查点 → (选动作的函数 act(features, cards, mask) -> 动作数组, 检查点信息)。"""
+def model_policy(ckpt: str, device: str, greedy: bool, ext_z=None):
+    """检查点 → (选动作的函数 act(features, cards, mask) -> 动作数组, 检查点信息)。ext_z：外部模型的流派编号 / 名字。"""
     import torch
     from rl.model import load_model
-    model, info = load_model(ckpt, device)
+    model, info = load_model(ckpt, device, ext_z=ext_z)
 
     def act(f, c, m):
         with torch.no_grad():
@@ -122,7 +122,7 @@ def model_policy(ckpt: str, device: str, greedy: bool):
             a = lg.argmax(-1) if greedy else torch.distributions.Categorical(logits=lg).sample()
         return a.cpu().numpy()
 
-    info["name"] = Path(ckpt).name
+    info["name"] = Path(ckpt).name + (f"，流派 z={info['z']} {info['z_name']}" if ext_z not in (None, "") else "")
     return act, info
 
 
@@ -900,6 +900,8 @@ def main() -> int:
     ap.add_argument("--policy", default="", choices=["", "lobster"],
                     help="lobster：不用模型，用写死规则的龙虾流机器人（tools/lobster_bot.py）打，量这套打法的上限；结果写在 runs/lobster_bot/")
     ap.add_argument("--commit-hunt", default="", help="和 --commit 一起用：后期引擎“等级:卡牌编号,…”，缺了、钱 ≥ 4 就刷新找")
+    ap.add_argument("--ext-z", default="", help="只对外部模型（data/external/model.pt）：指定它的目标流派（编号 0–44 或 z_vocab 里的名字，"
+                                                "none = 不指定，和当老师时一样）；结果写进 comptest_z<编号>[_<--lobby>].json")
     ap.add_argument("--seed-names", default="", help="和 --seed-comps 一起用：只换成这几套（目标阵容名字，逗号隔开，例如 龙虾流野兽）")
     ap.add_argument("--seed-comps", default="", help="例如 8,9,10：每局在其中随机一个回合把模型的场面换成高手已经成型的 S / A 阵容"
                                                      "（面板的“拿着成型阵容测试”），结果写进 comptest_seeded.json")
@@ -924,6 +926,9 @@ def main() -> int:
     if not dev:
         import torch
         dev = "cuda" if torch.cuda.is_available() else "cpu"
+    if a.ext_z and policy is None:
+        policy = model_policy(a.ckpt, dev, not a.sample, a.ext_z)
+        print(f"外部模型的目标流派：z={policy[1]['z']} {policy[1]['z_name']}", flush=True)
     late = None
     if a.late_ckpt:
         if not Path(a.late_ckpt).exists():
@@ -992,8 +997,11 @@ def main() -> int:
         out = out.with_name(out.stem + "_late.json")
     if a.commit:
         out = out.with_name(out.stem + "_commit.json")
+    if a.ext_z:
+        out = out.with_name(out.stem + f"_z{info.get('z')}" + (f"_{a.lobby.replace(',', '+')}" if a.lobby else "") + ".json")
     out.write_text(json.dumps({"ckpt": str(a.ckpt), "iter": info.get("iter"), "games": a.games, "seed": a.seed,
                                "greedy": not a.sample, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+                               "ext_z": info.get("z_name") if a.ext_z else None, "lobby": a.lobby or None,
                                "boosted": a.boosted, "turns": model, "final": comps, "picks": pk,
                                "strength": strength,
                                "places": [p for p in (info.get("places") or {}).values() if p > 0],
